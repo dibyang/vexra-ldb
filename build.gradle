@@ -154,15 +154,17 @@ publishing {
       // 添加javadocjar
       artifact javadocJar
       pom {
-        name = 'vexra'
-        description = "Distributed Database with Strong Consistency Based on Raft Protocol"
+        name = 'vexra-ldb'
+        description = "Pure Java LSM/LevelDB-style embedded key-value storage engine"
+        inceptionYear = '2026'
         // 构件主页
-        url = 'https://github.com/dibyang/vexra'
+        url = 'https://github.com/dibyang/vexra-ldb'
         // 许可证名称和地址
         licenses {
           license {
             name = 'The Apache License, Version 2.0'
             url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+            distribution = 'repo'
           }
         }
         // 开发者信息
@@ -179,6 +181,10 @@ publishing {
           connection = 'scm:git:https://github.com/dibyang/vexra-ldb.git'
           developerConnection = 'scm:git:https://github.com/dibyang/vexra-ldb.git'
         }
+        issueManagement {
+          system = 'GitHub Issues'
+          url = 'https://github.com/dibyang/vexra-ldb/issues'
+        }
       }
     }
   }
@@ -186,9 +192,9 @@ publishing {
     maven {
       // 发布仓库配置，这里基于version后缀是否为SNAPSHOT来区分发布到release库还是snapshots库
       if(version.endsWith('SNAPSHOT')){
-        it.url = project.property("snapshotsRepository")
+        it.url = uri(findProperty("snapshotsRepository") ?: "$buildDir/repos/snapshots")
       }else{
-        it.url = project.property("releasesRepository")
+        it.url = uri(findProperty("releasesRepository") ?: "$buildDir/repos/releases")
       }
 
       //认证用户和密码，在配置文件gradle.properties中配置
