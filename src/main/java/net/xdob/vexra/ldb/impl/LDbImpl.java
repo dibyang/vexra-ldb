@@ -44,6 +44,7 @@ public class LDbImpl implements LDB {
   private final Options options;
   private final File databaseDir;
   private final List<LdbPlugin> plugins;
+  private final List<PluginStats> pluginStats;
   private DbLock dbLock;
 
   private final AtomicBoolean shuttingDown = new AtomicBoolean();
@@ -95,6 +96,7 @@ public class LDbImpl implements LDB {
     this.options = options;
     this.databaseDir = databaseDir;
     this.plugins = options.getPlugins();
+    this.pluginStats = createPluginStats(this.plugins);
 
     DBComparator comparator = options.comparator();
     UserComparator userComparator = comparator != null
@@ -252,6 +254,8 @@ public class LDbImpl implements LDB {
   }
 
   private class PluginContext implements LdbPluginContext {
+    private final OptionsView optionsView = new OptionsSnapshot(options);
+
     @Override
     public File getDatabaseDir() {
       return databaseDir;
@@ -260,6 +264,11 @@ public class LDbImpl implements LDB {
     @Override
     public Options getOptions() {
       return options;
+    }
+
+    @Override
+    public OptionsView getOptionsView() {
+      return optionsView;
     }
 
     @Override
@@ -288,84 +297,519 @@ public class LDbImpl implements LDB {
     }
   }
 
+  private static List<PluginStats> createPluginStats(List<LdbPlugin> plugins) {
+    List<PluginStats> stats = new ArrayList<>();
+    for (int i = 0; i < plugins.size(); i++) {
+      stats.add(new PluginStats(i, plugins.get(i)));
+    }
+    return Collections.unmodifiableList(stats);
+  }
+
   private void notifyOpen() {
     final LdbPluginContext context = new PluginContext();
-    for (LdbPlugin plugin : plugins) {
+    for (int i = 0; i < plugins.size(); i++) {
+      LdbPlugin plugin = plugins.get(i);
+      PluginStats stats = pluginStats.get(i);
+      long start = System.nanoTime();
       try {
         plugin.onOpen(context);
+        stats.recordSuccess("onOpen", System.nanoTime() - start);
       } catch (DBException e) {
+        stats.recordFailure("onOpen", System.nanoTime() - start, e, false);
         throw e;
       } catch (RuntimeException e) {
+        stats.recordFailure("onOpen", System.nanoTime() - start, e, false);
         throw new DBException("LDB plugin onOpen failed: " + plugin.getClass().getName(), e);
       }
     }
   }
 
   private void notifyBeforeWrite(LdbWriteBatch updates, WriteOptions writeOptions) {
-    for (LdbPlugin plugin : plugins) {
+    for (int i = 0; i < plugins.size(); i++) {
+      LdbPlugin plugin = plugins.get(i);
+      PluginStats stats = pluginStats.get(i);
+      WriteEvent event = new PluginWriteEvent(updates, writeOptions, null, false);
+      long start = System.nanoTime();
       try {
-        plugin.beforeWrite(updates, writeOptions);
+        plugin.beforeWrite(event);
+        stats.recordSuccess("beforeWrite", System.nanoTime() - start);
       } catch (DBException e) {
+        stats.recordFailure("beforeWrite", System.nanoTime() - start, e, false);
         throw e;
       } catch (RuntimeException e) {
+        stats.recordFailure("beforeWrite", System.nanoTime() - start, e, false);
         throw new DBException("LDB plugin beforeWrite failed: " + plugin.getClass().getName(), e);
       }
     }
   }
 
   private void notifyAfterWrite(LdbWriteBatch updates, WriteOptions writeOptions, Snapshot snapshot) {
-    for (LdbPlugin plugin : plugins) {
+    for (int i = 0; i < plugins.size(); i++) {
+      LdbPlugin plugin = plugins.get(i);
+      PluginStats stats = pluginStats.get(i);
+      WriteEvent event = new PluginWriteEvent(updates, writeOptions, snapshot, true);
+      long start = System.nanoTime();
       try {
-        plugin.afterWrite(updates, writeOptions, snapshot);
+        plugin.afterWrite(event);
+        stats.recordSuccess("afterWrite", System.nanoTime() - start);
       } catch (DBException e) {
-        throw e;
+        stats.recordFailure("afterWrite", System.nanoTime() - start, e, true);
+        handlePostCommitPluginFailure(plugin, "afterWrite", e);
       } catch (RuntimeException e) {
-        throw new DBException("LDB plugin afterWrite failed: " + plugin.getClass().getName(), e);
+        stats.recordFailure("afterWrite", System.nanoTime() - start, e, true);
+        handlePostCommitPluginFailure(plugin, "afterWrite", e);
       }
     }
   }
 
   private void notifyBeforeCheckpoint(File targetDir) {
-    for (LdbPlugin plugin : plugins) {
+    for (int i = 0; i < plugins.size(); i++) {
+      LdbPlugin plugin = plugins.get(i);
+      PluginStats stats = pluginStats.get(i);
+      long start = System.nanoTime();
       try {
         plugin.beforeCheckpoint(targetDir);
+        stats.recordSuccess("beforeCheckpoint", System.nanoTime() - start);
       } catch (DBException e) {
+        stats.recordFailure("beforeCheckpoint", System.nanoTime() - start, e, false);
         throw e;
       } catch (RuntimeException e) {
+        stats.recordFailure("beforeCheckpoint", System.nanoTime() - start, e, false);
         throw new DBException("LDB plugin beforeCheckpoint failed: " + plugin.getClass().getName(), e);
       }
     }
   }
 
   private void notifyAfterCheckpoint(File targetDir) {
-    for (LdbPlugin plugin : plugins) {
+    for (int i = 0; i < plugins.size(); i++) {
+      LdbPlugin plugin = plugins.get(i);
+      PluginStats stats = pluginStats.get(i);
+      long start = System.nanoTime();
       try {
         plugin.afterCheckpoint(targetDir);
+        stats.recordSuccess("afterCheckpoint", System.nanoTime() - start);
       } catch (DBException e) {
-        throw e;
+        stats.recordFailure("afterCheckpoint", System.nanoTime() - start, e, true);
+        handlePostCommitPluginFailure(plugin, "afterCheckpoint", e);
       } catch (RuntimeException e) {
-        throw new DBException("LDB plugin afterCheckpoint failed: " + plugin.getClass().getName(), e);
+        stats.recordFailure("afterCheckpoint", System.nanoTime() - start, e, true);
+        handlePostCommitPluginFailure(plugin, "afterCheckpoint", e);
       }
     }
   }
 
   private void notifyBeforeClose() {
-    for (LdbPlugin plugin : plugins) {
+    for (int i = 0; i < plugins.size(); i++) {
+      LdbPlugin plugin = plugins.get(i);
+      PluginStats stats = pluginStats.get(i);
+      long start = System.nanoTime();
       try {
         plugin.beforeClose();
+        stats.recordSuccess("beforeClose", System.nanoTime() - start);
       } catch (Exception e) {
+        stats.recordFailure("beforeClose", System.nanoTime() - start, e, false);
         LOG.warn("LDB plugin beforeClose failed: {}", plugin.getClass().getName(), e);
       }
     }
   }
 
   private void closePlugins() {
-    for (LdbPlugin plugin : plugins) {
+    for (int i = 0; i < plugins.size(); i++) {
+      LdbPlugin plugin = plugins.get(i);
+      PluginStats stats = pluginStats.get(i);
+      long start = System.nanoTime();
       try {
         plugin.close();
+        stats.recordSuccess("close", System.nanoTime() - start);
       } catch (Exception e) {
+        stats.recordFailure("close", System.nanoTime() - start, e, false);
         LOG.warn("LDB plugin close failed: {}", plugin.getClass().getName(), e);
       }
+    }
+  }
+
+  private void handlePostCommitPluginFailure(LdbPlugin plugin, String phase, RuntimeException failure) {
+    String message = "LDB plugin " + phase + " post-commit notification failed after data was committed: "
+        + plugin.getClass().getName();
+    if (plugin.descriptor().failurePolicy() == LdbPluginFailurePolicy.RECORD_AND_CONTINUE) {
+      LOG.warn("{}: {}", message, failure.getMessage(), failure);
+      return;
+    }
+    if (failure instanceof DBException && failure.getMessage() != null
+        && failure.getMessage().contains("post-commit notification failed")) {
+      throw failure;
+    }
+    throw new DBException(message, failure);
+  }
+
+  private static final class PluginWriteEvent implements WriteEvent {
+    private final LdbWriteBatch batch;
+    private final WriteOptions writeOptions;
+    private final Snapshot snapshot;
+    private final boolean committed;
+
+    private PluginWriteEvent(LdbWriteBatch batch, WriteOptions writeOptions, Snapshot snapshot, boolean committed) {
+      this.batch = batch;
+      this.writeOptions = writeOptions;
+      this.snapshot = snapshot;
+      this.committed = committed;
+    }
+
+    @Override
+    public WriteBatchView getBatch() {
+      return batch;
+    }
+
+    @Override
+    public WriteOptions getWriteOptions() {
+      return writeOptions;
+    }
+
+    @Override
+    public Snapshot getSnapshot() {
+      return snapshot;
+    }
+
+    @Override
+    public boolean isCommitted() {
+      return committed;
+    }
+  }
+
+  private static final class OptionsSnapshot implements OptionsView {
+    private final boolean createIfMissing;
+    private final boolean errorIfExists;
+    private final int writeBufferSize;
+    private final boolean forceLogOnClose;
+    private final boolean forceSstOnFlush;
+    private final int maxOpenFiles;
+    private final int blockRestartInterval;
+    private final int blockSize;
+    private final CompressionType compressionType;
+    private final boolean verifyChecksums;
+    private final boolean paranoidChecks;
+    private final DBComparator comparator;
+    private final long cacheSize;
+    private final List<LdbColumnFamily> columnFamilies;
+    private final FilterPolicy filterPolicy;
+    private final boolean readOnly;
+    private final boolean cacheBlocks;
+    private final int blockCacheSize;
+    private final long compactionSuspendTimeoutMillis;
+    private final long closeTimeoutMillis;
+    private final long slowOperationThresholdMicros;
+    private final boolean verifyOnOpen;
+    private final int level0CompactionTrigger;
+    private final int level0SlowdownWritesTrigger;
+    private final int level0StopWritesTrigger;
+    private final long compactionRateLimitBytesPerSecond;
+    private final long writeSlowdownDelayNanos;
+
+    private OptionsSnapshot(Options options) {
+      this.createIfMissing = options.createIfMissing();
+      this.errorIfExists = options.errorIfExists();
+      this.writeBufferSize = options.writeBufferSize();
+      this.forceLogOnClose = options.forceLogOnClose();
+      this.forceSstOnFlush = options.forceSstOnFlush();
+      this.maxOpenFiles = options.maxOpenFiles();
+      this.blockRestartInterval = options.blockRestartInterval();
+      this.blockSize = options.blockSize();
+      this.compressionType = options.compressionType();
+      this.verifyChecksums = options.verifyChecksums();
+      this.paranoidChecks = options.paranoidChecks();
+      this.comparator = options.comparator();
+      this.cacheSize = options.cacheSize();
+      this.columnFamilies = options.getColumnFamilies();
+      this.filterPolicy = options.filterPolicy();
+      this.readOnly = options.readOnly();
+      this.cacheBlocks = options.cacheBlocks();
+      this.blockCacheSize = options.blockCacheSize();
+      this.compactionSuspendTimeoutMillis = options.compactionSuspendTimeoutMillis();
+      this.closeTimeoutMillis = options.closeTimeoutMillis();
+      this.slowOperationThresholdMicros = options.slowOperationThresholdMicros();
+      this.verifyOnOpen = options.verifyOnOpen();
+      this.level0CompactionTrigger = options.level0CompactionTrigger();
+      this.level0SlowdownWritesTrigger = options.level0SlowdownWritesTrigger();
+      this.level0StopWritesTrigger = options.level0StopWritesTrigger();
+      this.compactionRateLimitBytesPerSecond = options.compactionRateLimitBytesPerSecond();
+      this.writeSlowdownDelayNanos = options.writeSlowdownDelayNanos();
+    }
+
+    @Override
+    public boolean createIfMissing() {
+      return createIfMissing;
+    }
+
+    @Override
+    public boolean errorIfExists() {
+      return errorIfExists;
+    }
+
+    @Override
+    public int writeBufferSize() {
+      return writeBufferSize;
+    }
+
+    @Override
+    public boolean forceLogOnClose() {
+      return forceLogOnClose;
+    }
+
+    @Override
+    public boolean forceSstOnFlush() {
+      return forceSstOnFlush;
+    }
+
+    @Override
+    public int maxOpenFiles() {
+      return maxOpenFiles;
+    }
+
+    @Override
+    public int blockRestartInterval() {
+      return blockRestartInterval;
+    }
+
+    @Override
+    public int blockSize() {
+      return blockSize;
+    }
+
+    @Override
+    public CompressionType compressionType() {
+      return compressionType;
+    }
+
+    @Override
+    public boolean verifyChecksums() {
+      return verifyChecksums;
+    }
+
+    @Override
+    public boolean paranoidChecks() {
+      return paranoidChecks;
+    }
+
+    @Override
+    public DBComparator comparator() {
+      return comparator;
+    }
+
+    @Override
+    public long cacheSize() {
+      return cacheSize;
+    }
+
+    @Override
+    public List<LdbColumnFamily> getColumnFamilies() {
+      return columnFamilies;
+    }
+
+    @Override
+    public FilterPolicy filterPolicy() {
+      return filterPolicy;
+    }
+
+    @Override
+    public boolean readOnly() {
+      return readOnly;
+    }
+
+    @Override
+    public boolean cacheBlocks() {
+      return cacheBlocks;
+    }
+
+    @Override
+    public int blockCacheSize() {
+      return blockCacheSize;
+    }
+
+    @Override
+    public long compactionSuspendTimeoutMillis() {
+      return compactionSuspendTimeoutMillis;
+    }
+
+    @Override
+    public long closeTimeoutMillis() {
+      return closeTimeoutMillis;
+    }
+
+    @Override
+    public long slowOperationThresholdMicros() {
+      return slowOperationThresholdMicros;
+    }
+
+    @Override
+    public boolean verifyOnOpen() {
+      return verifyOnOpen;
+    }
+
+    @Override
+    public int level0CompactionTrigger() {
+      return level0CompactionTrigger;
+    }
+
+    @Override
+    public int level0SlowdownWritesTrigger() {
+      return level0SlowdownWritesTrigger;
+    }
+
+    @Override
+    public int level0StopWritesTrigger() {
+      return level0StopWritesTrigger;
+    }
+
+    @Override
+    public long compactionRateLimitBytesPerSecond() {
+      return compactionRateLimitBytesPerSecond;
+    }
+
+    @Override
+    public long writeSlowdownDelayNanos() {
+      return writeSlowdownDelayNanos;
+    }
+  }
+
+  private static final class PluginStats {
+    private static final AtomicLong FAILURE_SEQUENCE = new AtomicLong();
+    private final int index;
+    private final LdbPluginDescriptor descriptor;
+    private final ConcurrentHashMap<String, PhaseStats> phases = new ConcurrentHashMap<>();
+    private final AtomicLong totalNanos = new AtomicLong();
+    private final AtomicLong maxNanos = new AtomicLong();
+    private volatile PluginFailure lastFailure;
+
+    private PluginStats(int index, LdbPlugin plugin) {
+      this.index = index;
+      this.descriptor = plugin.descriptor();
+    }
+
+    private void recordSuccess(String phase, long nanos) {
+      phase(phase).record(nanos, false);
+      totalNanos.addAndGet(nanos);
+      updateMax(maxNanos, nanos);
+    }
+
+    private void recordFailure(String phase, long nanos, Throwable failure, boolean committed) {
+      phase(phase).record(nanos, true);
+      totalNanos.addAndGet(nanos);
+      updateMax(maxNanos, nanos);
+      lastFailure = new PluginFailure(
+          FAILURE_SEQUENCE.incrementAndGet(),
+          phase,
+          descriptor.name(),
+          failure.getMessage(),
+          committed);
+    }
+
+    private PhaseStats phase(String phase) {
+      PhaseStats stats = phases.get(phase);
+      if (stats != null) {
+        return stats;
+      }
+      PhaseStats created = new PhaseStats();
+      PhaseStats existing = phases.putIfAbsent(phase, created);
+      return existing == null ? created : existing;
+    }
+
+    private long callbackCount() {
+      long count = 0;
+      for (PhaseStats stats : phases.values()) {
+        count += stats.count.get();
+      }
+      return count;
+    }
+
+    private long failureCount() {
+      long count = 0;
+      for (PhaseStats stats : phases.values()) {
+        count += stats.failures.get();
+      }
+      return count;
+    }
+
+    private long maxNanos() {
+      return maxNanos.get();
+    }
+
+    private PluginFailure lastFailure() {
+      return lastFailure;
+    }
+
+    private String summary() {
+      StringBuilder builder = new StringBuilder();
+      builder.append("name=").append(descriptor.name())
+          .append(",version=").append(descriptor.version())
+          .append(",order=").append(descriptor.order())
+          .append(",failurePolicy=").append(descriptor.failurePolicy())
+          .append(",callbacks=").append(callbackCount())
+          .append(",failures=").append(failureCount())
+          .append(",totalMicros=").append(TimeUnit.NANOSECONDS.toMicros(totalNanos.get()))
+          .append(",maxMicros=").append(TimeUnit.NANOSECONDS.toMicros(maxNanos.get()));
+      List<String> phaseNames = new ArrayList<>(phases.keySet());
+      Collections.sort(phaseNames);
+      for (String phase : phaseNames) {
+        PhaseStats stats = phases.get(phase);
+        builder.append(',').append(phase).append(".count=").append(stats.count.get())
+            .append(',').append(phase).append(".failures=").append(stats.failures.get());
+      }
+      PluginFailure failure = lastFailure;
+      if (failure != null) {
+        builder.append(",lastFailure=").append(failure.summary());
+      }
+      return builder.toString();
+    }
+
+    private static void updateMax(AtomicLong target, long value) {
+      long current;
+      do {
+        current = target.get();
+        if (value <= current) {
+          return;
+        }
+      } while (!target.compareAndSet(current, value));
+    }
+  }
+
+  private static final class PhaseStats {
+    private final AtomicLong count = new AtomicLong();
+    private final AtomicLong failures = new AtomicLong();
+    private final AtomicLong maxNanos = new AtomicLong();
+
+    private void record(long nanos, boolean failed) {
+      count.incrementAndGet();
+      if (failed) {
+        failures.incrementAndGet();
+      }
+      PluginStats.updateMax(maxNanos, nanos);
+    }
+  }
+
+  private static final class PluginFailure {
+    private final long sequence;
+    private final String phase;
+    private final String pluginName;
+    private final String message;
+    private final boolean committed;
+
+    private PluginFailure(long sequence, String phase, String pluginName, String message, boolean committed) {
+      this.sequence = sequence;
+      this.phase = phase;
+      this.pluginName = pluginName;
+      this.message = message == null ? "" : message.replace(',', ';');
+      this.committed = committed;
+    }
+
+    private String summary() {
+      return phase + ':' + pluginName + ":committed=" + committed;
+    }
+
+    private String detail() {
+      return "phase=" + phase
+          + ",plugin=" + pluginName
+          + ",committed=" + committed
+          + ",message=" + message;
     }
   }
 
@@ -650,6 +1094,10 @@ public class LDbImpl implements LDB {
       if ("ldb.slowOperationThresholdMicros".equals(name)) {
         return Long.toString(options.slowOperationThresholdMicros());
       }
+      String pluginProperty = pluginProperty(name);
+      if (pluginProperty != null) {
+        return pluginProperty;
+      }
       String apiCompatibilityProperty = apiCompatibilityProperty(name);
       if (apiCompatibilityProperty != null) {
         return apiCompatibilityProperty;
@@ -782,6 +1230,63 @@ public class LDbImpl implements LDB {
     } finally {
       mutex.unlock();
     }
+  }
+
+  private String pluginProperty(String name) {
+    if ("ldb.plugins".equals(name)) {
+      StringBuilder builder = new StringBuilder();
+      for (PluginStats stats : pluginStats) {
+        if (builder.length() > 0) {
+          builder.append(',');
+        }
+        builder.append(stats.index).append(':').append(stats.descriptor.name());
+      }
+      return builder.toString();
+    }
+    if ("ldb.pluginStats".equals(name)) {
+      long callbacks = 0;
+      long failures = 0;
+      long maxNanos = 0;
+      PluginFailure latest = null;
+      for (PluginStats stats : pluginStats) {
+        callbacks += stats.callbackCount();
+        failures += stats.failureCount();
+        maxNanos = Math.max(maxNanos, stats.maxNanos());
+        PluginFailure failure = stats.lastFailure();
+        if (failure != null && (latest == null || failure.sequence > latest.sequence)) {
+          latest = failure;
+        }
+      }
+      return "count=" + pluginStats.size()
+          + ",callbacks=" + callbacks
+          + ",failures=" + failures
+          + ",maxMicros=" + TimeUnit.NANOSECONDS.toMicros(maxNanos)
+          + ",lastFailure=" + (latest == null ? "" : latest.summary());
+    }
+    if ("ldb.plugin.lastFailure".equals(name)) {
+      PluginFailure latest = null;
+      for (PluginStats stats : pluginStats) {
+        PluginFailure failure = stats.lastFailure();
+        if (failure != null && (latest == null || failure.sequence > latest.sequence)) {
+          latest = failure;
+        }
+      }
+      return latest == null ? "" : latest.detail();
+    }
+    String prefix = "ldb.plugin.";
+    String suffix = ".stats";
+    if (name.startsWith(prefix) && name.endsWith(suffix)) {
+      String indexText = name.substring(prefix.length(), name.length() - suffix.length());
+      try {
+        int index = Integer.parseInt(indexText);
+        if (index >= 0 && index < pluginStats.size()) {
+          return pluginStats.get(index).summary();
+        }
+      } catch (NumberFormatException ignored) {
+        return null;
+      }
+    }
+    return null;
   }
 
   private String apiCompatibilityProperty(String name) {

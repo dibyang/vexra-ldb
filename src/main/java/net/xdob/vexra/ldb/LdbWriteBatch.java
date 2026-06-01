@@ -7,7 +7,7 @@ import java.util.Set;
 
 
 public interface LdbWriteBatch
-    extends Closeable {
+    extends Closeable, WriteBatchView {
   int OP_TYPE_SIZE = 1;
   int CF_ID_SIZE = 1;
   int MAX_VAR_INT_SIZE = 5;

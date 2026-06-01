@@ -21,6 +21,15 @@ public interface LdbPluginContext {
   Options getOptions();
 
   /**
+   * 返回当前数据库配置的只读快照。
+   *
+   * 新插件应优先使用该方法读取配置，避免通过 {@link #getOptions()} 误改运行时配置。
+   */
+  default OptionsView getOptionsView() {
+    return getOptions();
+  }
+
+  /**
    * 返回已注册列族。
    */
   List<LdbColumnFamily> getColumnFamilies();

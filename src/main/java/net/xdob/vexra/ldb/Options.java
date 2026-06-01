@@ -7,7 +7,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-public class Options {
+public class Options implements OptionsView {
   private boolean createIfMissing = true;
   private boolean errorIfExists;
   private int writeBufferSize = 64 << 20;
