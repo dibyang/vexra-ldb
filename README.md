@@ -129,11 +129,11 @@ ldb checkpoint <db> <targetDir>
 
 ## 文档
 
-- `CONTRIBUTING.md`：贡献指南。
-- `SECURITY.md`：安全政策和漏洞报告方式。
-- `CODE_OF_CONDUCT.md`：社区行为准则。
-- `CHANGELOG.md`：版本变更记录。
-- `docs/release.md`：发布流程说明。
+- `CONTRIBUTING.md`：贡献指南，提供英文副本和中英切换。
+- `SECURITY.md`：安全政策和漏洞报告方式，提供英文副本和中英切换。
+- `CODE_OF_CONDUCT.md`：社区行为准则，提供英文副本和中英切换。
+- `CHANGELOG.md`：版本变更记录，提供英文副本和中英切换。
+- `docs/release.md`：发布流程说明，提供英文副本和中英切换。
 - `docs/ldb-project-design.md`：项目整体设计文档。
 - `docs/ldb-project-design.en.md`：整体设计文档英文副本。
 - `docs/ldb-reliability-plan.md`：可靠性增强计划。

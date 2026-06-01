@@ -1,4 +1,6 @@
-# LDB Future Performance and Reliability Evaluation
+﻿# LDB Future Performance and Reliability Evaluation
+
+English | [中文](ldb-future-optimization-design.md)
 
 ## Background
 

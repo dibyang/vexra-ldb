@@ -1,4 +1,6 @@
-# LDB 项目整体设计文档
+﻿# LDB 项目整体设计文档
+
+[English](ldb-project-design.en.md) | 中文
 
 ## 背景
 

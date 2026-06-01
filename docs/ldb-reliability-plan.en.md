@@ -1,4 +1,6 @@
-# LDB Reliability Improvement Plan
+﻿# LDB Reliability Improvement Plan
+
+English | [中文](ldb-reliability-plan.md)
 
 ## Background
 

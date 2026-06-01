@@ -1,4 +1,6 @@
-# LDB Range Delete Design
+﻿# LDB Range Delete Design
+
+English | [中文](ldb-range-delete-design.md)
 
 ## Background
 

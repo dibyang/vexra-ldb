@@ -1,5 +1,7 @@
 # Changelog
 
+[English](CHANGELOG.en.md) | 中文
+
 本文档记录 `vexra-ldb` 的重要变更。格式遵循 Keep a Changelog 的精神，版本号遵循语义化版本约定。
 
 ## [Unreleased]
@@ -19,6 +21,7 @@
 - 新增插件增强 API：`LdbPluginDescriptor`、`LdbPluginFailurePolicy`、`OptionsView`、`WriteEvent` 和 `WriteBatchView`。
 - 新增插件观测属性：`ldb.plugins`、`ldb.pluginStats`、`ldb.plugin.<index>.stats` 和 `ldb.plugin.lastFailure`。
 - 新增 Windows + Ubuntu JDK 8 CI，以及本地 Maven 发布产物校验任务。
+- 新增 `CHANGELOG`、贡献指南、安全政策、行为准则和发布说明的英文副本，并为用户可见文档补充中英切换入口。
 
 ### Changed
 

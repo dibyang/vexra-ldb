@@ -1,4 +1,6 @@
-# LDB API 兼容与迁移说明
+﻿# LDB API 兼容与迁移说明
+
+[English](ldb-api-compatibility-design.en.md) | 中文
 
 ## 背景
 

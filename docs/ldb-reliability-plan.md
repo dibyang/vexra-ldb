@@ -1,4 +1,6 @@
-# LDB 可靠性改进计划
+﻿# LDB 可靠性改进计划
+
+[English](ldb-reliability-plan.en.md) | 中文
 
 ## 背景
 

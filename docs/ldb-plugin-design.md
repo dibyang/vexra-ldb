@@ -1,4 +1,6 @@
-# LDB 插件能力增强设计
+﻿# LDB 插件能力增强设计
+
+[English](ldb-plugin-design.en.md) | 中文
 
 ## 背景
 

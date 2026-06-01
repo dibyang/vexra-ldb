@@ -1,4 +1,6 @@
-# LDB 后续性能与可靠性专项评估
+﻿# LDB 后续性能与可靠性专项评估
+
+[English](ldb-future-optimization-design.en.md) | 中文
 
 ## 背景
 

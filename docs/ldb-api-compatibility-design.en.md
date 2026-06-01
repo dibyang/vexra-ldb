@@ -1,4 +1,6 @@
-# LDB API Compatibility and Migration Notes
+﻿# LDB API Compatibility and Migration Notes
+
+English | [中文](ldb-api-compatibility-design.md)
 
 ## Background
 

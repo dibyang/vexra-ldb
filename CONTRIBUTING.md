@@ -1,5 +1,7 @@
 # 贡献指南
 
+[English](CONTRIBUTING.en.md) | 中文
+
 感谢你愿意参与 `vexra-ldb`。这是一个 Java 本地存储项目，修改通常会影响磁盘格式、恢复语义、并发控制或运维工具，因此贡献时请优先保持变更小而可验证。
 
 ## 开发环境
@@ -52,4 +54,3 @@ Windows PowerShell:
 - [ ] 已运行 `./gradlew test` 或 `.\gradlew.bat test`。
 - [ ] 已说明兼容性、回滚和潜在风险。
 - [ ] 没有提交敏感信息或本地环境文件。
-

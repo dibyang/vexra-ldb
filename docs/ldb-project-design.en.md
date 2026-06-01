@@ -1,4 +1,6 @@
-# LDB Project Design
+﻿# LDB Project Design
+
+English | [中文](ldb-project-design.md)
 
 ## Background
 

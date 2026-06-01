@@ -129,11 +129,11 @@ Commands primarily output JSON so scripts and tests can parse them. `check` and 
 
 ## Documents
 
-- `CONTRIBUTING.md`: contribution guide.
-- `SECURITY.md`: security policy and vulnerability reporting.
-- `CODE_OF_CONDUCT.md`: community code of conduct.
-- `CHANGELOG.md`: release changelog.
-- `docs/release.md`: release process.
+- `CONTRIBUTING.md`: contribution guide, with English copy and language switch.
+- `SECURITY.md`: security policy and vulnerability reporting, with English copy and language switch.
+- `CODE_OF_CONDUCT.md`: community code of conduct, with English copy and language switch.
+- `CHANGELOG.md`: release changelog, with English copy and language switch.
+- `docs/release.md`: release process, with English copy and language switch.
 - `docs/ldb-project-design.md`: overall project design in Chinese.
 - `docs/ldb-project-design.en.md`: English copy of the overall project design.
 - `docs/ldb-reliability-plan.md`: reliability improvement plan.

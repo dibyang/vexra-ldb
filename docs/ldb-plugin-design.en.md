@@ -1,4 +1,6 @@
-# LDB Plugin Capability Enhancement Design
+﻿# LDB Plugin Capability Enhancement Design
+
+English | [中文](ldb-plugin-design.md)
 
 ## Background
 
