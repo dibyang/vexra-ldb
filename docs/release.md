@@ -25,6 +25,15 @@ Windows PowerShell:
 ./gradlew clean publishToMavenLocal
 ```
 
+## 0.2.0 发布前验证记录
+
+- 版本号：`gradle.properties` 已切换为 `version=0.2.0`。
+- 测试：已在 Windows PowerShell 执行 `.\gradlew.bat clean test`，结果通过。
+- 本地发布：已执行 `.\gradlew.bat clean publishToMavenLocal`，结果通过。
+- 本地 Maven 产物：已确认 `vexra-ldb-0.2.0.jar`、`sources.jar`、`javadoc.jar`、`.pom`、`.module` 以及对应 `.asc` 签名文件生成。
+- CI：已纳入 `.github/workflows/ci.yml`，覆盖 Ubuntu/Windows JDK 8 `clean test` 和 Ubuntu `clean publishToMavenLocal`。
+- 变更记录：`CHANGELOG.md` 已将本轮发布内容归档到 `0.2.0`。
+
 ## 签名配置
 
 项目会读取根目录下未提交的 `signing.properties`。该文件已在 `.gitignore` 中忽略，不能提交到仓库。
@@ -73,4 +82,3 @@ releasesRepository=https://s01.oss.sonatype.org/service/local/staging/deploy/mav
 - 如果远端发布失败但未公开，可删除 staging repository 或清理本地 `build/repos`。
 - 如果 tag 已推送但产物未发布，应删除错误 tag 并重新发布。
 - 如果产物已公开发布，不应覆盖同一版本；请发布新的修复版本。
-

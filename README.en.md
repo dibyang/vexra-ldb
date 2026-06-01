@@ -113,6 +113,8 @@ Commands primarily output JSON so scripts and tests can parse them. `check` and 
 - `ldb.totalBytes`
 - `ldb.compactionStats`
 - `ldb.writeStallStats`
+- `ldb.plugins`
+- `ldb.pluginStats`
 - `ldb.snapshotCursorStats`
 - `ldb.api.compatibility`
 - `ldb.api.supportedFeatures`
@@ -137,6 +139,8 @@ Commands primarily output JSON so scripts and tests can parse them. `check` and 
 - `docs/ldb-reliability-plan.md`: reliability improvement plan.
 - `docs/ldb-range-delete-design.md`: range delete design.
 - `docs/ldb-api-compatibility-design.md`: API compatibility and migration design.
+- `docs/ldb-plugin-design.md`: plugin capability enhancement design.
+- `docs/ldb-future-optimization-design.md`: future performance and reliability evaluation.
 
 ## License
 

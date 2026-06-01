@@ -113,6 +113,8 @@ ldb checkpoint <db> <targetDir>
 - `ldb.totalBytes`
 - `ldb.compactionStats`
 - `ldb.writeStallStats`
+- `ldb.plugins`
+- `ldb.pluginStats`
 - `ldb.snapshotCursorStats`
 - `ldb.api.compatibility`
 - `ldb.api.supportedFeatures`
@@ -137,6 +139,8 @@ ldb checkpoint <db> <targetDir>
 - `docs/ldb-reliability-plan.md`：可靠性增强计划。
 - `docs/ldb-range-delete-design.md`：range delete 设计。
 - `docs/ldb-api-compatibility-design.md`：API 兼容与迁移设计。
+- `docs/ldb-plugin-design.md`：插件能力增强设计。
+- `docs/ldb-future-optimization-design.md`：后续性能与可靠性专项评估。
 
 ## License
 
