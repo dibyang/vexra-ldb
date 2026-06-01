@@ -6,6 +6,7 @@ import net.xdob.vexra.ldb.util.InternalIterator;
 import net.xdob.vexra.ldb.util.Slice;
 
 import java.util.Map.Entry;
+import java.util.NavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -87,11 +88,13 @@ public class MemTable
       return -1;
     }
     long newest = -1;
-    for (Entry<InternalKey, Slice> entry : rangeTombstones.entrySet()) {
+    InternalKey upperBound = new InternalKey(
+        key.getUserKey(),
+        0,
+        ValueType.DELETE_RANGE);
+    NavigableMap<InternalKey, Slice> candidates = rangeTombstones.headMap(upperBound, true);
+    for (Entry<InternalKey, Slice> entry : candidates.descendingMap().entrySet()) {
       InternalKey tombstone = entry.getKey();
-      if (internalKeyComparator.getUserComparator().compare(tombstone.getUserKey(), key.getUserKey()) > 0) {
-        break;
-      }
       long tombstoneSequence = tombstone.getSequenceNumber();
       if (tombstoneSequence > key.getInternalKey().getSequenceNumber()
           || tombstoneSequence <= newerThanSequence) {

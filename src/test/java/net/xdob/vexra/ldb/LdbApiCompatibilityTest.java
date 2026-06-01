@@ -40,6 +40,7 @@ class LdbApiCompatibilityTest {
             .blockCacheSize(128)
             .level0CompactionTrigger(3)
             .level0SlowdownWritesTrigger(6)
+            .writeSlowdownDelayNanos(500_000L)
             .level0StopWritesTrigger(9)
             .compactionRateLimitBytesPerSecond(12345)
             .compactionSuspendTimeoutMillis(1500)
@@ -53,6 +54,7 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.compatibility", "ldbToolCommands=partial");
       assertPropertyContains(db, "ldb.api.optionsMapping", "createIfMissing=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "columnFamilies=supported");
+      assertPropertyContains(db, "ldb.api.optionsMapping", "writeSlowdownDelayNanos=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "mergeOperator=unsupported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "prefixExtractor=unsupported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "rocksdbToolCommands=unsupported");
@@ -64,6 +66,7 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.optionValues", "cacheBlocks=false");
       assertPropertyContains(db, "ldb.api.optionValues", "columnFamilyCount=2");
       assertPropertyContains(db, "ldb.api.optionValues", "level0CompactionTrigger=3");
+      assertPropertyContains(db, "ldb.api.optionValues", "writeSlowdownDelayNanos=500000");
       assertPropertyContains(db, "ldb.api.optionValues", "compactionRateLimitBytesPerSecond=12345");
       assertPropertyContains(db, "ldb.api.optionValues", "forceLogOnClose=true");
       assertPropertyContains(db, "ldb.api.optionValues", "forceSstOnFlush=true");
@@ -105,6 +108,7 @@ class LdbApiCompatibilityTest {
     assertThrows(IllegalArgumentException.class, () -> new Options().level0CompactionTrigger(0));
     assertThrows(IllegalArgumentException.class, () -> new Options().level0SlowdownWritesTrigger(0));
     assertThrows(IllegalArgumentException.class, () -> new Options().level0StopWritesTrigger(0));
+    assertThrows(IllegalArgumentException.class, () -> new Options().writeSlowdownDelayNanos(0));
     assertThrows(IllegalArgumentException.class, () -> new Options().compactionRateLimitBytesPerSecond(-1));
   }
 

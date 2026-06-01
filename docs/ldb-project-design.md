@@ -143,6 +143,7 @@
 | `level0CompactionTrigger` | L0 compaction 触发阈值 |
 | `level0SlowdownWritesTrigger` | L0 写入降速阈值 |
 | `level0StopWritesTrigger` | L0 写入阻塞阈值 |
+| `writeSlowdownDelayNanos` | L0 soft trigger 命中后的单次写入降速等待时间 |
 | `compactionRateLimitBytesPerSecond` | compaction 输出限速，0 表示关闭 |
 
 ### 工具命令
@@ -366,4 +367,3 @@ sequenceDiagram
 | 3 | 完善 range delete、列族生命周期、WAL 生命周期专项设计 | 每个专项有中文和英文副本 |
 | 4 | 增强工具命令和 JSON 报告稳定性 | 工具测试覆盖退出码和输出 |
 | 5 | 增加长时间 soak、故障注入和兼容性测试 | 覆盖恢复、compaction、snapshot 和备份恢复 |
-

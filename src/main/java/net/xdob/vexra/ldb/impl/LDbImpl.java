@@ -24,6 +24,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static com.google.common.base.Preconditions.checkArgument;
@@ -823,6 +824,7 @@ public class LDbImpl implements LDB {
           + ",level0CompactionTrigger=supported"
           + ",level0SlowdownWritesTrigger=supported"
           + ",level0StopWritesTrigger=supported"
+          + ",writeSlowdownDelayNanos=supported"
           + ",compactionRateLimitBytesPerSecond=supported"
           + ",compactionSuspendTimeoutMillis=supported"
           + ",closeTimeoutMillis=supported"
@@ -862,6 +864,7 @@ public class LDbImpl implements LDB {
         + ",level0CompactionTrigger=" + options.level0CompactionTrigger()
         + ",level0SlowdownWritesTrigger=" + options.level0SlowdownWritesTrigger()
         + ",level0StopWritesTrigger=" + options.level0StopWritesTrigger()
+        + ",writeSlowdownDelayNanos=" + options.writeSlowdownDelayNanos()
         + ",compactionRateLimitBytesPerSecond=" + options.compactionRateLimitBytesPerSecond()
         + ",compactionSuspendTimeoutMillis=" + options.compactionSuspendTimeoutMillis()
         + ",closeTimeoutMillis=" + options.closeTimeoutMillis()
@@ -945,6 +948,7 @@ public class LDbImpl implements LDB {
     if ("ldb.writeStallStats".equals(name)) {
       return "slowdown.count=" + writeSlowdownDelayCount.get()
           + ",slowdown.totalMicros=" + nanosToMicros(writeSlowdownDelayNanos)
+          + ",slowdown.delayNanos=" + options.writeSlowdownDelayNanos()
           + ",immutableWait.count=" + writeImmutableWaitCount.get()
           + ",immutableWait.totalMicros=" + nanosToMicros(writeImmutableWaitNanos)
           + ",level0StopWait.count=" + writeLevel0StopWaitCount.get()
@@ -973,6 +977,9 @@ public class LDbImpl implements LDB {
     }
     if ("ldb.writeStall.level0StopTrigger".equals(name)) {
       return Integer.toString(options.level0StopWritesTrigger());
+    }
+    if ("ldb.writeStall.slowdownDelayNanos".equals(name)) {
+      return Long.toString(options.writeSlowdownDelayNanos());
     }
     if ("ldb.compaction.level0CompactionTrigger".equals(name)) {
       return Integer.toString(options.level0CompactionTrigger());
@@ -2094,10 +2101,7 @@ public class LDbImpl implements LDB {
         long delayStart = System.nanoTime();
         try {
           mutex.unlock();
-          Thread.sleep(1);
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          throw new RuntimeException(e);
+          LockSupport.parkNanos(options.writeSlowdownDelayNanos());
         } finally {
           mutex.lock();
           writeSlowdownDelayCount.incrementAndGet();

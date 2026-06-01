@@ -34,6 +34,7 @@ class LdbObservabilityTest {
         new Options()
             .createIfMissing(true)
             .writeBufferSize(256)
+            .writeSlowdownDelayNanos(250_000L)
             .compactionRateLimitBytesPerSecond(1_000_000_000L)
             .level0CompactionTrigger(3)
             .level0SlowdownWritesTrigger(6)
@@ -60,10 +61,12 @@ class LdbObservabilityTest {
       assertNonNegativeProperty(db, "ldb.columnFamily.1.compactionPendingBytes");
       assertEquals("6", db.getProperty("ldb.writeStall.level0SlowdownTrigger"));
       assertEquals("9", db.getProperty("ldb.writeStall.level0StopTrigger"));
+      assertEquals("250000", db.getProperty("ldb.writeStall.slowdownDelayNanos"));
       assertNonNegativeProperty(db, "ldb.writeStall.slowdownCount");
       assertNonNegativeProperty(db, "ldb.writeStall.immutableWaitCount");
       assertNonNegativeProperty(db, "ldb.writeStall.level0StopWaitCount");
       assertPropertyContains(db, "ldb.writeStallStats", "slowdown.count=");
+      assertPropertyContains(db, "ldb.writeStallStats", "slowdown.delayNanos=250000");
       assertNotNull(db.getProperty("ldb.compaction.running"));
       assertNonNegativeProperty(db, "ldb.compaction.runCount");
       assertNonNegativeProperty(db, "ldb.compaction.successCount");

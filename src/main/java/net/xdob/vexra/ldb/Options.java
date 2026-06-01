@@ -37,6 +37,7 @@ public class Options {
   private int level0SlowdownWritesTrigger = DbConstants.L0_SLOWDOWN_WRITES_TRIGGER;
   private int level0StopWritesTrigger = DbConstants.L0_STOP_WRITES_TRIGGER;
   private long compactionRateLimitBytesPerSecond;
+  private long writeSlowdownDelayNanos = TimeUnit.MILLISECONDS.toNanos(1);
 
   public boolean cacheBlocks() {
     return cacheBlocks;
@@ -171,6 +172,18 @@ public class Options {
 
   public int level0StopWritesTrigger() {
     return level0StopWritesTrigger;
+  }
+
+  public long writeSlowdownDelayNanos() {
+    return writeSlowdownDelayNanos;
+  }
+
+  public Options writeSlowdownDelayNanos(long writeSlowdownDelayNanos) {
+    if (writeSlowdownDelayNanos <= 0) {
+      throw new IllegalArgumentException("writeSlowdownDelayNanos must be > 0");
+    }
+    this.writeSlowdownDelayNanos = writeSlowdownDelayNanos;
+    return this;
   }
 
   public Options level0StopWritesTrigger(int level0StopWritesTrigger) {

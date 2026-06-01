@@ -366,6 +366,7 @@ class LdbCoreBehaviorTest {
     assertThrows(IllegalArgumentException.class, () -> options.level0CompactionTrigger(0));
     assertThrows(IllegalArgumentException.class, () -> options.level0SlowdownWritesTrigger(0));
     assertThrows(IllegalArgumentException.class, () -> options.level0StopWritesTrigger(0));
+    assertThrows(IllegalArgumentException.class, () -> options.writeSlowdownDelayNanos(0));
     assertThrows(IllegalArgumentException.class, () -> new Options()
         .level0SlowdownWritesTrigger(3)
         .level0CompactionTrigger(4));
@@ -379,6 +380,7 @@ class LdbCoreBehaviorTest {
     assertEquals(3, options.level0CompactionTrigger(3).level0CompactionTrigger());
     assertEquals(6, options.level0SlowdownWritesTrigger(6).level0SlowdownWritesTrigger());
     assertEquals(9, options.level0StopWritesTrigger(9).level0StopWritesTrigger());
+    assertEquals(500_000L, options.writeSlowdownDelayNanos(500_000L).writeSlowdownDelayNanos());
   }
 
   /**

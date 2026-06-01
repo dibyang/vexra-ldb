@@ -143,6 +143,7 @@ This document describes the design that is implemented today. It is the baseline
 | `level0CompactionTrigger` | L0 compaction trigger |
 | `level0SlowdownWritesTrigger` | L0 write slowdown trigger |
 | `level0StopWritesTrigger` | L0 write stop trigger |
+| `writeSlowdownDelayNanos` | Per-write slowdown delay after the L0 soft trigger is hit |
 | `compactionRateLimitBytesPerSecond` | Compaction output rate limit; 0 disables it |
 
 ### Tool Commands
@@ -366,4 +367,3 @@ Future changes should add coverage for:
 | 3 | Complete focused designs for range delete, column-family lifecycle, and WAL lifecycle | Each focused design has Chinese and English copies |
 | 4 | Improve tool commands and JSON report stability | Tool tests cover exit codes and output |
 | 5 | Add longer soak, fault-injection, and compatibility tests | Recovery, compaction, snapshot, backup, and restore paths are covered |
-

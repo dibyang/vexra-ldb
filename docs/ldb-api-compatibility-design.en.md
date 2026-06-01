@@ -56,6 +56,7 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 | `create_if_missing` | `Options.createIfMissing` | supported |
 | `error_if_exists` | `Options.errorIfExists` | supported |
 | `write_buffer_size` | `Options.writeBufferSize` | supported |
+| L0 slowdown delay | `Options.writeSlowdownDelayNanos` | supported |
 | `max_open_files` | `Options.maxOpenFiles` | supported |
 | `block_size` | `Options.blockSize` | supported |
 | `block_restart_interval` | `Options.blockRestartInterval` | supported |
