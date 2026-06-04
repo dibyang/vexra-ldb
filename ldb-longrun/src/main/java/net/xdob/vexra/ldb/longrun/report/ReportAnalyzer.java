@@ -1,0 +1,339 @@
+package net.xdob.vexra.ldb.longrun.report;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.DoubleSummaryStatistics;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * longrun 报告分析器。
+ */
+public final class ReportAnalyzer {
+  /**
+   * 重新分析 workDir 并写出报告。
+   *
+   * @param workDir 工作目录
+   * @return 报告摘要
+   * @throws IOException 读取 metrics 或写报告失败时抛出
+   */
+  public ReportSummary analyze(File workDir) throws IOException {
+    ReportSummary summary = new ReportSummary();
+    File ops = new File(workDir, "metrics/ops.csv");
+    List<String> failures = new ArrayList<>();
+    List<String> warnings = new ArrayList<>();
+    long operations = 0;
+    long reads = 0;
+    long writes = 0;
+    long removes = 0;
+    long commits = 0;
+    long reopenChecks = 0;
+    long recoveryChecks = 0;
+    String runId = "";
+    FaultStats faultStats = faultStats(new File(workDir, "metrics/fault.csv"));
+    int samples = 0;
+    DoubleSummaryStatistics opsStats = new DoubleSummaryStatistics();
+    if (ops.isFile()) {
+      try (BufferedReader reader = new BufferedReader(new FileReader(ops))) {
+        String line = reader.readLine();
+        while ((line = reader.readLine()) != null) {
+          String[] parts = line.split(",", -1);
+          if (parts.length >= 12) {
+            runId = parts[1];
+            operations = parseLong(parts[4]);
+            opsStats.accept(parseDouble(parts[5]));
+            reads = parseLong(parts[6]);
+            writes = parseLong(parts[7]);
+            removes = parseLong(parts[8]);
+            commits = parseLong(parts[9]);
+            reopenChecks = parseLong(parts[10]);
+            recoveryChecks = parseLong(parts[11]);
+            samples++;
+          }
+        }
+      }
+    } else {
+      warnings.add("metrics/ops.csv is missing");
+    }
+    long finalSizeBytes = directorySize(workDir);
+    ResourceStats resourceStats = resourceStats(new File(workDir, "state/resource.properties"));
+    ReclamationStats reclamationStats = reclamationStats(new File(workDir, "metrics/reclamation.csv"));
+    if (resourceStats.physicalSizeBytes > 0) {
+      finalSizeBytes = resourceStats.physicalSizeBytes;
+    }
+    double avgOps = samples == 0 ? 0 : opsStats.getAverage();
+    double minOps = samples == 0 ? 0 : opsStats.getMin();
+    double maxOps = samples == 0 ? 0 : opsStats.getMax();
+    long suspicious = suspiciousLines(new File(workDir, "logs"));
+    if (suspicious > 0) {
+      failures.add("suspicious log lines: " + suspicious);
+    }
+    if ("reopen".equals(runId) && reopenChecks == 0) {
+      failures.add("reopen profile requires reopenChecks > 0");
+    }
+    if ("crash".equals(runId) && recoveryChecks == 0) {
+      failures.add("crash profile requires recoveryChecks > 0");
+    }
+    if ("fault-injection".equals(runId) && faultStats.events == 0) {
+      failures.add("fault-injection profile requires fault events > 0");
+    }
+    if (faultStats.unexpected > 0) {
+      failures.add("fault injection unexpected events: " + faultStats.unexpected);
+    }
+    double sizeAmplification = resourceStats.liveDataBytes <= 0 ? 0.0 : finalSizeBytes * 1.0 / resourceStats.liveDataBytes;
+    if (sizeAmplification > 5.0) {
+      failures.add("size amplification too high: " + String.format(java.util.Locale.ROOT, "%.3f", sizeAmplification));
+    }
+    summary.put("status", failures.isEmpty() ? (warnings.isEmpty() ? "PASS" : "WARN") : "FAIL");
+    summary.put("operations", operations);
+    summary.put("commits", commits);
+    summary.put("reads", reads);
+    summary.put("writes", writes);
+    summary.put("removes", removes);
+    summary.put("reopenChecks", reopenChecks);
+    summary.put("recoveryChecks", recoveryChecks);
+    summary.put("finalSizeBytes", finalSizeBytes);
+    summary.put("metricSamples", samples);
+    summary.put("avgOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", avgOps));
+    summary.put("minOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", minOps));
+    summary.put("maxOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", maxOps));
+    summary.put("throughputDropRatio", "0.000");
+    summary.put("reclamationEvents", reclamationStats.events);
+    summary.put("reclamationSuccessEvents", reclamationStats.success);
+    summary.put("reclamationBackoffEvents", reclamationStats.backoff);
+    summary.put("reclamationShrinkBytes", reclamationStats.shrinkBytes);
+    summary.put("finalSizeGb", String.format(java.util.Locale.ROOT, "%.6f", finalSizeBytes / 1024.0 / 1024.0 / 1024.0));
+    summary.put("sizePerMillionOpsGb", operations == 0 ? "0.000000"
+        : String.format(java.util.Locale.ROOT, "%.6f", (finalSizeBytes / 1024.0 / 1024.0 / 1024.0) / (operations / 1_000_000.0)));
+    summary.put("sizeAmplification", String.format(java.util.Locale.ROOT, "%.3f", sizeAmplification));
+    summary.put("faultInjectionEvents", faultStats.events);
+    summary.put("faultInjectionRecoveredEvents", faultStats.recovered);
+    summary.put("faultInjectionDetectedEvents", faultStats.detected);
+    summary.put("faultInjectionUnexpectedEvents", faultStats.unexpected);
+    summary.put("faultInjectionStatusCounts", faultStats.statusCounts);
+    summary.put("faultInjectionKindCounts", faultStats.kindCounts);
+    summary.put("suspiciousLogLines", suspicious);
+    summary.put("failures", failures.size());
+    summary.put("warnings", warnings.size());
+    summary.put("recentEvents", recentEvents(new File(workDir, "metrics/events.log")));
+    write(workDir, summary, failures, warnings);
+    return summary;
+  }
+
+  private static void write(File workDir, ReportSummary summary,
+                            List<String> failures, List<String> warnings) throws IOException {
+    File reportDir = new File(workDir, "report");
+    if (!reportDir.exists() && !reportDir.mkdirs()) {
+      throw new IOException("failed to create report dir: " + reportDir);
+    }
+    try (PrintWriter out = new PrintWriter(new OutputStreamWriter(
+        new FileOutputStream(new File(reportDir, "summary.properties")), StandardCharsets.UTF_8))) {
+      for (Map.Entry<String, String> entry : summary.values().entrySet()) {
+        out.println(entry.getKey() + "=" + entry.getValue());
+      }
+    }
+    try (PrintWriter out = new PrintWriter(new OutputStreamWriter(
+        new FileOutputStream(new File(reportDir, "summary.md")), StandardCharsets.UTF_8))) {
+      out.println("# Longrun Summary");
+      out.println();
+      for (Map.Entry<String, String> entry : summary.values().entrySet()) {
+        out.println("- " + title(entry.getKey()) + ": " + entry.getValue());
+      }
+      if (!failures.isEmpty()) {
+        out.println();
+        out.println("## Failures");
+        for (String failure : failures) {
+          out.println("- " + failure);
+        }
+      }
+      if (!warnings.isEmpty()) {
+        out.println();
+        out.println("## Warnings");
+        for (String warning : warnings) {
+          out.println("- " + warning);
+        }
+      }
+    }
+  }
+
+  private static String title(String key) {
+    StringBuilder out = new StringBuilder();
+    for (int i = 0; i < key.length(); i++) {
+      char c = key.charAt(i);
+      if (i == 0) {
+        out.append(Character.toUpperCase(c));
+      } else if (Character.isUpperCase(c)) {
+        out.append(' ').append(c);
+      } else {
+        out.append(c);
+      }
+    }
+    return out.toString();
+  }
+
+  private static String recentEvents(File file) throws IOException {
+    if (!file.isFile()) {
+      return "";
+    }
+    List<String> lines = new ArrayList<>();
+    try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        lines.add(line);
+      }
+    }
+    int start = Math.max(0, lines.size() - 5);
+    return lines.subList(start, lines.size()).toString();
+  }
+
+  private static FaultStats faultStats(File file) throws IOException {
+    FaultStats stats = new FaultStats();
+    if (!file.isFile()) {
+      return stats;
+    }
+    java.util.Map<String, Integer> status = new java.util.LinkedHashMap<>();
+    java.util.Map<String, Integer> kind = new java.util.LinkedHashMap<>();
+    try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+      String line = reader.readLine();
+      while ((line = reader.readLine()) != null) {
+        String[] parts = line.split(",", -1);
+        if (parts.length >= 4) {
+          stats.events++;
+          increment(kind, parts[2]);
+          increment(status, parts[3]);
+          if ("RECOVERED".equals(parts[3])) {
+            stats.recovered++;
+          } else if ("DETECTED".equals(parts[3]) || "DETECTED_BY_VERIFY".equals(parts[3])) {
+            stats.detected++;
+          } else if (parts[3].startsWith("UNEXPECTED")) {
+            stats.unexpected++;
+          }
+        }
+      }
+    }
+    stats.statusCounts = status.toString();
+    stats.kindCounts = kind.toString();
+    return stats;
+  }
+
+  private static ResourceStats resourceStats(File file) throws IOException {
+    ResourceStats stats = new ResourceStats();
+    if (!file.isFile()) {
+      return stats;
+    }
+    java.util.Properties properties = new java.util.Properties();
+    try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+      properties.load(in);
+    }
+    stats.physicalSizeBytes = Long.parseLong(properties.getProperty("physicalSizeBytes", "0"));
+    stats.liveDataBytes = Long.parseLong(properties.getProperty("liveDataBytes", "0"));
+    return stats;
+  }
+
+  private static ReclamationStats reclamationStats(File file) throws IOException {
+    ReclamationStats stats = new ReclamationStats();
+    if (!file.isFile()) {
+      return stats;
+    }
+    try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+      String line = reader.readLine();
+      while ((line = reader.readLine()) != null) {
+        String[] parts = line.split(",", -1);
+        if (parts.length >= 12) {
+          stats.events++;
+          if ("success".equals(parts[1])) {
+            stats.success++;
+          } else if ("backoff".equals(parts[1])) {
+            stats.backoff++;
+          }
+          stats.shrinkBytes += parseLong(parts[5]);
+        }
+      }
+    }
+    return stats;
+  }
+
+  private static final class ResourceStats {
+    private long physicalSizeBytes;
+    private long liveDataBytes;
+  }
+
+  private static final class ReclamationStats {
+    private long events;
+    private long success;
+    private long backoff;
+    private long shrinkBytes;
+  }
+
+  private static void increment(java.util.Map<String, Integer> map, String key) {
+    Integer count = map.get(key);
+    map.put(key, count == null ? 1 : count + 1);
+  }
+
+  private static final class FaultStats {
+    private long events;
+    private long recovered;
+    private long detected;
+    private long unexpected;
+    private String statusCounts = "{}";
+    private String kindCounts = "{}";
+  }
+
+  private static long suspiciousLines(File logDir) throws IOException {
+    if (!logDir.isDirectory()) {
+      return 0;
+    }
+    long count = 0;
+    File[] files = logDir.listFiles();
+    if (files == null) {
+      return 0;
+    }
+    for (File file : files) {
+      if (file.isFile()) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+          String line;
+          while ((line = reader.readLine()) != null) {
+            if (line.contains("ERROR") || line.contains("Corruption")
+                || line.contains("Checksum") || line.contains("panic")
+                || line.contains("leak") || line.contains("Exception")) {
+              count++;
+            }
+          }
+        }
+      }
+    }
+    return count;
+  }
+
+  private static long directorySize(File dir) {
+    if (!dir.exists()) {
+      return 0;
+    }
+    if (dir.isFile()) {
+      return dir.length();
+    }
+    long total = 0;
+    File[] files = dir.listFiles();
+    if (files != null) {
+      for (File file : files) {
+        total += directorySize(file);
+      }
+    }
+    return total;
+  }
+
+  private static long parseLong(String value) {
+    return Long.parseLong(value.trim());
+  }
+
+  private static double parseDouble(String value) {
+    return Double.parseDouble(value.trim());
+  }
+}

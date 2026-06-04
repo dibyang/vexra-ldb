@@ -1,0 +1,74 @@
+plugins {
+  id 'java'
+  id 'application'
+  id 'distribution'
+}
+
+group = project.rootProject.group
+version = project.rootProject.version
+
+sourceCompatibility = project.rootProject.jdkVersion
+targetCompatibility = project.rootProject.jdkVersion
+
+repositories {
+  mavenCentral()
+  maven { url 'https://maven.aliyun.com/repository/public/' }
+  mavenLocal()
+}
+
+dependencies {
+  implementation project(':')
+  implementation("org.slf4j:slf4j-api:${slf4j_version}")
+  runtimeOnly("org.slf4j:slf4j-simple:${slf4j_version}")
+  testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
+}
+
+application {
+  mainClassName = 'net.xdob.vexra.ldb.longrun.LongRunMain'
+  applicationName = 'longrun'
+}
+
+tasks.withType(JavaCompile).configureEach {
+  options.encoding = 'UTF-8'
+}
+
+tasks.named('distTar', Tar) {
+  compression = Compression.GZIP
+  archiveExtension = 'tar.gz'
+  includeEmptyDirs = false
+  eachFile { details ->
+    details.path = distributionPathWithoutVersion(details.path)
+  }
+}
+
+tasks.named('distZip', Zip) {
+  includeEmptyDirs = false
+  eachFile { details ->
+    details.path = distributionPathWithoutVersion(details.path)
+  }
+}
+
+test {
+  useJUnitPlatform()
+}
+
+distributions {
+  main {
+    distributionBaseName = 'ldb-longrun'
+    contents {
+      from('src/main/resources/profiles') {
+        into 'config'
+      }
+      from('.') {
+        include 'README.md'
+        include 'README.en.md'
+        into ''
+      }
+    }
+  }
+}
+
+private String distributionPathWithoutVersion(String path) {
+  String versionedRoot = "ldb-longrun-${project.version}/"
+  return path.startsWith(versionedRoot) ? "ldb-longrun/" + path.substring(versionedRoot.length()) : path
+}
