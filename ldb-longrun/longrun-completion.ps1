@@ -71,12 +71,30 @@ Register-ArgumentCompleter -CommandName longrun -ScriptBlock {
     return
   }
 
-  if ($elements.Count -eq 2 -and $elements[1].ToString() -notlike '-*') {
-    $commands | ForEach-Object {
-      if ($_ -like "$base*") {
-        [System.Management.Automation.CompletionResult]::new($_, $_, 'Command', "command $_")
+  if ($elements.Count -eq 2) {
+    $commandToken = $elements[1].ToString()
+    if ($commandToken -in $commands) {
+      $options | ForEach-Object {
+        if ($_ -like "$base*") {
+          [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterName', $_)
+        }
       }
+      return
     }
+    if ($commandToken -notlike '-*') {
+      $commands | ForEach-Object {
+        if ($_ -like "$base*") {
+          [System.Management.Automation.CompletionResult]::new($_, $_, 'Command', "command $_")
+        }
+      }
+      return
+    }
+    return
+  }
+
+  # If command already fully specified before cursor (e.g., `longrun watch ...`), continue as parameter phase.
+  $commandToken = if ($elements.Count -ge 2) { $elements[1].ToString() } else { '' }
+  if ($commandToken -notin $commands) {
     return
   }
 
@@ -94,4 +112,3 @@ Register-ArgumentCompleter -CommandName longrun -ScriptBlock {
     return
   }
 }
-

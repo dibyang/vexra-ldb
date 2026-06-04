@@ -82,6 +82,24 @@ Other common shorthand options:
 
 For `report`, `-w <dir>` is equivalent to `--workDir <dir>`.
 
+Bash completion helper (command + `-c/--config`):
+
+```bash
+bash ./install-completion.bash
+```
+
+Open a new shell after installation. To enable it in the current shell immediately, run the `source` command printed by the installer.
+
+Examples:
+
+- `./bin/longrun <TAB>` => `run start watch ...`
+- `./bin/longrun watch <TAB>` => options
+- `./bin/longrun watch -c <TAB>` => profile names
+- `./bin/longrun watch --config <TAB>` => profile names
+
+The same completion is registered for `longrun`, `bin/longrun`, and `./bin/longrun`.
+Use a space before `<TAB>` after `./bin/longrun`; without the space, Bash is still completing the executable path.
+
 PowerShell completion helper (command + `-c/--config`):
 
 ```powershell
@@ -152,10 +170,21 @@ Register-ArgumentCompleter -CommandName longrun -ScriptBlock {
     return
   }
 
-  if ($elements.Count -eq 2 -and $elements[1].ToString() -notlike '-*') {
-    $commands | ForEach-Object {
-      if ($_ -like "$base*") {
-        [System.Management.Automation.CompletionResult]::new($_, $_, 'Command', "command $_")
+  if ($elements.Count -eq 2) {
+    $commandToken = $elements[1].ToString()
+    if ($commandToken -in $commands) {
+      $options | ForEach-Object {
+        if ($_ -like "$base*") {
+          [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterName', $_)
+        }
+      }
+      return
+    }
+    if ($commandToken -notlike '-*') {
+      $commands | ForEach-Object {
+        if ($_ -like "$base*") {
+          [System.Management.Automation.CompletionResult]::new($_, $_, 'Command', "command $_")
+        }
       }
     }
     return
@@ -216,6 +245,8 @@ logs/<instance>.out
 
 Every `start` rotates the previous log to `logs/<instance>.out.1`, `.2`, and so on, then creates a fresh `logs/<instance>.out` for the new run. The instance first prints `START` and multiple `CONFIG` lines, and the running workload prints `PROGRESS` lines with `progressPercent` at `metrics.interval`. When `logs` or `watch` follows a running instance, `PROGRESS` lines are refreshed in place as a single console progress line with a character bar, for example `PROGRESS [##########----------]  50% ...`, while the log file keeps the complete line-by-line history.
 
+Crash/recovery mode writes `CRASH PROGRESS` to the main log, which shows parent-process progress by `crash.cycles`. Worker `START`, `CONFIG`, and `PROGRESS` lines are written to `logs/<instance>-worker.out` for debugging individual worker phases.
+
 Regular workloads are fresh runs by default: when `resume=false`, the runner acquires the workDir lock and then clears `db/`, `state/`, `metrics/`, `report/`, and `fault/` so a new run does not reuse database files or state files from a previous incomplete run. A crash/recovery worker uses `--resume=true`, keeps the same workDir, and performs recovery verification.
 
 Single instance:
@@ -232,6 +263,8 @@ bin/longrun stop --config config/smoke.properties
 ```bash
 bin/longrun watch --config config/smoke.properties
 ```
+
+Pressing `Ctrl+C` during `watch` only stops log following. The background instance keeps running; stop it explicitly with `bin/longrun stop --config config/smoke.properties`.
 
 Multiple instances must use different instances and different work directories:
 
