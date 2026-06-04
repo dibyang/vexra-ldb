@@ -2,6 +2,7 @@ package net.xdob.vexra.ldb.longrun.workload;
 
 import net.xdob.vexra.ldb.LDB;
 import net.xdob.vexra.ldb.Options;
+import net.xdob.vexra.ldb.SnapshotCursor;
 import net.xdob.vexra.ldb.WriteOptions;
 import net.xdob.vexra.ldb.impl.LDBFactory;
 import net.xdob.vexra.ldb.longrun.config.LongRunConfig;
@@ -15,11 +16,13 @@ import net.xdob.vexra.ldb.longrun.model.Ledger;
 import net.xdob.vexra.ldb.longrun.model.ValueModel;
 import net.xdob.vexra.ldb.longrun.report.ReportAnalyzer;
 import net.xdob.vexra.ldb.longrun.report.ReportSummary;
+import net.xdob.vexra.ldb.longrun.util.LongRunBuildInfo;
 import net.xdob.vexra.ldb.longrun.verify.ConsistencyVerifier;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.PrintStream;
+import java.util.Arrays;
 import java.util.Random;
 import java.util.Properties;
 
@@ -43,6 +46,7 @@ public final class SmokeRunner {
     File dbDir = new File(workDir, "db");
     File stateDir = new File(workDir, "state");
     try (WorkDirLock ignored = WorkDirLock.acquire(workDir)) {
+      out.println(LongRunBuildInfo.testedComponentLine());
       if (!config.resume()) {
         prepareFreshRun(workDir, out);
       }
@@ -60,6 +64,7 @@ public final class SmokeRunner {
         CommittedState state = CommittedState.load(stateDir);
         Ledger ledger = new Ledger(1024);
         if (config.resume()) {
+          reconcileRecoveredState(db, state, stateDir, out);
           verifier.verifyActive(db, state);
           recoveryChecks++;
           metrics.event("recovery", "PASS", "recovery check " + recoveryChecks);
@@ -188,6 +193,32 @@ public final class SmokeRunner {
       ValueModel.verify(value, keyId, sequence);
     }
     ledger.add(Ledger.Kind.READ, keyId, sequence == null ? -1 : sequence);
+  }
+
+  private void reconcileRecoveredState(LDB db, CommittedState state,
+                                       File stateDir, PrintStream out) throws Exception {
+    long maxSequence = state.lastSequence();
+    int activeKeys = 0;
+    state.active().clear();
+    try (SnapshotCursor cursor = db.newSnapshotCursor()) {
+      cursor.seekToFirst();
+      while (cursor.isValid()) {
+        ValueModel.Decoded decoded = ValueModel.decode(cursor.value());
+        byte[] expectedKey = ValueModel.key(decoded.keyId());
+        if (!Arrays.equals(expectedKey, cursor.key())) {
+          throw new IllegalStateException("key/value id mismatch for recovered key "
+              + decoded.keyId());
+        }
+        state.active().put(decoded.keyId(), decoded.sequence());
+        maxSequence = Math.max(maxSequence, decoded.sequence());
+        activeKeys++;
+        cursor.next();
+      }
+    }
+    state.advanceLastSequence(maxSequence);
+    state.save(stateDir);
+    out.println("RECOVERY reconciled activeKeys=" + activeKeys
+        + " lastSequence=" + state.lastSequence());
   }
 
   private static void printConfig(PrintStream out, LongRunConfig config) {

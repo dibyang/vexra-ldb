@@ -82,6 +82,16 @@ tasks.withType(JavaCompile).configureEach {
   options.encoding = "UTF-8"
 }
 
+jar {
+  manifest {
+    attributes(
+        'Implementation-Title': project.rootProject.name,
+        'Implementation-Version': project.rootProject.version,
+        'Implementation-Vendor': project.rootProject.group
+    )
+  }
+}
+
 version = project.rootProject.version
 
 

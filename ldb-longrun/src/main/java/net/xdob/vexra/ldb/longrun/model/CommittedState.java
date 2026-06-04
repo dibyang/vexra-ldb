@@ -56,6 +56,12 @@ public final class CommittedState {
     return lastSequence;
   }
 
+  public void advanceLastSequence(long sequence) {
+    if (sequence > lastSequence) {
+      lastSequence = sequence;
+    }
+  }
+
   public long operations() {
     return operations;
   }

@@ -10,6 +10,8 @@ version = project.rootProject.version
 sourceCompatibility = project.rootProject.jdkVersion
 targetCompatibility = project.rootProject.jdkVersion
 
+def generatedResourcesDir = layout.buildDirectory.dir('generated/resources/longrun')
+
 repositories {
   mavenCentral()
   maven { url 'https://maven.aliyun.com/repository/public/' }
@@ -30,6 +32,33 @@ application {
 
 tasks.withType(JavaCompile).configureEach {
   options.encoding = 'UTF-8'
+}
+
+tasks.register('generateLongRunBuildInfo') {
+  def outputFile = generatedResourcesDir.map {
+    it.file('META-INF/ldb-longrun/build.properties')
+  }
+  outputs.file(outputFile)
+  doLast {
+    def file = outputFile.get().asFile
+    file.parentFile.mkdirs()
+    file.text = [
+        "tested.component.name=${project.rootProject.name}",
+        "tested.component.version=${project.rootProject.version}",
+        "test.tool.name=${project.name}",
+        "test.tool.version=${project.version}"
+    ].join(System.lineSeparator()) + System.lineSeparator()
+  }
+}
+
+sourceSets {
+  main {
+    resources.srcDir(generatedResourcesDir)
+  }
+}
+
+tasks.named('processResources') {
+  dependsOn tasks.named('generateLongRunBuildInfo')
 }
 
 tasks.named('distTar', Tar) {
@@ -62,6 +91,9 @@ distributions {
       from('.') {
         include 'README.md'
         include 'README.en.md'
+        include 'install-completion.bash'
+        include 'longrun-completion.bash'
+        include 'longrun-completion.ps1'
         into ''
       }
     }

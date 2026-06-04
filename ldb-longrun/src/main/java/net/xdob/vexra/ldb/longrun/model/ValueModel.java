@@ -58,11 +58,21 @@ public final class ValueModel {
    * @param sequence 预期序号
    */
   public static void verify(byte[] value, long keyId, long sequence) {
+    Decoded decoded = decode(value);
+    if (decoded.keyId() != keyId || decoded.sequence() != sequence) {
+      throw new IllegalStateException("value mismatch for key " + keyId
+          + " expectedSequence=" + sequence
+          + " actualKey=" + decoded.keyId()
+          + " actualSequence=" + decoded.sequence());
+    }
+  }
+
+  public static Decoded decode(byte[] value) {
     if (value == null) {
-      throw new IllegalStateException("missing key " + keyId + " sequence " + sequence);
+      throw new IllegalStateException("missing value");
     }
     if (value.length < HEADER_BYTES) {
-      throw new IllegalStateException("value too small for key " + keyId);
+      throw new IllegalStateException("value too small");
     }
     ByteBuffer buffer = ByteBuffer.wrap(value);
     int magic = buffer.getInt();
@@ -71,10 +81,10 @@ public final class ValueModel {
     int size = buffer.getInt();
     int expectedChecksum = buffer.getInt();
     int actualChecksum = checksumValue(value);
-    if (magic != MAGIC || actualKeyId != keyId || actualSequence != sequence
-        || size != value.length || expectedChecksum != actualChecksum) {
-      throw new IllegalStateException("checksum mismatch for key " + keyId);
+    if (magic != MAGIC || size != value.length || expectedChecksum != actualChecksum) {
+      throw new IllegalStateException("checksum mismatch for key " + actualKeyId);
     }
+    return new Decoded(actualKeyId, actualSequence);
   }
 
   private static int checksumValue(byte[] value) {
@@ -88,5 +98,23 @@ public final class ValueModel {
     CRC32 crc32 = new CRC32();
     crc32.update(bytes, offset, length);
     return (int) crc32.getValue();
+  }
+
+  public static final class Decoded {
+    private final long keyId;
+    private final long sequence;
+
+    private Decoded(long keyId, long sequence) {
+      this.keyId = keyId;
+      this.sequence = sequence;
+    }
+
+    public long keyId() {
+      return keyId;
+    }
+
+    public long sequence() {
+      return sequence;
+    }
   }
 }
