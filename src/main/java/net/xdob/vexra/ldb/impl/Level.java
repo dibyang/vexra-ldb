@@ -132,7 +132,9 @@ public class Level
         }
       }
 
-      long rangeDeleteSequence = newestCoveringRangeDelete(fileMetaData, key, pointSequence);
+      long rangeDeleteSequence = fileMetaData.hasRangeDeletes()
+          ? newestCoveringRangeDelete(fileMetaData, key, pointSequence)
+          : -1;
       if (rangeDeleteSequence >= 0) {
         return LookupResult.deleted(key, rangeDeleteSequence);
       }

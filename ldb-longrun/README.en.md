@@ -69,6 +69,7 @@ Other common shorthand options:
 -t/--metrics.interval       => metrics.interval
 -u/--state.interval         => state.interval
 -o/--check.reopenInterval   => check.reopenInterval
+-O/--check.finalVerify      => check.finalVerify
 -e/--crash.enabled         => crash.enabled
 -z/--crash.interval        => crash.interval
 -l/--crash.cycles          => crash.cycles
@@ -78,6 +79,7 @@ Other common shorthand options:
 -b/--fault.maxBytes        => fault.maxBytes
 -h/--fault.retainedCopies  => fault.retainedCopies
 -L/--limits.maxDbSizeGb    => limits.maxDbSizeGb
+-M/--ldb.writeBufferSizeMb => ldb.writeBufferSizeMb
 ```
 
 For `report`, `-w <dir>` is equivalent to `--workDir <dir>`.
@@ -129,6 +131,7 @@ Register-ArgumentCompleter -CommandName longrun -ScriptBlock {
     '-t', '--metrics.interval',
     '-u', '--state.interval',
     '-o', '--check.reopenInterval',
+    '-O', '--check.finalVerify',
     '-e', '--crash.enabled',
     '-z', '--crash.interval',
     '-l', '--crash.cycles',
@@ -137,7 +140,8 @@ Register-ArgumentCompleter -CommandName longrun -ScriptBlock {
     '-j', '--fault.kinds',
     '-b', '--fault.maxBytes',
     '-h', '--fault.retainedCopies',
-    '-L', '--limits.maxDbSizeGb'
+    '-L', '--limits.maxDbSizeGb',
+    '-M', '--ldb.writeBufferSizeMb'
   )
 
   function Get-ProfileCandidates {
@@ -225,11 +229,11 @@ PowerShell completion script file:
 Default profiles are shipped under `config/`:
 
 - `smoke.properties`: 5-minute quick validation by default.
-- `performance.properties`: 3-minute mixed small-value performance stress run with `workload.syncWrites=false` for overall engine throughput.
-- `performance-write.properties`: 3-minute write-heavy small-value performance stress run with `workload.syncWrites=false` for write-path throughput.
-- `performance-read.properties`: 3-minute read-heavy small-value performance stress run with `workload.syncWrites=false` for read-path throughput.
-- `performance-large-value.properties`: 3-minute mixed large-value performance stress run with `workload.syncWrites=false` for large-value bandwidth and IO pressure.
-- `performance-durable.properties`: 3-minute durable performance stress run with `workload.syncWrites=true` for durable write/fsync cost.
+- `performance.properties`: 3-minute mixed small-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for overall engine throughput.
+- `performance-write.properties`: 3-minute write-heavy small-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for write-path throughput.
+- `performance-read.properties`: 3-minute read-heavy small-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for read-path throughput.
+- `performance-large-value.properties`: 3-minute mixed large-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for large-value bandwidth and IO pressure.
+- `performance-durable.properties`: 3-minute durable performance stress run with `workload.syncWrites=true` and `check.finalVerify=false` for durable write/fsync cost.
 - `nightly.properties`: 12-hour nightly run by default.
 - `soak.properties`: 7-day soak by default, override with `--run.duration=30d` when needed.
 - `reopen.properties`: periodic close/open with `reopenChecks`.
@@ -248,7 +252,7 @@ run/<instance>.pid
 logs/<instance>.out
 ```
 
-Every `start` rotates the previous log to `logs/<instance>.out.1`, `.2`, and so on, then creates a fresh `logs/<instance>.out` for the new run. The instance first prints `START` and multiple `CONFIG` lines, and the running workload prints `PROGRESS` lines with `progressPercent`, `windowOpsPerSecond`, `avgOpsPerSecond`, `minOpsPerSecond`, and `maxOpsPerSecond` at `metrics.interval`. When `logs` or `watch` follows a running instance, `PROGRESS` lines are refreshed in place as a single console progress line with a character bar, for example `PROGRESS [##########----------]  50% ...`, while the log file keeps the complete line-by-line history. After completion, the main log prints a `SUMMARY` line with avg/min/max, p05/p50/p95, throughputDropRatio, finalSizeBytes, and sizeAmplification.
+Every `start` rotates the previous log to `logs/<instance>.out.1`, `.2`, and so on, then creates a fresh `logs/<instance>.out` for the new run. The instance first prints `START` and multiple `CONFIG` lines, and the log file keeps full `PROGRESS` lines with `progressPercent`, `windowOpsPerSecond`, `avgOpsPerSecond`, `minOpsPerSecond`, and `maxOpsPerSecond` at `metrics.interval`. When `logs` or `watch` follows a running instance, `PROGRESS` lines are refreshed in place as compact console progress lines, for example `PROGRESS [##########----------]  50% ops=100000 win=68000/s avg=52000/s min=18000/s max=68000/s keys=50000 slow=0 imm=0 l0wait=0 comp=0 backlog=false`, while the log file keeps the complete line-by-line history plus LDB write-stall and compaction diagnostics. Once the workload reaches 100%, the main log first prints `RESULT phase=workload`, then marks final verification and report generation with `FINAL phase=verify/resource/report`. After completion, the main log prints a `SUMMARY` line with overall avg/min/max, p05/p50/p95, per-read/write/remove p50/p95, throughputDropRatio, finalSizeBytes, and sizeAmplification; performance statistics skip startup warmup samples by default and expose the accounting through `warmupSamples` and `measuredSamples`.
 
 Crash/recovery mode writes `CRASH PROGRESS` to the main log, which shows parent-process progress by `crash.cycles`. Worker `START`, `CONFIG`, and `PROGRESS` lines are written to `logs/<instance>-worker.out` for debugging individual worker phases.
 
@@ -318,7 +322,7 @@ bin/longrun watch -c performance-large-value
 bin/longrun watch -c performance-durable
 ```
 
-`performance` uses asynchronous writes and a mixed small-value workload for overall engine throughput. `performance-write` focuses on the write path. `performance-read` focuses on the read path. `performance-large-value` keeps the larger-value pressure profile. `performance-durable` uses synchronous writes to observe durable write and fsync cost.
+`performance` uses asynchronous writes and a mixed small-value workload for overall engine throughput. `performance-write` focuses on the write path. `performance-read` focuses on the read path. `performance-large-value` keeps the larger-value pressure profile. `performance-durable` uses synchronous writes to observe durable write and fsync cost. Performance profiles default to `check.finalVerify=false` so the full active-key verification after 100% does not delay the performance report. They also default to `ldb.writeBufferSizeMb=512`, `state.interval=3m`, and `workload.commitEveryOps=1000000000` to reduce premature memtable flushes and longrun state-save interference during short performance runs. Add `-O true` or `--check.finalVerify=true` when the run should also perform final consistency verification.
 
 ## Release Acceptance
 

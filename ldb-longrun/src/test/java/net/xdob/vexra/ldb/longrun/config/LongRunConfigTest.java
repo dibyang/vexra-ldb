@@ -50,6 +50,7 @@ class LongRunConfigTest {
         "-t", "12s",
         "-u", "20s",
         "-o", "30s",
+        "-O", "false",
         "-e", "true",
         "-z", "1s",
         "-l", "3",
@@ -59,6 +60,7 @@ class LongRunConfigTest {
         "-b", "65536",
         "-h", "9",
         "-L", "30",
+        "-M", "512",
         "-p", "smoke"
     });
 
@@ -78,6 +80,7 @@ class LongRunConfigTest {
     assertEquals("12s", values.get("metrics.interval"));
     assertEquals("20s", values.get("state.interval"));
     assertEquals("30s", values.get("check.reopenInterval"));
+    assertEquals("false", values.get("check.finalVerify"));
     assertEquals("true", values.get("crash.enabled"));
     assertEquals("1s", values.get("crash.interval"));
     assertEquals("3", values.get("crash.cycles"));
@@ -87,6 +90,7 @@ class LongRunConfigTest {
     assertEquals("65536", values.get("fault.maxBytes"));
     assertEquals("9", values.get("fault.retainedCopies"));
     assertEquals("30", values.get("limits.maxDbSizeGb"));
+    assertEquals("512", values.get("ldb.writeBufferSizeMb"));
     assertEquals("smoke", values.get("profile"));
   }
 
@@ -101,6 +105,7 @@ class LongRunConfigTest {
     assertEquals("smoke", config.runName());
     assertEquals("test-a", config.instance());
     assertEquals(1000L, config.durationMillis());
+    assertEquals(true, config.finalVerifyEnabled());
   }
 
   @Test
@@ -125,8 +130,12 @@ class LongRunConfigTest {
 
     assertEquals("performance", performance.runName());
     assertEquals(false, performance.syncWrites());
+    assertEquals(false, performance.finalVerifyEnabled());
+    assertEquals(512L, performance.ldbWriteBufferSizeMb());
     assertEquals("performance-durable", durable.runName());
     assertEquals(true, durable.syncWrites());
+    assertEquals(false, durable.finalVerifyEnabled());
+    assertEquals(512L, durable.ldbWriteBufferSizeMb());
   }
 
   @Test

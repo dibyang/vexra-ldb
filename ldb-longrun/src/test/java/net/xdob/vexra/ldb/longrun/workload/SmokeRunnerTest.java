@@ -37,13 +37,21 @@ class SmokeRunnerTest {
     String output = new String(out.toByteArray(), StandardCharsets.UTF_8);
     assertTrue(output.contains("START run=smoke"));
     assertTrue(output.contains("CONFIG workload.keySpace=100"));
+    assertTrue(output.contains("CONFIG check.finalVerify=true"));
+    assertTrue(output.contains("CONFIG ldb.writeBufferSizeMb=64"));
     assertTrue(output.contains("PROGRESS timeMillis="));
     assertTrue(output.contains("progressPercent="));
     assertTrue(output.contains("windowOpsPerSecond="));
     assertTrue(output.contains("avgOpsPerSecond="));
     assertTrue(output.contains("minOpsPerSecond="));
     assertTrue(output.contains("maxOpsPerSecond="));
+    assertTrue(output.contains("ldbWriteSlowdownCount="));
+    assertTrue(output.contains("ldbCompactionRunCount="));
+    assertTrue(output.contains("RESULT phase=workload"));
+    assertTrue(output.contains("FINAL phase=verify enabled=true"));
     assertTrue(output.contains("SUMMARY status="));
+    assertTrue(output.contains("warmupSamples="));
+    assertTrue(output.contains("measuredSamples="));
     assertTrue(output.contains("p50OpsPerSecond="));
     assertTrue(output.contains("PASS smoke"));
   }

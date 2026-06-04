@@ -22,17 +22,28 @@ public class FileMetaData {
   private final InternalKey largest;
 
   /**
+   * Whether this table may contain range tombstones.
+   */
+  private final boolean hasRangeDeletes;
+
+  /**
    * Seeks allowed until compaction
    */
   // todo this mutable state should be moved elsewhere
   private final AtomicInteger allowedSeeks = new AtomicInteger(1 << 30);
 
   public FileMetaData(int cfId, long number, long fileSize, InternalKey smallest, InternalKey largest) {
+    this(cfId, number, fileSize, smallest, largest, true);
+  }
+
+  public FileMetaData(int cfId, long number, long fileSize, InternalKey smallest,
+                      InternalKey largest, boolean hasRangeDeletes) {
     this.cfId = cfId;
     this.number = number;
     this.fileSize = fileSize;
     this.smallest = smallest;
     this.largest = largest;
+    this.hasRangeDeletes = hasRangeDeletes;
   }
 
   public int getCfId() {
@@ -55,6 +66,10 @@ public class FileMetaData {
     return largest;
   }
 
+  public boolean hasRangeDeletes() {
+    return hasRangeDeletes;
+  }
+
   public int getAllowedSeeks() {
     return allowedSeeks.get();
   }
@@ -75,6 +90,7 @@ public class FileMetaData {
     sb.append(", fileSize=").append(fileSize);
     sb.append(", smallest=").append(smallest);
     sb.append(", largest=").append(largest);
+    sb.append(", hasRangeDeletes=").append(hasRangeDeletes);
     sb.append(", allowedSeeks=").append(allowedSeeks);
     sb.append('}');
     return sb.toString();

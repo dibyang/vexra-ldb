@@ -3111,6 +3111,7 @@ public class LDbImpl implements LDB {
     try {
       InternalKey smallest = null;
       InternalKey largest = null;
+      boolean hasRangeDeletes = false;
 
       FileChannel channel = new FileOutputStream(file).getChannel();
       try {
@@ -3123,6 +3124,9 @@ public class LDbImpl implements LDB {
           InternalKey key = entry.getKey();
           if (smallest == null) {
             smallest = key;
+          }
+          if (key.getValueType() == DELETE_RANGE) {
+            hasRangeDeletes = true;
           }
           largest = largerMetadataKey(largest, metadataLargestKey(key, entry.getValue()));
           Slice encodedKey = key.encode();
@@ -3146,7 +3150,8 @@ public class LDbImpl implements LDB {
         return null;
       }
 
-      FileMetaData fileMetaData = new FileMetaData(cfId, fileNumber, file.length(), smallest, largest);
+      FileMetaData fileMetaData = new FileMetaData(cfId, fileNumber, file.length(),
+          smallest, largest, hasRangeDeletes);
       tableCache.newIterator(fileMetaData);
       return fileMetaData;
     } catch (IOException e) {
@@ -3206,6 +3211,9 @@ public class LDbImpl implements LDB {
           if (compactionState.builder.getEntryCount() == 0) {
             compactionState.currentSmallest = key;
           }
+          if (key.getValueType() == DELETE_RANGE) {
+            compactionState.currentHasRangeDeletes = true;
+          }
           compactionState.currentLargest =
               largerMetadataKey(compactionState.currentLargest, metadataLargestKey(key, iterator.peek().getValue()));
           Slice encodedKey = key.encode();
@@ -3246,6 +3254,7 @@ public class LDbImpl implements LDB {
       compactionState.currentFileSize = 0;
       compactionState.currentSmallest = null;
       compactionState.currentLargest = null;
+      compactionState.currentHasRangeDeletes = false;
 
       File file = new File(databaseDir, Filename.tableFileName(fileNumber));
       compactionState.outfile = new FileOutputStream(file).getChannel();
@@ -3278,7 +3287,8 @@ public class LDbImpl implements LDB {
         compactionState.currentFileNumber,
         compactionState.currentFileSize,
         compactionState.currentSmallest,
-        compactionState.currentLargest);
+        compactionState.currentLargest,
+        compactionState.currentHasRangeDeletes);
     compactionState.outputs.add(currentFileMetaData);
 
     compactionState.builder = null;
@@ -3381,6 +3391,7 @@ public class LDbImpl implements LDB {
     private long currentFileSize;
     private InternalKey currentSmallest;
     private InternalKey currentLargest;
+    private boolean currentHasRangeDeletes;
 
     private long totalBytes;
 

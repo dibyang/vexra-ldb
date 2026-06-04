@@ -40,8 +40,10 @@ public final class ReportAnalyzer {
     String runId = "";
     FaultStats faultStats = faultStats(new File(workDir, "metrics/fault.csv"));
     int samples = 0;
-    DoubleSummaryStatistics opsStats = new DoubleSummaryStatistics();
-    List<Double> opsPerSecondSamples = new ArrayList<>();
+    List<Double> allOpsPerSecondSamples = new ArrayList<>();
+    List<Double> allReadsPerSecondSamples = new ArrayList<>();
+    List<Double> allWritesPerSecondSamples = new ArrayList<>();
+    List<Double> allRemovesPerSecondSamples = new ArrayList<>();
     if (ops.isFile()) {
       try (BufferedReader reader = new BufferedReader(new FileReader(ops))) {
         String line = reader.readLine();
@@ -51,14 +53,18 @@ public final class ReportAnalyzer {
             runId = parts[1];
             operations = parseLong(parts[4]);
             double opsPerSecond = parseDouble(parts[5]);
-            opsStats.accept(opsPerSecond);
-            opsPerSecondSamples.add(opsPerSecond);
+            allOpsPerSecondSamples.add(opsPerSecond);
             reads = parseLong(parts[6]);
             writes = parseLong(parts[7]);
             removes = parseLong(parts[8]);
             commits = parseLong(parts[9]);
             reopenChecks = parseLong(parts[10]);
             recoveryChecks = parseLong(parts[11]);
+            if (parts.length >= 15) {
+              allReadsPerSecondSamples.add(parseDouble(parts[12]));
+              allWritesPerSecondSamples.add(parseDouble(parts[13]));
+              allRemovesPerSecondSamples.add(parseDouble(parts[14]));
+            }
             samples++;
           }
         }
@@ -66,6 +72,19 @@ public final class ReportAnalyzer {
     } else {
       warnings.add("metrics/ops.csv is missing");
     }
+    int warmupSamples = allOpsPerSecondSamples.size() > 2 ? 2 : Math.max(0, allOpsPerSecondSamples.size() - 1);
+    List<Double> measuredOpsPerSecondSamples = allOpsPerSecondSamples.subList(warmupSamples,
+        allOpsPerSecondSamples.size());
+    List<Double> measuredReadsPerSecondSamples = measuredSamples(allReadsPerSecondSamples, warmupSamples);
+    List<Double> measuredWritesPerSecondSamples = measuredSamples(allWritesPerSecondSamples, warmupSamples);
+    List<Double> measuredRemovesPerSecondSamples = measuredSamples(allRemovesPerSecondSamples, warmupSamples);
+    DoubleSummaryStatistics opsStats = new DoubleSummaryStatistics();
+    for (Double opsPerSecond : measuredOpsPerSecondSamples) {
+      opsStats.accept(opsPerSecond);
+    }
+    DoubleSummaryStatistics readStats = stats(measuredReadsPerSecondSamples);
+    DoubleSummaryStatistics writeStats = stats(measuredWritesPerSecondSamples);
+    DoubleSummaryStatistics removeStats = stats(measuredRemovesPerSecondSamples);
     long finalSizeBytes = directorySize(workDir);
     ResourceStats resourceStats = resourceStats(new File(workDir, "state/resource.properties"));
     ReclamationStats reclamationStats = reclamationStats(new File(workDir, "metrics/reclamation.csv"));
@@ -75,9 +94,9 @@ public final class ReportAnalyzer {
     double avgOps = samples == 0 ? 0 : opsStats.getAverage();
     double minOps = samples == 0 ? 0 : opsStats.getMin();
     double maxOps = samples == 0 ? 0 : opsStats.getMax();
-    double p05Ops = percentile(opsPerSecondSamples, 0.05D);
-    double p50Ops = percentile(opsPerSecondSamples, 0.50D);
-    double p95Ops = percentile(opsPerSecondSamples, 0.95D);
+    double p05Ops = percentile(measuredOpsPerSecondSamples, 0.05D);
+    double p50Ops = percentile(measuredOpsPerSecondSamples, 0.50D);
+    double p95Ops = percentile(measuredOpsPerSecondSamples, 0.95D);
     double throughputDropRatio = p50Ops <= 0.0D ? 0.0D : Math.max(0.0D, 1.0D - p05Ops / p50Ops);
     long suspicious = suspiciousLines(new File(workDir, "logs"));
     if (suspicious > 0) {
@@ -109,12 +128,17 @@ public final class ReportAnalyzer {
     summary.put("recoveryChecks", recoveryChecks);
     summary.put("finalSizeBytes", finalSizeBytes);
     summary.put("metricSamples", samples);
+    summary.put("warmupSamples", warmupSamples);
+    summary.put("measuredSamples", measuredOpsPerSecondSamples.size());
     summary.put("avgOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", avgOps));
     summary.put("minOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", minOps));
     summary.put("maxOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", maxOps));
     summary.put("p05OpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", p05Ops));
     summary.put("p50OpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", p50Ops));
     summary.put("p95OpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", p95Ops));
+    putRateSummary(summary, "Read", readStats, measuredReadsPerSecondSamples);
+    putRateSummary(summary, "Write", writeStats, measuredWritesPerSecondSamples);
+    putRateSummary(summary, "Remove", removeStats, measuredRemovesPerSecondSamples);
     summary.put("throughputDropRatio", String.format(java.util.Locale.ROOT, "%.3f", throughputDropRatio));
     summary.put("reclamationEvents", reclamationStats.events);
     summary.put("reclamationSuccessEvents", reclamationStats.success);
@@ -346,6 +370,52 @@ public final class ReportAnalyzer {
 
   private static double parseDouble(String value) {
     return Double.parseDouble(value.trim());
+  }
+
+  private static List<Double> measuredSamples(List<Double> samples, int warmupSamples) {
+    if (samples.isEmpty()) {
+      return Collections.emptyList();
+    }
+    int start = Math.min(Math.max(0, warmupSamples), samples.size());
+    return samples.subList(start, samples.size());
+  }
+
+  private static DoubleSummaryStatistics stats(List<Double> values) {
+    DoubleSummaryStatistics stats = new DoubleSummaryStatistics();
+    for (Double value : values) {
+      stats.accept(value);
+    }
+    return stats;
+  }
+
+  private static void putRateSummary(ReportSummary summary, String name,
+                                     DoubleSummaryStatistics stats,
+                                     List<Double> samples) {
+    summary.put("avg" + name + "OpsPerSecond", formatStats(stats, "avg"));
+    summary.put("min" + name + "OpsPerSecond", formatStats(stats, "min"));
+    summary.put("max" + name + "OpsPerSecond", formatStats(stats, "max"));
+    summary.put("p50" + name + "OpsPerSecond", formatDouble(percentile(samples, 0.50D)));
+    summary.put("p95" + name + "OpsPerSecond", formatDouble(percentile(samples, 0.95D)));
+  }
+
+  private static String formatStats(DoubleSummaryStatistics stats, String kind) {
+    if (stats.getCount() == 0) {
+      return "0.000";
+    }
+    if ("avg".equals(kind)) {
+      return formatDouble(stats.getAverage());
+    }
+    if ("min".equals(kind)) {
+      return formatDouble(stats.getMin());
+    }
+    if ("max".equals(kind)) {
+      return formatDouble(stats.getMax());
+    }
+    return "0.000";
+  }
+
+  private static String formatDouble(double value) {
+    return String.format(java.util.Locale.ROOT, "%.3f", value);
   }
 
   private static double percentile(List<Double> values, double percentile) {

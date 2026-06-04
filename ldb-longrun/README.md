@@ -69,6 +69,7 @@ longrun watch --config config/fault-injection
 -t/--metrics.interval       => metrics.interval
 -u/--state.interval         => state.interval
 -o/--check.reopenInterval   => check.reopenInterval
+-O/--check.finalVerify      => check.finalVerify
 -e/--crash.enabled          => crash.enabled
 -z/--crash.interval         => crash.interval
 -l/--crash.cycles           => crash.cycles
@@ -78,6 +79,7 @@ longrun watch --config config/fault-injection
 -b/--fault.maxBytes         => fault.maxBytes
 -h/--fault.retainedCopies   => fault.retainedCopies
 -L/--limits.maxDbSizeGb     => limits.maxDbSizeGb
+-M/--ldb.writeBufferSizeMb  => ldb.writeBufferSizeMb
 ```
 
 `report` 命令支持 `-w <dir>`，等价于 `--workDir <dir>`。
@@ -108,11 +110,11 @@ bash ./install-completion.bash
 默认 profile 位于发行包 `config/`：
 
 - `smoke.properties`：默认 5 分钟快速验证。
-- `performance.properties`：默认 3 分钟轻量混合性能压测，小 value，`workload.syncWrites=false`，用于观察引擎综合吞吐。
-- `performance-write.properties`：默认 3 分钟写入主导性能压测，小 value，`workload.syncWrites=false`，用于观察写路径吞吐。
-- `performance-read.properties`：默认 3 分钟读取主导性能压测，小 value，`workload.syncWrites=false`，用于观察读路径吞吐。
-- `performance-large-value.properties`：默认 3 分钟大 value 混合性能压测，`workload.syncWrites=false`，用于观察大 value 带宽和 IO 压力。
-- `performance-durable.properties`：默认 3 分钟同步落盘性能压测，`workload.syncWrites=true`，用于观察 durable write/fsync 口径。
+- `performance.properties`：默认 3 分钟轻量混合性能压测，小 value，`workload.syncWrites=false`，默认 `check.finalVerify=false`，用于观察引擎综合吞吐。
+- `performance-write.properties`：默认 3 分钟写入主导性能压测，小 value，`workload.syncWrites=false`，默认 `check.finalVerify=false`，用于观察写路径吞吐。
+- `performance-read.properties`：默认 3 分钟读取主导性能压测，小 value，`workload.syncWrites=false`，默认 `check.finalVerify=false`，用于观察读路径吞吐。
+- `performance-large-value.properties`：默认 3 分钟大 value 混合性能压测，`workload.syncWrites=false`，默认 `check.finalVerify=false`，用于观察大 value 带宽和 IO 压力。
+- `performance-durable.properties`：默认 3 分钟同步落盘性能压测，`workload.syncWrites=true`，默认 `check.finalVerify=false`，用于观察 durable write/fsync 口径。
 - `nightly.properties`：默认 12 小时夜间长跑。
 - `soak.properties`：默认 7 天长稳压测，可通过 `--run.duration=30d` 覆盖。
 - `reopen.properties`：周期性 close/open，并记录 `reopenChecks`。
@@ -131,9 +133,9 @@ run/<instance>.pid
 logs/<instance>.out
 ```
 
-每次 `start` 会把旧日志轮转为 `logs/<instance>.out.1`、`.2` 等，并为新测试创建新的 `logs/<instance>.out`。实例启动后会先输出 `START` 和多行 `CONFIG`，运行中按 `metrics.interval` 输出带 `progressPercent`、`windowOpsPerSecond`、`avgOpsPerSecond`、`minOpsPerSecond` 和 `maxOpsPerSecond` 的 `PROGRESS` 行。
+每次 `start` 会把旧日志轮转为 `logs/<instance>.out.1`、`.2` 等，并为新测试创建新的 `logs/<instance>.out`。实例启动后会先输出 `START` 和多行 `CONFIG`，日志文件中的运行期 `PROGRESS` 行会按 `metrics.interval` 保留 `progressPercent`、`windowOpsPerSecond`、`avgOpsPerSecond`、`minOpsPerSecond` 和 `maxOpsPerSecond` 等完整字段。
 
-`logs` 和 `watch` 跟随运行实例时，会把 `PROGRESS` 行在控制台原地刷新成单行进度条，例如 `PROGRESS [##########----------]  50% ...`；日志文件仍保留完整逐行历史。测试结束后主日志会打印 `SUMMARY` 行，包含 avg/min/max、p05/p50/p95、throughputDropRatio、finalSizeBytes 和 sizeAmplification。
+`logs` 和 `watch` 跟随运行实例时，会把 `PROGRESS` 行在控制台原地刷新成短进度条，例如 `PROGRESS [##########----------]  50% ops=100000 win=68000/s avg=52000/s min=18000/s max=68000/s keys=50000 slow=0 imm=0 l0wait=0 comp=0 backlog=false`，避免终端换行；日志文件仍保留完整逐行历史，并额外记录 LDB write stall 与 compaction 指标。workload 到达 100% 后会先打印 `RESULT phase=workload`，随后用 `FINAL phase=verify/resource/report` 标记最终校验和报告阶段。测试结束后主日志会打印 `SUMMARY` 行，包含总体 avg/min/max、p05/p50/p95、读/写/删各自的 p50/p95、throughputDropRatio、finalSizeBytes 和 sizeAmplification；性能统计默认跳过启动 warmup 采样，并通过 `warmupSamples` 和 `measuredSamples` 标明统计口径。
 
 crash/recovery 模式主日志输出 `CRASH PROGRESS`，表示父进程按 `crash.cycles` 统计的整体进度。worker 自身的 `START`、`CONFIG` 和 `PROGRESS` 写入 `logs/<instance>-worker.out`，用于排查单个 worker 阶段。
 
@@ -207,7 +209,7 @@ work/<profile>/report/summary.properties
 ./bin/longrun watch -c performance-durable
 ```
 
-`performance` 使用异步写和小 value 混合负载，主要看 LDB 综合吞吐；`performance-write` 偏写路径；`performance-read` 偏读路径；`performance-large-value` 保留大 value 压力；`performance-durable` 使用同步写，主要看落盘和 fsync 成本。
+`performance` 使用异步写和小 value 混合负载，主要看 LDB 综合吞吐；`performance-write` 偏写路径；`performance-read` 偏读路径；`performance-large-value` 保留大 value 压力；`performance-durable` 使用同步写，主要看落盘和 fsync 成本。性能 profiles 默认 `check.finalVerify=false`，避免 100% 后的全量 active key 校验影响性能报告体验；同时默认 `ldb.writeBufferSizeMb=512`、`state.interval=3m`、`workload.commitEveryOps=1000000000`，减少短性能压测中过早 memtable flush 和 longrun 状态全量保存带来的干扰。如需同时做最终一致性校验，可加 `-O true` 或 `--check.finalVerify=true`。
 
 ## 发布验收
 

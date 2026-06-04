@@ -142,6 +142,8 @@ public final class LongRunConfig {
         return "state.interval";
       case "o":
         return "check.reopenInterval";
+      case "O":
+        return "check.finalVerify";
       case "e":
         return "crash.enabled";
       case "z":
@@ -160,6 +162,8 @@ public final class LongRunConfig {
         return "fault.retainedCopies";
       case "L":
         return "limits.maxDbSizeGb";
+      case "M":
+        return "ldb.writeBufferSizeMb";
       default:
         return option;
     }
@@ -184,6 +188,7 @@ public final class LongRunConfig {
     p.setProperty("metrics.interval", "10s");
     p.setProperty("state.interval", "30s");
     p.setProperty("check.reopenInterval", "0");
+    p.setProperty("check.finalVerify", "true");
     p.setProperty("crash.enabled", "false");
     p.setProperty("crash.interval", "0");
     p.setProperty("crash.cycles", "0");
@@ -193,6 +198,7 @@ public final class LongRunConfig {
     p.setProperty("fault.maxBytes", "4096");
     p.setProperty("fault.retainedCopies", "5");
     p.setProperty("limits.maxDbSizeGb", "20");
+    p.setProperty("ldb.writeBufferSizeMb", "64");
     return p;
   }
 
@@ -318,6 +324,10 @@ public final class LongRunConfig {
     return DurationParser.parseMillis(get("check.reopenInterval"));
   }
 
+  public boolean finalVerifyEnabled() {
+    return Boolean.parseBoolean(get("check.finalVerify"));
+  }
+
   public boolean crashEnabled() {
     return Boolean.parseBoolean(get("crash.enabled"));
   }
@@ -353,6 +363,19 @@ public final class LongRunConfig {
 
   public int faultRetainedCopies() {
     return Integer.parseInt(get("fault.retainedCopies"));
+  }
+
+  public int ldbWriteBufferSizeBytes() {
+    long megabytes = Long.parseLong(get("ldb.writeBufferSizeMb"));
+    long bytes = megabytes * 1024L * 1024L;
+    if (megabytes <= 0 || bytes > Integer.MAX_VALUE) {
+      throw new IllegalArgumentException("ldb.writeBufferSizeMb out of range: " + megabytes);
+    }
+    return (int) bytes;
+  }
+
+  public long ldbWriteBufferSizeMb() {
+    return Long.parseLong(get("ldb.writeBufferSizeMb"));
   }
 
   public String get(String key) {

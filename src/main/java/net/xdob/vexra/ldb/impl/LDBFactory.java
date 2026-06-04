@@ -1282,8 +1282,9 @@ public class LDBFactory
       try {
         InternalTableIterator iterator = tableCache.newIterator(fileNumber);
         iterator.seekToFirst();
-        InternalKey smallest = null;
-        InternalKey largest = null;
+      InternalKey smallest = null;
+      InternalKey largest = null;
+      boolean hasRangeDeletes = false;
         while (iterator.hasNext()) {
           Entry<InternalKey, ?> entry = iterator.next();
           InternalKey key = entry.getKey();
@@ -1492,6 +1493,7 @@ public class LDBFactory
       try {
         InternalKey smallest = null;
         InternalKey largest = null;
+        boolean hasRangeDeletes = false;
         try (FileChannel channel = new FileOutputStream(file).getChannel()) {
           TableBuilder tableBuilder = new TableBuilder(
               options,
@@ -1500,10 +1502,13 @@ public class LDBFactory
 
           for (Entry<InternalKey, Slice> entry : memTable) {
             InternalKey key = entry.getKey();
-            if (smallest == null) {
-              smallest = key;
-            }
-            largest = largerMetadataKey(largest, metadataLargestKey(key, entry.getValue()));
+          if (smallest == null) {
+            smallest = key;
+          }
+          if (key.getValueType() == ValueType.DELETE_RANGE) {
+            hasRangeDeletes = true;
+          }
+          largest = largerMetadataKey(largest, metadataLargestKey(key, entry.getValue()));
             tableBuilder.add(key.encode(), entry.getValue());
           }
 
@@ -1516,7 +1521,8 @@ public class LDBFactory
         if (smallest == null) {
           return null;
         }
-        return new FileMetaData(cfId, fileNumber, file.length(), smallest, largest);
+        return new FileMetaData(cfId, fileNumber, file.length(),
+            smallest, largest, hasRangeDeletes);
       } catch (IOException e) {
         if (file.exists() && !file.delete()) {
           throw new IOException("Failed to delete incomplete repair SST: " + file, e);

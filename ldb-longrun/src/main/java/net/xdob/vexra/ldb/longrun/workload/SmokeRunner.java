@@ -51,7 +51,7 @@ public final class SmokeRunner {
         prepareFreshRun(workDir, out);
       }
       try (MetricsWriter metrics = new MetricsWriter(config)) {
-      LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true).verifyChecksums(true));
+      LDB db = openDb(dbDir, config, true);
       long reopenChecks = 0;
       long recoveryChecks = 0;
       out.println("START run=" + config.runName()
@@ -94,7 +94,7 @@ public final class SmokeRunner {
             verifier.verifyActive(db, state);
             verifier.verifyLedger(db, state, ledger);
             db.close();
-            db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false).verifyChecksums(true));
+            db = openDb(dbDir, config, false);
             verifier.verifyActive(db, state);
             verifier.verifyLedger(db, state, ledger);
             reopenChecks++;
@@ -111,7 +111,7 @@ public final class SmokeRunner {
             metrics.fault(result.eventId(), result.kind().text(), result.status(), result.message(),
                 result.offset(), result.length(), result.beforeSize(), result.afterSize(), result.filePath());
             metrics.event("fault", result.status(), result.kind().text());
-            db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false).verifyChecksums(true));
+            db = openDb(dbDir, config, false);
             verifier.verifyActive(db, state);
             verifier.verifyLedger(db, state, ledger);
             nextFault = System.currentTimeMillis() + faultInterval;
@@ -119,25 +119,33 @@ public final class SmokeRunner {
           if (System.currentTimeMillis() >= nextMetrics) {
             metrics.sample(RunStats.fromState(state, reopenChecks, recoveryChecks));
             printProgress(out, startMillis, config.durationMillis(), state,
-                reopenChecks, recoveryChecks, faultEvents, progressStats);
+                reopenChecks, recoveryChecks, faultEvents, progressStats, db);
             nextMetrics = System.currentTimeMillis() + config.metricsIntervalMillis();
           }
         }
         state.recordCommit();
         state.save(stateDir);
         metrics.sample(RunStats.fromState(state, reopenChecks, recoveryChecks));
-        printProgress(out, startMillis, config.durationMillis(), state,
-            reopenChecks, recoveryChecks, faultEvents, progressStats);
-        verifier.verifyActive(db, state);
-        verifier.verifyLedger(db, state, ledger);
+        ProgressSnapshot finalProgress = printProgress(out, startMillis, config.durationMillis(), state,
+            reopenChecks, recoveryChecks, faultEvents, progressStats, db);
+        printWorkloadResult(out, state, finalProgress);
+        out.println("FINAL phase=verify enabled=" + config.finalVerifyEnabled());
+        if (config.finalVerifyEnabled()) {
+          verifier.verifyActive(db, state);
+          verifier.verifyLedger(db, state, ledger);
+          metrics.event("verify", "PASS", "final verify succeeded");
+        } else {
+          metrics.event("verify", "SKIPPED", "final verify disabled");
+        }
+        out.println("FINAL phase=resource");
         long physicalSize = directorySize(dbDir);
         long liveDataBytes = parseLong(db.getProperty("ldb.liveDataBytes"));
         writeResourceState(stateDir, physicalSize, liveDataBytes);
         metrics.reclamation("success", "resource sample", physicalSize, physicalSize, liveDataBytes);
-        metrics.event("verify", "PASS", "final verify succeeded");
+        out.println("FINAL phase=report");
         ReportSummary summary = new ReportAnalyzer().analyze(workDir);
         printSummary(out, summary);
-        out.println("PASS smoke operations=" + state.operations()
+        out.println("PASS " + config.runName() + " operations=" + state.operations()
             + " reads=" + state.reads()
             + " writes=" + state.writes()
             + " removes=" + state.removes()
@@ -227,10 +235,6 @@ public final class SmokeRunner {
   }
 
   private static void printConfig(PrintStream out, LongRunConfig config) {
-    out.println("CONFIG run.name=" + config.runName());
-    out.println("CONFIG run.instance=" + config.instance());
-    out.println("CONFIG run.workDir=" + config.workDir().getPath());
-    out.println("CONFIG run.durationMillis=" + config.durationMillis());
     out.println("CONFIG run.seed=" + config.seed());
     out.println("CONFIG workload.keySpace=" + config.keySpace());
     out.println("CONFIG workload.valueSizeMin=" + config.valueSizeMin());
@@ -242,6 +246,7 @@ public final class SmokeRunner {
     out.println("CONFIG metrics.intervalMillis=" + config.metricsIntervalMillis());
     out.println("CONFIG state.intervalMillis=" + config.stateIntervalMillis());
     out.println("CONFIG check.reopenIntervalMillis=" + config.reopenIntervalMillis());
+    out.println("CONFIG check.finalVerify=" + config.finalVerifyEnabled());
     out.println("CONFIG crash.enabled=" + config.crashEnabled());
     out.println("CONFIG crash.intervalMillis=" + config.crashIntervalMillis());
     out.println("CONFIG crash.cycles=" + config.crashCycles());
@@ -249,11 +254,13 @@ public final class SmokeRunner {
     out.println("CONFIG fault.intervalMillis=" + config.faultIntervalMillis());
     out.println("CONFIG fault.kinds=" + config.faultKinds());
     out.println("CONFIG fault.retainedCopies=" + config.faultRetainedCopies());
+    out.println("CONFIG ldb.writeBufferSizeMb=" + config.ldbWriteBufferSizeMb());
   }
 
-  private static void printProgress(PrintStream out, long startMillis, long durationMillis, CommittedState state,
-                                    long reopenChecks, long recoveryChecks, long faultEvents,
-                                    ProgressStats progressStats) {
+  private static ProgressSnapshot printProgress(PrintStream out, long startMillis, long durationMillis,
+                                                CommittedState state, long reopenChecks,
+                                                long recoveryChecks, long faultEvents,
+                                                ProgressStats progressStats, LDB db) {
     long now = System.currentTimeMillis();
     ProgressSnapshot snapshot = progressStats.sample(now, state.operations());
     out.println("PROGRESS timeMillis=" + now
@@ -270,18 +277,71 @@ public final class SmokeRunner {
         + " activeKeys=" + state.active().size()
         + " reopenChecks=" + reopenChecks
         + " recoveryChecks=" + recoveryChecks
-        + " faultEvents=" + faultEvents);
+        + " faultEvents=" + faultEvents
+        + " ldbMemTableBytes=" + property(db, "ldb.memTableBytes")
+        + " ldbCompactionBacklog=" + property(db, "ldb.compactionBacklog")
+        + " ldbCompactionPendingBytes=" + property(db, "ldb.compactionPendingBytes")
+        + " ldbCompactionRunning=" + property(db, "ldb.compaction.running")
+        + " ldbCompactionRunCount=" + property(db, "ldb.compaction.runCount")
+        + " ldbCompactionOutputBytes=" + property(db, "ldb.compaction.outputBytes")
+        + " ldbWriteSlowdownCount=" + property(db, "ldb.writeStall.slowdownCount")
+        + " ldbWriteSlowdownMicros=" + property(db, "ldb.writeStall.slowdownMicros")
+        + " ldbImmutableWaitCount=" + property(db, "ldb.writeStall.immutableWaitCount")
+        + " ldbImmutableWaitMicros=" + property(db, "ldb.writeStall.immutableWaitMicros")
+        + " ldbLevel0StopWaitCount=" + property(db, "ldb.writeStall.level0StopWaitCount")
+        + " ldbLevel0StopWaitMicros=" + property(db, "ldb.writeStall.level0StopWaitMicros"));
+    return snapshot;
+  }
+
+  private static LDB openDb(File dbDir, LongRunConfig config, boolean createIfMissing)
+      throws Exception {
+    return LDBFactory.factory.open(dbDir, new Options()
+        .createIfMissing(createIfMissing)
+        .verifyChecksums(true)
+        .writeBufferSize(config.ldbWriteBufferSizeBytes()));
+  }
+
+  private static String property(LDB db, String name) {
+    try {
+      String value = db.getProperty(name);
+      return value == null ? "" : value;
+    } catch (RuntimeException e) {
+      return "unavailable";
+    }
+  }
+
+  private static void printWorkloadResult(PrintStream out, CommittedState state,
+                                          ProgressSnapshot snapshot) {
+    out.println("RESULT phase=workload"
+        + " operations=" + state.operations()
+        + " avgOpsPerSecond=" + formatDouble(snapshot.avgOpsPerSecond)
+        + " minOpsPerSecond=" + formatDouble(snapshot.minOpsPerSecond)
+        + " maxOpsPerSecond=" + formatDouble(snapshot.maxOpsPerSecond)
+        + " reads=" + state.reads()
+        + " writes=" + state.writes()
+        + " removes=" + state.removes()
+        + " commits=" + state.commits()
+        + " activeKeys=" + state.active().size());
   }
 
   private static void printSummary(PrintStream out, ReportSummary summary) {
     out.println("SUMMARY status=" + summary.get("status")
         + " operations=" + summary.get("operations")
+        + " metricSamples=" + summary.get("metricSamples")
+        + " warmupSamples=" + summary.get("warmupSamples")
+        + " measuredSamples=" + summary.get("measuredSamples")
         + " avgOpsPerSecond=" + summary.get("avgOpsPerSecond")
         + " minOpsPerSecond=" + summary.get("minOpsPerSecond")
         + " maxOpsPerSecond=" + summary.get("maxOpsPerSecond")
         + " p05OpsPerSecond=" + summary.get("p05OpsPerSecond")
         + " p50OpsPerSecond=" + summary.get("p50OpsPerSecond")
         + " p95OpsPerSecond=" + summary.get("p95OpsPerSecond")
+        + " p50ReadOpsPerSecond=" + summary.get("p50ReadOpsPerSecond")
+        + " p95ReadOpsPerSecond=" + summary.get("p95ReadOpsPerSecond")
+        + " p50WriteOpsPerSecond=" + summary.get("p50WriteOpsPerSecond")
+        + " p95WriteOpsPerSecond=" + summary.get("p95WriteOpsPerSecond")
+        + " p50RemoveOpsPerSecond=" + summary.get("p50RemoveOpsPerSecond")
+        + " p95RemoveOpsPerSecond=" + summary.get("p95RemoveOpsPerSecond")
         + " throughputDropRatio=" + summary.get("throughputDropRatio")
         + " finalSizeBytes=" + summary.get("finalSizeBytes")
         + " sizeAmplification=" + summary.get("sizeAmplification"));

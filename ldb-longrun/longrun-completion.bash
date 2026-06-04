@@ -48,7 +48,7 @@ _longrun_completion() {
   local cur prev command
   local commands="run start watch stop status logs restart report worker"
   local config_options="-c --config -p --profile"
-  local options="-c --config -p --profile -i --instance -I --run.instance -w --workDir -W --run.workDir -d --run.duration -n --run.name -s --run.seed -r --resume -k --workload.keySpace -m --workload.mode -v --workload.valueSizeMin -V --workload.valueSizeMax -a --workload.commitEveryOps -q --workload.readRatio -y --workload.writeRatio -x --workload.removeRatio -t --metrics.interval -u --state.interval -o --check.reopenInterval -e --crash.enabled -z --crash.interval -l --crash.cycles -f --fault.enabled -g --fault.interval -j --fault.kinds -b --fault.maxBytes -h --fault.retainedCopies -L --limits.maxDbSizeGb"
+  local options="-c --config -p --profile -i --instance -I --run.instance -w --workDir -W --run.workDir -d --run.duration -n --run.name -s --run.seed -r --resume -k --workload.keySpace -m --workload.mode -v --workload.valueSizeMin -V --workload.valueSizeMax -a --workload.commitEveryOps -q --workload.readRatio -y --workload.writeRatio -x --workload.removeRatio -t --metrics.interval -u --state.interval -o --check.reopenInterval -O --check.finalVerify -e --crash.enabled -z --crash.interval -l --crash.cycles -f --fault.enabled -g --fault.interval -j --fault.kinds -b --fault.maxBytes -h --fault.retainedCopies -L --limits.maxDbSizeGb -M --ldb.writeBufferSizeMb"
 
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"

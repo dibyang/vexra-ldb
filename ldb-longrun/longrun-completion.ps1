@@ -31,6 +31,7 @@ Register-ArgumentCompleter -CommandName longrun -ScriptBlock {
     '-t', '--metrics.interval',
     '-u', '--state.interval',
     '-o', '--check.reopenInterval',
+    '-O', '--check.finalVerify',
     '-e', '--crash.enabled',
     '-z', '--crash.interval',
     '-l', '--crash.cycles',
@@ -39,7 +40,8 @@ Register-ArgumentCompleter -CommandName longrun -ScriptBlock {
     '-j', '--fault.kinds',
     '-b', '--fault.maxBytes',
     '-h', '--fault.retainedCopies',
-    '-L', '--limits.maxDbSizeGb'
+    '-L', '--limits.maxDbSizeGb',
+    '-M', '--ldb.writeBufferSizeMb'
   )
 
   function Get-ProfileCandidates {

@@ -23,6 +23,9 @@ public final class MetricsWriter implements Closeable {
   private final PrintWriter fault;
   private long lastMillis;
   private long lastOperations;
+  private long lastReads;
+  private long lastWrites;
+  private long lastRemoves;
   private int sampleCount;
 
   public MetricsWriter(LongRunConfig config) throws IOException {
@@ -44,7 +47,7 @@ public final class MetricsWriter implements Closeable {
     this.reclamation = writer(reclamationFile);
     this.fault = writer(faultFile);
     if (opsHeader) {
-      this.ops.println("timeMillis,runId,instance,workerEpoch,operations,opsPerSecond,reads,writes,removes,commits,reopenChecks,recoveryChecks");
+      this.ops.println("timeMillis,runId,instance,workerEpoch,operations,opsPerSecond,reads,writes,removes,commits,reopenChecks,recoveryChecks,readsPerSecond,writesPerSecond,removesPerSecond");
     }
     if (reclamationHeader) {
       this.reclamation.println("timeMillis,status,message,beforeFileSize,afterFileSize,shrinkBytes,fillRate,estimatedReclaimedBytes,candidateChunks,backoffCount,noProgressCount,successCount");
@@ -68,7 +71,13 @@ public final class MetricsWriter implements Closeable {
     long now = System.currentTimeMillis();
     long elapsed = Math.max(1, now - lastMillis);
     long delta = Math.max(0, stats.operations() - lastOperations);
+    long readDelta = Math.max(0, stats.reads() - lastReads);
+    long writeDelta = Math.max(0, stats.writes() - lastWrites);
+    long removeDelta = Math.max(0, stats.removes() - lastRemoves);
     double opsPerSecond = delta * 1000.0 / elapsed;
+    double readsPerSecond = readDelta * 1000.0 / elapsed;
+    double writesPerSecond = writeDelta * 1000.0 / elapsed;
+    double removesPerSecond = removeDelta * 1000.0 / elapsed;
     ops.println(now + "," + runId + "," + instance + ",0,"
         + stats.operations() + ","
         + String.format(Locale.ROOT, "%.3f", opsPerSecond) + ","
@@ -77,10 +86,16 @@ public final class MetricsWriter implements Closeable {
         + stats.removes() + ","
         + stats.commits() + ","
         + stats.reopenChecks() + ","
-        + stats.recoveryChecks());
+        + stats.recoveryChecks() + ","
+        + String.format(Locale.ROOT, "%.3f", readsPerSecond) + ","
+        + String.format(Locale.ROOT, "%.3f", writesPerSecond) + ","
+        + String.format(Locale.ROOT, "%.3f", removesPerSecond));
     ops.flush();
     lastMillis = now;
     lastOperations = stats.operations();
+    lastReads = stats.reads();
+    lastWrites = stats.writes();
+    lastRemoves = stats.removes();
     sampleCount++;
   }
 

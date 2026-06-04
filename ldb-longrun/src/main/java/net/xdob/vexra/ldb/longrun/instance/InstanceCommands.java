@@ -52,8 +52,10 @@ public final class InstanceCommands {
     out.println("config workload.keySpace=" + config.keySpace());
     out.println("config metrics.intervalMillis=" + config.metricsIntervalMillis());
     out.println("config check.reopenIntervalMillis=" + config.reopenIntervalMillis());
+    out.println("config check.finalVerify=" + config.finalVerifyEnabled());
     out.println("config crash.enabled=" + config.crashEnabled());
     out.println("config fault.enabled=" + config.faultEnabled());
+    out.println("config ldb.writeBufferSizeMb=" + config.ldbWriteBufferSizeMb());
   }
 
   public int watch(LongRunConfig config, String[] args, PrintStream out) throws Exception {
@@ -250,11 +252,26 @@ public final class InstanceCommands {
     }
     percent = Math.max(0.0D, Math.min(100.0D, percent));
     String prefix = line.substring(0, progress);
-    String rest = removeField(line.substring(progress + "PROGRESS ".length()), "progressPercent");
-    rest = removeField(rest, "percent").trim();
-    return prefix + "PROGRESS " + progressBar(percent, 20) + " "
-        + String.format(java.util.Locale.ROOT, "%3.0f%%", percent)
-        + (rest.isEmpty() ? "" : " " + rest);
+    StringBuilder formatted = new StringBuilder();
+    formatted.append(prefix)
+        .append("PROGRESS ")
+        .append(progressBar(percent, 20))
+        .append(' ')
+        .append(String.format(java.util.Locale.ROOT, "%3.0f%%", percent));
+    appendIfPresent(formatted, line, "ops", "operations");
+    appendRateIfPresent(formatted, line, "win", "windowOpsPerSecond");
+    appendRateIfPresent(formatted, line, "avg", "avgOpsPerSecond");
+    appendRateIfPresent(formatted, line, "min", "minOpsPerSecond");
+    appendRateIfPresent(formatted, line, "max", "maxOpsPerSecond");
+    appendIfPresent(formatted, line, "keys", "activeKeys");
+    appendIfPresent(formatted, line, "slow", "ldbWriteSlowdownCount");
+    appendIfPresent(formatted, line, "imm", "ldbImmutableWaitCount");
+    appendIfPresent(formatted, line, "l0wait", "ldbLevel0StopWaitCount");
+    appendIfPresent(formatted, line, "comp", "ldbCompactionRunCount");
+    appendIfPresent(formatted, line, "backlog", "ldbCompactionBacklog");
+    appendIfPresent(formatted, line, "phase", "phase");
+    appendCyclesIfPresent(formatted, line);
+    return formatted.toString();
   }
 
   private static int progressIndex(String line) {
@@ -279,20 +296,33 @@ public final class InstanceCommands {
     return line.substring(start, end);
   }
 
-  private static String removeField(String line, String name) {
-    String token = name + "=";
-    int start = line.indexOf(token);
-    if (start < 0) {
-      return line;
+  private static void appendIfPresent(StringBuilder out, String line, String label, String field) {
+    String value = fieldValue(line, field);
+    if (value != null) {
+      out.append(' ').append(label).append('=').append(value);
     }
-    int end = start + token.length();
-    while (end < line.length() && !Character.isWhitespace(line.charAt(end))) {
-      end++;
+  }
+
+  private static void appendRateIfPresent(StringBuilder out, String line, String label, String field) {
+    String value = fieldValue(line, field);
+    if (value == null) {
+      return;
     }
-    if (end < line.length()) {
-      end++;
+    try {
+      double rate = Double.parseDouble(value);
+      out.append(' ').append(label).append('=')
+          .append(String.format(java.util.Locale.ROOT, "%.0f/s", rate));
+    } catch (NumberFormatException ignored) {
+      out.append(' ').append(label).append('=').append(value).append("/s");
     }
-    return (line.substring(0, start) + line.substring(end)).trim();
+  }
+
+  private static void appendCyclesIfPresent(StringBuilder out, String line) {
+    String completedCycles = fieldValue(line, "completedCycles");
+    String totalCycles = fieldValue(line, "totalCycles");
+    if (completedCycles != null && totalCycles != null) {
+      out.append(" cycles=").append(completedCycles).append('/').append(totalCycles);
+    }
   }
 
   private static String progressBar(double percent, int width) {
