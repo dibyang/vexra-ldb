@@ -225,7 +225,10 @@ PowerShell completion script file:
 Default profiles are shipped under `config/`:
 
 - `smoke.properties`: 5-minute quick validation by default.
-- `performance.properties`: 3-minute lightweight performance stress run with `workload.syncWrites=false` for engine throughput.
+- `performance.properties`: 3-minute mixed small-value performance stress run with `workload.syncWrites=false` for overall engine throughput.
+- `performance-write.properties`: 3-minute write-heavy small-value performance stress run with `workload.syncWrites=false` for write-path throughput.
+- `performance-read.properties`: 3-minute read-heavy small-value performance stress run with `workload.syncWrites=false` for read-path throughput.
+- `performance-large-value.properties`: 3-minute mixed large-value performance stress run with `workload.syncWrites=false` for large-value bandwidth and IO pressure.
 - `performance-durable.properties`: 3-minute durable performance stress run with `workload.syncWrites=true` for durable write/fsync cost.
 - `nightly.properties`: 12-hour nightly run by default.
 - `soak.properties`: 7-day soak by default, override with `--run.duration=30d` when needed.
@@ -309,10 +312,13 @@ Run both performance profiles when comparing throughput:
 
 ```bash
 bin/longrun watch -c performance
+bin/longrun watch -c performance-write
+bin/longrun watch -c performance-read
+bin/longrun watch -c performance-large-value
 bin/longrun watch -c performance-durable
 ```
 
-`performance` uses asynchronous writes to observe engine throughput. `performance-durable` uses synchronous writes to observe durable write and fsync cost.
+`performance` uses asynchronous writes and a mixed small-value workload for overall engine throughput. `performance-write` focuses on the write path. `performance-read` focuses on the read path. `performance-large-value` keeps the larger-value pressure profile. `performance-durable` uses synchronous writes to observe durable write and fsync cost.
 
 ## Release Acceptance
 

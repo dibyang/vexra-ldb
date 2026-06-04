@@ -130,6 +130,19 @@ class LongRunConfigTest {
   }
 
   @Test
+  void loadsSpecializedPerformanceProfiles() throws Exception {
+    assertEquals("performance-write", LongRunConfig.load(new String[] {
+        "-c", "performance-write"
+    }).runName());
+    assertEquals("performance-read", LongRunConfig.load(new String[] {
+        "-c", "performance-read"
+    }).runName());
+    assertEquals("performance-large-value", LongRunConfig.load(new String[] {
+        "-c", "performance-large-value"
+    }).runName());
+  }
+
+  @Test
   void defaultProfileInstanceUsesTestType() throws Exception {
     LongRunConfig config = LongRunConfig.load(new String[] {
         "--config", "config/smoke.properties"

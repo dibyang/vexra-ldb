@@ -108,7 +108,10 @@ bash ./install-completion.bash
 默认 profile 位于发行包 `config/`：
 
 - `smoke.properties`：默认 5 分钟快速验证。
-- `performance.properties`：默认 3 分钟轻量性能压测，`workload.syncWrites=false`，用于观察引擎吞吐。
+- `performance.properties`：默认 3 分钟轻量混合性能压测，小 value，`workload.syncWrites=false`，用于观察引擎综合吞吐。
+- `performance-write.properties`：默认 3 分钟写入主导性能压测，小 value，`workload.syncWrites=false`，用于观察写路径吞吐。
+- `performance-read.properties`：默认 3 分钟读取主导性能压测，小 value，`workload.syncWrites=false`，用于观察读路径吞吐。
+- `performance-large-value.properties`：默认 3 分钟大 value 混合性能压测，`workload.syncWrites=false`，用于观察大 value 带宽和 IO 压力。
 - `performance-durable.properties`：默认 3 分钟同步落盘性能压测，`workload.syncWrites=true`，用于观察 durable write/fsync 口径。
 - `nightly.properties`：默认 12 小时夜间长跑。
 - `soak.properties`：默认 7 天长稳压测，可通过 `--run.duration=30d` 覆盖。
@@ -198,10 +201,13 @@ work/<profile>/report/summary.properties
 
 ```bash
 ./bin/longrun watch -c performance
+./bin/longrun watch -c performance-write
+./bin/longrun watch -c performance-read
+./bin/longrun watch -c performance-large-value
 ./bin/longrun watch -c performance-durable
 ```
 
-`performance` 使用异步写，主要看 LDB 引擎吞吐；`performance-durable` 使用同步写，主要看落盘和 fsync 成本。
+`performance` 使用异步写和小 value 混合负载，主要看 LDB 综合吞吐；`performance-write` 偏写路径；`performance-read` 偏读路径；`performance-large-value` 保留大 value 压力；`performance-durable` 使用同步写，主要看落盘和 fsync 成本。
 
 ## 发布验收
 
