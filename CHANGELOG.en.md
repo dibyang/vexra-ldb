@@ -6,6 +6,23 @@ This document records important changes for `vexra-ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+### Added
+
+- Added a disabled-by-default minimal group commit implementation with `Options.groupCommitEnabled`, `groupCommitMaxDelayNanos`, `groupCommitMaxBatchBytes`, and `ldb.groupCommitStats`.
+- Added `LDBFactory.createIncrementalBackup` and `checkBackup`, with `BACKUP-MANIFEST.json` recording copied and reused files while preferentially reusing SST files from the previous backup.
+- Added a long compaction soak regression and benchmark properties report output so release preparation can retain local performance evidence.
+- Added operation latency histogram properties, `ldb.blockCacheStats`, and `incremental-backup`/`check-backup` tool commands.
+- Added minimal runtime column-family `list/create/drop-empty` support and a `COLUMN-FAMILIES` registry that backup, checkpoint, check, and repair carry and validate.
+- Added Chinese and English column-family lifecycle design documents plus a corruption matrix for corrupt registry, missing registry, bad CURRENT, bad backup registry, and runtime-CF WAL-only repair.
+- Added `LDBFactory.planRepair` and `ldb repair-plan <db>` dry-run entry points that output a repair plan without modifying the database directory.
+
+### Changed
+
+- Updated the Chinese and English performance/reliability, project design, and API compatibility documents to mark the completed P1 scope and remaining limits.
+- `Options.cacheBlocks(false)` now truly disables BlockCache while keeping an observable disabled state.
+- `ldb.api.supportedFeatures` now marks runtime column-family list/create/drop-empty support, while `ldb.api.unsupportedFeatures` keeps non-empty drop and rename explicit.
+- Added `ldb.api.ecosystemGaps` to explain blocking reasons for MergeOperator, PrefixExtractor, transactions, TTL, custom Env, non-empty column-family drop/rename, and related ecosystem gaps.
+
 ## [0.2.0] - 2026-06-01
 
 ### Added

@@ -46,6 +46,7 @@ class LdbObservabilityTest {
       assertPropertyContains(db, "ldb.fileCounts", "log=");
       assertPropertyContains(db, "ldb.fileBytes", "log=");
       assertTrue(Long.parseLong(db.getProperty("ldb.totalBytes")) > 0);
+      assertTrue(Long.parseLong(db.getProperty("ldb.liveDataBytes")) > 0);
       assertTrue(Long.parseLong(db.getProperty("ldb.walBytes")) > 0);
       assertNotNull(db.getProperty("ldb.sstBytes"));
       assertNotNull(db.getProperty("ldb.compactionBacklog"));
@@ -157,14 +158,49 @@ class LdbObservabilityTest {
       assertTrue(Long.parseLong(db.getProperty("ldb.operation.write.maxMicros")) > 0);
       assertTrue(Long.parseLong(db.getProperty("ldb.operation.compact.maxMicros")) > 0);
       assertTrue(Long.parseLong(db.getProperty("ldb.operation.checkpoint.maxMicros")) > 0);
+      assertPropertyContains(db, "ldb.operation.write.histogramMicros", "le10=");
+      assertPropertyContains(db, "ldb.operation.write.histogramMicros", "gt10000=");
       assertTrue(Long.parseLong(db.getProperty("ldb.operation.write.slowCount")) > 0);
       assertPropertyContains(db, "ldb.operationStats", "get.count=");
+      assertPropertyContains(db, "ldb.operationStats", "write.histogramMicros=");
       assertPropertyContains(db, "ldb.operationStats", "checkpoint.slowCount=");
     }
 
     try (LDB checkpoint = LDBFactory.factory.open(checkpointDir, new Options().createIfMissing(false))) {
       assertArrayEquals(bytes("value-0"), checkpoint.get(bytes("bench:000")));
       assertArrayEquals(bytes("value-63"), checkpoint.get(bytes("bench:063")));
+    }
+  }
+
+  @Test
+  void shouldExposeBlockCacheStatsAndHonorCacheSwitch() throws Exception {
+    File cachedDir = new File(tempDir, "block-cache-enabled-db");
+
+    try (LDB db = LDBFactory.factory.open(cachedDir,
+        new Options().createIfMissing(true).writeBufferSize(256).blockCacheSize(32))) {
+      for (int i = 0; i < 32; i++) {
+        db.put(bytes(String.format("cache:%03d", i)), bytes("value-" + i));
+      }
+      db.compactRange(bytes("cache:000"), bytes("cache:999"));
+    }
+
+    try (LDB db = LDBFactory.factory.open(cachedDir,
+        new Options().createIfMissing(false).blockCacheSize(32))) {
+      for (int round = 0; round < 2; round++) {
+        for (int i = 0; i < 32; i++) {
+          assertNotNull(db.get(bytes(String.format("cache:%03d", i))));
+        }
+      }
+      assertPropertyContains(db, "ldb.blockCacheStats", "enabled=true");
+      assertPropertyContains(db, "ldb.blockCacheStats", "hits=");
+      assertPropertyContains(db, "ldb.blockCacheStats", "misses=");
+    }
+
+    File disabledDir = new File(tempDir, "block-cache-disabled-db");
+    try (LDB db = LDBFactory.factory.open(disabledDir,
+        new Options().createIfMissing(true).cacheBlocks(false))) {
+      db.put(bytes("k"), bytes("v"));
+      assertEquals("enabled=false", db.getProperty("ldb.blockCacheStats"));
     }
   }
 

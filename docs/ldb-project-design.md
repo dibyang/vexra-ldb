@@ -19,7 +19,7 @@
 
 - 本文档不提出新的代码实现需求。
 - 不承诺完整兼容 RocksDB API 和磁盘格式。
-- 不在本文档内实现运行时 create/drop column family、MergeOperator、PrefixExtractor 或完整 range tombstone 语义。
+- 不在本文档内实现非空列族 drop/rename、MergeOperator、PrefixExtractor 或完整 range tombstone 语义。
 - 不替代已有专项设计文档，例如 range delete 和 API 兼容设计。
 
 ## 现状/已有流程
@@ -58,9 +58,9 @@
 1. 调用方通过 `put`、`delete`、`addLong` 或 `write(LdbWriteBatch)` 进入写路径。
 2. `LDbImpl` 校验数据库状态、只读状态、batch 类型和 batch 内容。
 3. 插件收到 `beforeWrite`，随后再次校验 batch，防止插件修改后绕过约束。
-4. 在互斥锁保护下分配全局 sequence。
+4. 在互斥锁保护下分配全局 sequence；当 `groupCommitEnabled` 开启且 batch 非空时，写请求先进入组提交队列。
 5. 将 batch 编码为 WAL record：`sequenceBegin + updateSize + operations`。
-6. 写入 WAL，并按写选项或实现策略执行 sync。
+6. 写入 WAL，并按写选项或组内 sync 聚合策略执行 sync；组内任一请求要求 sync 时，本轮提交必须执行 sync。
 7. 将 batch 应用到对应列族的 MemTable。
 8. 如 MemTable 超过 `writeBufferSize`，切换为 immutable MemTable 并触发 flush/compaction。
 9. 可按 `WriteOptions` 返回写后 snapshot。
@@ -86,10 +86,11 @@
 
 ### 维护流程
 
-- `checkpoint(targetDir)`：flush 后暂停 compaction，冻结文件集合，复制或硬链接 CURRENT、MANIFEST、live SST、引用 WAL 和 INFO_LOG，写入 `CHECKPOINT-REPORT.json`。
-- `LDBFactory.check`：离线扫描 CURRENT、MANIFEST、SST、WAL，返回 `CheckReport`，不获取写锁，不修改目录。
+- `checkpoint(targetDir)`：flush 后暂停 compaction，冻结文件集合，复制或硬链接 CURRENT、MANIFEST、`COLUMN-FAMILIES`、live SST、引用 WAL 和 INFO_LOG，写入 `CHECKPOINT-REPORT.json`。
+- `LDBFactory.check`：离线扫描 CURRENT、MANIFEST、`COLUMN-FAMILIES`、SST、WAL，返回 `CheckReport`，不获取写锁，不修改目录。
 - `LDBFactory.repair`：从可用 SST/WAL 重建 MANIFEST/CURRENT，隔离损坏文件，并写入 `REPAIR-REPORT.json`。
 - `createBackup/restoreBackup`：执行全量备份和恢复，使用临时目录发布，生成 JSON 报告。
+- `createIncrementalBackup/checkBackup`：创建完整可恢复的增量备份目录，优先通过硬链接复用上一备份中的同名同长度 SST 文件，并写入 `BACKUP-MANIFEST.json`。
 - `purgeOldBackups`：仅清理已发布的 `backup-000001` 风格目录。
 
 ## 核心约束
@@ -123,6 +124,9 @@
 | `LDB#compactRange` | 手动压缩 key 范围 |
 | `LDB#checkpoint` | 生成可校验 checkpoint |
 | `LDB#getProperty` | 查询诊断属性 |
+| `LDB#listColumnFamilies` | 返回当前有效列族快照 |
+| `LDB#createColumnFamily` | 运行时创建列族并持久化 `COLUMN-FAMILIES` |
+| `LDB#dropColumnFamily` | 删除空列族；default 和非空列族失败 |
 
 ### 主要配置
 
@@ -147,6 +151,9 @@
 | `level0StopWritesTrigger` | L0 写入阻塞阈值 |
 | `writeSlowdownDelayNanos` | L0 soft trigger 命中后的单次写入降速等待时间 |
 | `compactionRateLimitBytesPerSecond` | compaction 输出限速，0 表示关闭 |
+| `groupCommitEnabled` | 默认 false；开启后并发写请求进入组提交队列 |
+| `groupCommitMaxDelayNanos` | group commit 收集窗口，默认 200 微秒 |
+| `groupCommitMaxBatchBytes` | group commit 单轮收集上限，默认 1 MiB |
 
 ### 工具命令
 
@@ -156,6 +163,8 @@
 | `properties <db> [property...]` | 只读打开，无磁盘写入 | property JSON |
 | `repair <db>` | 重建元数据、隔离损坏文件 | `REPAIR-REPORT.json` |
 | `backup <db> <backupRoot>` | 创建备份目录 | `BackupReport` JSON |
+| `incremental-backup <db> <backupRoot>` | 创建可独立恢复的增量备份目录 | `BackupReport` JSON |
+| `check-backup <backupDir>` | 只读校验备份目录 | `CheckReport` JSON |
 | `restore <backupDir> <targetDir>` | 创建恢复目标目录 | `BackupReport` JSON |
 | `checkpoint <db> <targetDir>` | 创建 checkpoint 目录 | `CHECKPOINT-REPORT.json` |
 

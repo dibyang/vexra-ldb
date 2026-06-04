@@ -64,6 +64,7 @@ class LdbToolTest {
     assertEquals(0, result.exitCode);
     assertTrue(result.out.contains("\"ldb.api.compatibility\""), result.out);
     assertTrue(result.out.contains("\"ldb.api.unsupportedFeatures\""), result.out);
+    assertTrue(result.out.contains("\"ldb.api.ecosystemGaps\""), result.out);
     assertTrue(result.out.contains("\"ldb.walPolicy\""), result.out);
     assertEquals("", result.err);
     assertArrayEquals(beforeFiles, sortedFileNames(dbDir));
@@ -106,9 +107,23 @@ class LdbToolTest {
     assertEquals(1, badRepair.exitCode);
     assertTrue(badRepair.err.contains("repair requires exactly one database directory"), badRepair.err);
 
+    ToolResult badRepairPlan = run("repair-plan");
+    assertEquals(1, badRepairPlan.exitCode);
+    assertTrue(badRepairPlan.err.contains("repair-plan requires exactly one database directory"),
+        badRepairPlan.err);
+
     ToolResult badBackup = run("backup", dbDir.getAbsolutePath());
     assertEquals(1, badBackup.exitCode);
     assertTrue(badBackup.err.contains("backup requires a database directory and a backup root"), badBackup.err);
+
+    ToolResult badIncrementalBackup = run("incremental-backup", dbDir.getAbsolutePath());
+    assertEquals(1, badIncrementalBackup.exitCode);
+    assertTrue(badIncrementalBackup.err.contains("incremental-backup requires a database directory and a backup root"),
+        badIncrementalBackup.err);
+
+    ToolResult badCheckBackup = run("check-backup");
+    assertEquals(1, badCheckBackup.exitCode);
+    assertTrue(badCheckBackup.err.contains("check-backup requires exactly one backup directory"), badCheckBackup.err);
 
     ToolResult badRestore = run("restore", dbDir.getAbsolutePath());
     assertEquals(1, badRestore.exitCode);
@@ -139,6 +154,23 @@ class LdbToolTest {
     try (LDB repaired = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
       assertArrayEquals(bytes("repair-value"), repaired.get(bytes("repair-key")));
     }
+  }
+
+  @Test
+  void shouldPrintRepairPlanWithoutWritingReport() throws Exception {
+    File dbDir = new File(tempDir, "repair-plan-command-db");
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true))) {
+      db.put(bytes("repair-plan-key"), bytes("repair-plan-value"), new WriteOptions().sync(true));
+    }
+    assertTrue(new File(dbDir, "CURRENT").delete());
+
+    ToolResult result = run("repair-plan", dbDir.getAbsolutePath());
+
+    assertEquals(0, result.exitCode);
+    assertEquals("", result.err);
+    assertTrue(result.out.contains("\"dryRun\": true"), result.out);
+    assertTrue(result.out.contains("\"replayedWalFiles\""), result.out);
+    assertFalse(new File(dbDir, "REPAIR-REPORT.json").exists());
   }
 
   @Test
@@ -173,6 +205,43 @@ class LdbToolTest {
       assertArrayEquals(bytes("value-0"), restored.get(bytes("tool:000")));
       assertArrayEquals(bytes("value-15"), restored.get(bytes("tool:015")));
     }
+  }
+
+  @Test
+  void shouldCreateIncrementalBackupAndCheckItFromTool() throws Exception {
+    File dbDir = new File(tempDir, "incremental-backup-command-db");
+    File backupRoot = new File(tempDir, "incremental-backup-root");
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options().createIfMissing(true).writeBufferSize(128).forceSstOnFlush(true))) {
+      for (int i = 0; i < 24; i++) {
+        db.put(bytes(String.format("inc:%03d", i)), bytes("value-" + i));
+      }
+      db.compactRange(bytes("inc:000"), bytes("inc:999"));
+    }
+
+    ToolResult first = run("incremental-backup", dbDir.getAbsolutePath(), backupRoot.getAbsolutePath());
+
+    assertEquals(0, first.exitCode);
+    assertEquals("", first.err);
+    assertTrue(first.out.contains("\"action\": \"incremental-backup\""), first.out);
+    assertTrue(new File(backupRoot, "backup-000001").isDirectory());
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
+      db.put(bytes("inc:latest"), bytes("latest"), new WriteOptions().sync(true));
+    }
+
+    ToolResult second = run("incremental-backup", dbDir.getAbsolutePath(), backupRoot.getAbsolutePath());
+
+    assertEquals(0, second.exitCode);
+    assertTrue(second.out.contains("\"reusedFiles\""), second.out);
+    File secondBackup = new File(backupRoot, "backup-000002");
+    assertTrue(new File(secondBackup, "BACKUP-MANIFEST.json").isFile());
+
+    ToolResult check = run("check-backup", secondBackup.getAbsolutePath());
+
+    assertEquals(0, check.exitCode);
+    assertEquals("", check.err);
+    assertTrue(check.out.contains("\"ok\": true"), check.out);
   }
 
   @Test

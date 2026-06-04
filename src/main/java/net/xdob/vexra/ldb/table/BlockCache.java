@@ -3,6 +3,7 @@ package net.xdob.vexra.ldb.table;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class BlockCache {
 
@@ -63,6 +64,10 @@ public final class BlockCache {
 
   private final int maxEntries;
   private final LinkedHashMap<Key, Block> lru;
+  private final AtomicLong hitCount = new AtomicLong();
+  private final AtomicLong missCount = new AtomicLong();
+  private final AtomicLong putCount = new AtomicLong();
+  private final AtomicLong evictionCount = new AtomicLong();
 
   public BlockCache(int maxEntries) {
     if (maxEntries <= 0) {
@@ -72,20 +77,31 @@ public final class BlockCache {
     this.lru = new LinkedHashMap<Key, Block>(16, 0.75f, true) {
       @Override
       protected boolean removeEldestEntry(Map.Entry<Key, Block> eldest) {
-        return size() > BlockCache.this.maxEntries;
+        boolean evict = size() > BlockCache.this.maxEntries;
+        if (evict) {
+          evictionCount.incrementAndGet();
+        }
+        return evict;
       }
     };
   }
 
   public Block get(Key key) {
     synchronized (lru) {
-      return lru.get(key);
+      Block block = lru.get(key);
+      if (block == null) {
+        missCount.incrementAndGet();
+      } else {
+        hitCount.incrementAndGet();
+      }
+      return block;
     }
   }
 
   public void put(Key key, Block block) {
     synchronized (lru) {
       lru.put(key, block);
+      putCount.incrementAndGet();
     }
   }
 
@@ -105,5 +121,35 @@ public final class BlockCache {
     synchronized (lru) {
       return lru.size();
     }
+  }
+
+  public int maxEntries() {
+    return maxEntries;
+  }
+
+  public long hitCount() {
+    return hitCount.get();
+  }
+
+  public long missCount() {
+    return missCount.get();
+  }
+
+  public long putCount() {
+    return putCount.get();
+  }
+
+  public long evictionCount() {
+    return evictionCount.get();
+  }
+
+  public String stats() {
+    return "enabled=true"
+        + ",maxEntries=" + maxEntries()
+        + ",size=" + size()
+        + ",hits=" + hitCount()
+        + ",misses=" + missCount()
+        + ",puts=" + putCount()
+        + ",evictions=" + evictionCount();
   }
 }

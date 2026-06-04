@@ -137,6 +137,46 @@ class LdbBackupTest {
     }
   }
 
+  @Test
+  void shouldCreateIncrementalBackupManifestAndRestoreLatestView() throws Exception {
+    File dbDir = new File(tempDir, "incremental-source-db");
+    File backupRoot = new File(tempDir, "incremental-backups");
+    File restoreDir = new File(tempDir, "incremental-restore-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options().createIfMissing(true).writeBufferSize(128).forceSstOnFlush(true))) {
+      for (int i = 0; i < 32; i++) {
+        db.put(bytes(String.format("base:%03d", i)), bytes("base-" + i));
+      }
+      db.compactRange(bytes("base:000"), bytes("base:999"));
+    }
+
+    LDBFactory.BackupReport first =
+        LDBFactory.factory.createIncrementalBackup(dbDir, backupRoot, new Options().createIfMissing(false));
+    assertTrue(first.isOk(), first.toString());
+    assertTrue(new File(first.getTargetDir(), "BACKUP-MANIFEST.json").isFile());
+    assertTrue(first.getCopiedFiles().stream().anyMatch(name -> name.endsWith(".sst")), first.toString());
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
+      db.put(bytes("after"), bytes("incremental"), new WriteOptions().sync(true));
+    }
+
+    LDBFactory.BackupReport second =
+        LDBFactory.factory.createIncrementalBackup(dbDir, backupRoot, new Options().createIfMissing(false));
+    assertTrue(second.isOk(), second.toString());
+    assertTrue(new File(second.getTargetDir(), "BACKUP-MANIFEST.json").isFile());
+    assertFalse(second.getReusedFiles().isEmpty(), second.toString());
+    assertTrue(LDBFactory.factory.checkBackup(second.getTargetDir(), new Options().createIfMissing(false)).isOk());
+
+    LDBFactory.BackupReport restore =
+        LDBFactory.factory.restoreBackup(second.getTargetDir(), restoreDir, new Options().createIfMissing(false));
+    assertTrue(restore.isOk(), restore.toString());
+    try (LDB restored = LDBFactory.factory.open(restoreDir, new Options().createIfMissing(false))) {
+      assertArrayEquals(bytes("base-0"), restored.get(bytes("base:000")));
+      assertArrayEquals(bytes("incremental"), restored.get(bytes("after")));
+    }
+  }
+
   private static File firstFileEndingWith(File dir, String suffix) {
     File[] files = dir.listFiles((ignored, name) -> name.endsWith(suffix));
     assertNotNull(files);

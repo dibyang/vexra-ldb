@@ -47,14 +47,21 @@ class LdbApiCompatibilityTest {
             .closeTimeoutMillis(2000)
             .slowOperationThresholdMicros(7)
             .forceLogOnClose(true)
-            .forceSstOnFlush(true))) {
+            .forceSstOnFlush(true)
+            .groupCommitEnabled(true)
+            .groupCommitMaxDelayNanos(300_000L)
+            .groupCommitMaxBatchBytes(16 * 1024L))) {
       assertPropertyContains(db, "ldb.api.compatibility", "rocksdbOptions=partial");
       assertPropertyContains(db, "ldb.api.compatibility", "unsupportedConfig=rejected");
       assertPropertyContains(db, "ldb.api.compatibility", "statistics=properties");
       assertPropertyContains(db, "ldb.api.compatibility", "ldbToolCommands=partial");
+      assertPropertyContains(db, "ldb.api.compatibility", "runtimeColumnFamilyLifecycle=minimal");
       assertPropertyContains(db, "ldb.api.optionsMapping", "createIfMissing=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "columnFamilies=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "writeSlowdownDelayNanos=supported");
+      assertPropertyContains(db, "ldb.api.optionsMapping", "groupCommitEnabled=supported");
+      assertPropertyContains(db, "ldb.api.optionsMapping", "groupCommitMaxDelayNanos=supported");
+      assertPropertyContains(db, "ldb.api.optionsMapping", "groupCommitMaxBatchBytes=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "mergeOperator=unsupported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "prefixExtractor=unsupported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "rocksdbToolCommands=unsupported");
@@ -70,6 +77,9 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.optionValues", "compactionRateLimitBytesPerSecond=12345");
       assertPropertyContains(db, "ldb.api.optionValues", "forceLogOnClose=true");
       assertPropertyContains(db, "ldb.api.optionValues", "forceSstOnFlush=true");
+      assertPropertyContains(db, "ldb.api.optionValues", "groupCommitEnabled=true");
+      assertPropertyContains(db, "ldb.api.optionValues", "groupCommitMaxDelayNanos=300000");
+      assertPropertyContains(db, "ldb.api.optionValues", "groupCommitMaxBatchBytes=16384");
     }
   }
 
@@ -83,15 +93,29 @@ class LdbApiCompatibilityTest {
 
       assertPropertyContains(db, "ldb.api.supportedFeatures", "rangeDelete");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "readOnly");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "incrementalBackup");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "groupCommit");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "operationHistograms");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "blockCacheStats");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "snapshotCursor");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolCheck");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolIncrementalBackup");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolCheckBackup");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolRepair");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolBackup");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolRestore");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolCheckpoint");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "runtimeColumnFamilyList");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "runtimeColumnFamilyCreate");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "runtimeColumnFamilyDropEmpty");
       assertPropertyContains(db, "ldb.api.unsupportedFeatures", "mergeOperator");
       assertPropertyContains(db, "ldb.api.unsupportedFeatures", "prefixExtractor");
       assertPropertyContains(db, "ldb.api.unsupportedFeatures", "rocksdbToolCommands");
+      assertPropertyContains(db, "ldb.api.unsupportedFeatures", "runtimeColumnFamilyDropNonEmpty");
+      assertPropertyContains(db, "ldb.api.ecosystemGaps",
+          "mergeOperator=requiresDeterministicOperatorAndDiskMetadata");
+      assertPropertyContains(db, "ldb.api.ecosystemGaps",
+          "runtimeColumnFamilyDropNonEmpty=requiresManifestTombstoneAndRecoveryRules");
 
       assertPropertyContains(db, "ldb.operationStats", "get.count=");
       assertPropertyContains(db, "ldb.compactionStats", "runCount=");

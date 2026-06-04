@@ -5,7 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
@@ -35,6 +37,8 @@ class LdbBenchmarkSoakTest {
             .level0SlowdownWritesTrigger(8)
             .level0StopWritesTrigger(16))) {
       report = runMicroBenchmark(db, checkpointDir);
+      File reportFile = new File(tempDir, "micro-benchmark-report.properties");
+      Files.write(reportFile.toPath(), report.toProperties().getBytes(UTF_8));
 
       assertPositive(report.sequentialWriteNanos);
       assertPositive(report.randomReadNanos);
@@ -42,6 +46,10 @@ class LdbBenchmarkSoakTest {
       assertPositive(report.compactNanos);
       assertPositive(report.checkpointNanos);
       assertEquals(128, report.scannedKeys);
+      assertTrue(reportFile.isFile(), "benchmark report missing");
+      String reportText = new String(Files.readAllBytes(reportFile.toPath()), UTF_8);
+      assertTrue(reportText.contains("sequentialWriteOpsPerSecond="), reportText);
+      assertTrue(reportText.contains("checkpointNanos="), reportText);
 
       assertLongPropertyAtLeast(db, "ldb.operation.write.count", 128);
       assertLongPropertyAtLeast(db, "ldb.operation.get.count", 128);
@@ -161,5 +169,20 @@ class LdbBenchmarkSoakTest {
     private long compactNanos;
     private long checkpointNanos;
     private int scannedKeys;
+
+    private String toProperties() {
+      return "sequentialWriteNanos=" + sequentialWriteNanos + "\n"
+          + "sequentialWriteOpsPerSecond=" + opsPerSecond(128, sequentialWriteNanos) + "\n"
+          + "randomReadNanos=" + randomReadNanos + "\n"
+          + "randomReadOpsPerSecond=" + opsPerSecond(128, randomReadNanos) + "\n"
+          + "snapshotScanNanos=" + snapshotScanNanos + "\n"
+          + "scannedKeys=" + scannedKeys + "\n"
+          + "compactNanos=" + compactNanos + "\n"
+          + "checkpointNanos=" + checkpointNanos + "\n";
+    }
+
+    private static long opsPerSecond(long operations, long nanos) {
+      return nanos <= 0 ? 0 : TimeUnit.SECONDS.toNanos(1) * operations / nanos;
+    }
   }
 }

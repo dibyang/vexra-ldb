@@ -38,6 +38,9 @@ public class Options implements OptionsView {
   private int level0StopWritesTrigger = DbConstants.L0_STOP_WRITES_TRIGGER;
   private long compactionRateLimitBytesPerSecond;
   private long writeSlowdownDelayNanos = TimeUnit.MILLISECONDS.toNanos(1);
+  private boolean groupCommitEnabled;
+  private long groupCommitMaxDelayNanos = TimeUnit.MICROSECONDS.toNanos(200);
+  private long groupCommitMaxBatchBytes = 1 << 20;
 
   public boolean cacheBlocks() {
     return cacheBlocks;
@@ -183,6 +186,39 @@ public class Options implements OptionsView {
       throw new IllegalArgumentException("writeSlowdownDelayNanos must be > 0");
     }
     this.writeSlowdownDelayNanos = writeSlowdownDelayNanos;
+    return this;
+  }
+
+  public boolean groupCommitEnabled() {
+    return groupCommitEnabled;
+  }
+
+  public Options groupCommitEnabled(boolean groupCommitEnabled) {
+    this.groupCommitEnabled = groupCommitEnabled;
+    return this;
+  }
+
+  public long groupCommitMaxDelayNanos() {
+    return groupCommitMaxDelayNanos;
+  }
+
+  public Options groupCommitMaxDelayNanos(long groupCommitMaxDelayNanos) {
+    if (groupCommitMaxDelayNanos <= 0) {
+      throw new IllegalArgumentException("groupCommitMaxDelayNanos must be > 0");
+    }
+    this.groupCommitMaxDelayNanos = groupCommitMaxDelayNanos;
+    return this;
+  }
+
+  public long groupCommitMaxBatchBytes() {
+    return groupCommitMaxBatchBytes;
+  }
+
+  public Options groupCommitMaxBatchBytes(long groupCommitMaxBatchBytes) {
+    if (groupCommitMaxBatchBytes <= 0) {
+      throw new IllegalArgumentException("groupCommitMaxBatchBytes must be > 0");
+    }
+    this.groupCommitMaxBatchBytes = groupCommitMaxBatchBytes;
     return this;
   }
 

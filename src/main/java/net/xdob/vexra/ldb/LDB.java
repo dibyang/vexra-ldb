@@ -1,6 +1,7 @@
 package net.xdob.vexra.ldb;
 
 import java.io.Closeable;
+import java.util.List;
 
 
 public interface LDB
@@ -116,6 +117,31 @@ public interface LDB
       throws DBException;
 
   LdbColumnFamily getColumnFamily(int cfId);
+
+  /**
+   * 返回当前数据库已注册的列族快照，包含静态 Options 声明和运行时创建的列族。
+   *
+   * @return 按列族 id 升序排列的不可变快照
+   */
+  List<LdbColumnFamily> listColumnFamilies();
+
+  /**
+   * 运行时创建一个新的列族，并把列族 id/name 持久化到本地注册表。
+   *
+   * @param cfId 新列族 id，必须大于 0 且不能与已有列族冲突
+   * @param name 新列族名称，不能为空
+   * @return 已创建的列族定义
+   * @throws DBException 数据库只读、列族冲突或注册表落盘失败时抛出
+   */
+  LdbColumnFamily createColumnFamily(int cfId, String name) throws DBException;
+
+  /**
+   * 运行时删除一个空列族。
+   *
+   * @param cf 目标列族，默认列族和仍包含 MemTable/SST 数据的列族会被拒绝
+   * @throws DBException 数据库只读、目标列族非空或注册表落盘失败时抛出
+   */
+  void dropColumnFamily(LdbColumnFamily cf) throws DBException;
 
   void checkpoint(String targetDir) throws DBException;
 

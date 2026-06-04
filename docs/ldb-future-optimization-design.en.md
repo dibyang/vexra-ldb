@@ -14,7 +14,7 @@ LDB now has benchmark/soak entry points, compaction pressure regression tests, a
 
 ## Non-Goals
 
-- This document does not implement group commit, incremental backup, or a new range-delete format.
+- This document records the design boundaries for group commit, incremental backup, and range-delete follow-up work. The minimal group commit, minimal incremental backup, long compaction soak entry point, and benchmark report output have landed in `0.3.0-SNAPSHOT`.
 - It does not introduce RocksDB JNI, RocksJava, or external storage services.
 - It does not change the current compatibility behavior of `LDBFactory.createBackup/restoreBackup`, `LDB#checkpoint`, or `LdbWriteBatch.deleteRange`.
 
@@ -22,8 +22,8 @@ LDB now has benchmark/soak entry points, compaction pressure regression tests, a
 
 | Area | Current capability | Main gap |
 | --- | --- | --- |
-| Write path | A single writer appends WAL and then applies MemTable; write-stall counters and configurable slowdown delay exist | No group commit that merges concurrent write requests into one WAL append/sync cycle |
-| Backup | Offline full backup/restore, temporary-directory publish, `BACKUP-REPORT.json`, `RESTORE-REPORT.json`, and old-version purge | No shared SST/WAL files, reference counts, backup metadata index, or incremental restore verification |
+| Write path | A single writer appends WAL and then applies MemTable; write-stall counters, configurable slowdown delay, and a disabled-by-default minimal group commit now exist | Group commit still writes one WAL record per request; it does not yet encode multiple requests into one WAL record or provide a long-run throughput/tail-latency baseline |
+| Backup | Offline full backup/restore, temporary-directory publish, `BACKUP-REPORT.json`, `RESTORE-REPORT.json`, old-version purge, `BACKUP-MANIFEST.json`, and independently restorable incremental backup directories | Incremental backup currently reuses only same-name same-length SST files, falling back to copy when hard links fail; there is no shared object store, reference count, or incremental-chain cleanup yet |
 | Range Delete | API, WAL/SST/MemTable/read/compaction have baseline semantics; the read path avoids unnecessary full tombstone scans | Still needs format-version boundaries, old-version compatibility rules, longer snapshot/compaction/repair matrices, and downgrade rules |
 
 ## Core Constraints
@@ -40,19 +40,19 @@ LDB now has benchmark/soak entry points, compaction pressure regression tests, a
 
 | Interface/property | Proposal | Notes |
 | --- | --- | --- |
-| `Options.enableGroupCommit(boolean)` | Default `false` | Rollout switch; preserves the current single-writer path |
-| `Options.groupCommitMaxBatchBytes(long)` | Default to be calibrated | Prevents oversized WAL records and long tail latency |
-| `Options.groupCommitMaxDelayNanos(long)` | Default to be calibrated | Bounds the collection window |
-| `ldb.groupCommitStats` | New property | Exposes group count, average requests per group, max wait time, sync group count, and fallback count |
+| `Options.groupCommitEnabled(boolean)` | Default `false` | Rollout switch; preserves the current single-writer path |
+| `Options.groupCommitMaxBatchBytes(long)` | Default 1 MiB | Bounds each collection group |
+| `Options.groupCommitMaxDelayNanos(long)` | Default 200 microseconds | Bounds the collection window |
+| `ldb.groupCommitStats` | Added property | Exposes enabled, maxDelayNanos, maxBatchBytes, groups, requests, syncGroups, and waitNanos |
 
 ### Incremental Backup
 
 | Interface/property | Proposal | Notes |
 | --- | --- | --- |
-| `LDBFactory.createIncrementalBackup(File sourceDir, File backupRoot, Options options)` | New optional API | Does not change the existing full-backup entry point |
-| `LDBFactory.restoreBackup(File backupDir, File targetDir, Options options)` | Reuse | Restore should recognize full and incremental backup metadata |
-| `LDBFactory.checkBackup(File backupDir, Options options)` | Evaluation item | Validates a backup set before restore |
-| `BACKUP-MANIFEST.json` | New backup-root metadata | Records version, file references, checksums, parent backup, and publish state |
+| `LDBFactory.createIncrementalBackup(File sourceDir, File backupRoot, Options options)` | Added optional API | Does not change the existing full-backup entry point; currently publishes a complete restorable directory |
+| `LDBFactory.restoreBackup(File backupDir, File targetDir, Options options)` | Reuse | Restores either a full backup or an incremental published directory |
+| `LDBFactory.checkBackup(File backupDir, Options options)` | Added validation entry point | Validates a backup directory before restore |
+| `BACKUP-MANIFEST.json` | Added backup metadata | Records version, backup id, parent backup, copied files, reused files, and publish state |
 
 ### Full Range Delete
 
@@ -131,9 +131,9 @@ Each transition must keep snapshot-sequence visibility explainable. A new tombst
 
 1. Run `check` on the source database; fail without publishing if it fails.
 2. Read the previous published `BACKUP-MANIFEST.json`.
-3. Reuse files whose metadata and checksum still match; copy new files into a temporary directory.
+3. Hard-link reusable same-name same-length SST files; copy files when hard links fail or the file is not an SST file.
 4. Write this backup manifest and report.
-5. Verify the full backup view.
+5. Verify the full backup view with `checkBackup`/offline check.
 6. Atomically publish the backup directory and update the backup-root index.
 
 ### Range Delete
@@ -151,8 +151,8 @@ Each transition must keep snapshot-sequence visibility explainable. A new tombst
 | Group commit WAL write failure | Whole group fails; MemTable is not applied; callers receive the same cause |
 | Group commit sync failure | Whole group fails; `syncFailures` is recorded; reopen recovers from actual WAL contents |
 | Incremental backup source check failure | No version is published; report has `ok=false` |
-| Shared backup file checksum failure | Do not reuse it; optionally copy again; fail the backup if still invalid |
-| Restore missing parent backup | Fail with a missing-chain report and do not create a target DB |
+| Shared backup file reuse failure | Do not reuse it and fall back to copy; fail the backup if copy still fails |
+| Restore missing parent backup | The current published directory is a complete view and can restore independently; a future shared-object-store mode must fail with a missing-chain report |
 | Unknown range tombstone format | New versions follow the compatibility policy; old versions must fail or reject read-only open instead of silently ignoring it |
 
 ## Idempotency
@@ -173,22 +173,22 @@ Each transition must keep snapshot-sequence visibility explainable. A new tombst
 | Capability | Old data | New data | Old-version behavior |
 | --- | --- | --- | --- |
 | Group commit | Compatible | WAL records keep the current format | Readable |
-| Incremental backup | Full backups remain restorable | Adds backup metadata but does not change DB data files | Old backup tools do not recognize incremental metadata |
+| Incremental backup | Full backups remain restorable | Adds backup metadata without changing DB data files; published directories remain complete restorable views | Old backup tools can restore the directory as ordinary data, but they do not understand reuse metadata |
 | Range delete | Old DBs remain readable | May introduce new SST/WAL range tombstone formats | Must fail clearly or reject open |
 
 ## Rollout and Migration
 
 1. Ship observability and stress tests before enabling behavior.
 2. Gray-release group commit with a small wait window, watching p99 write latency, sync count, and throughput.
-3. For incremental backup, first add full backup plus manifest verification, then shared SST, then reference-count cleanup.
+3. Incremental backup now supports complete directories plus manifest plus SST hard-link reuse; shared object storage and reference-count cleanup remain future work.
 4. For range delete, add format compatibility tests and repair/check reports before enabling new-format writes.
 
 ## Test Plan
 
 | Area | Required tests |
 | --- | --- |
-| Group commit | Concurrent write ordering, sync/non-sync mixes, WAL write failure, MemTable apply failure, sequence continuity after reopen, stats properties |
-| Incremental backup | First full backup, consecutive incremental backups, missing parent, damaged shared file, old-version purge, restore then reopen, checkBackup |
+| Group commit | Covered now: concurrent writes, sync/non-sync mixes, reopen recovery, and stats properties; later: WAL failure injection, MemTable apply failure, and longer tail-latency reporting |
+| Incremental backup | Covered now: first incremental backup, consecutive incremental backups, SST reuse, restore then reopen, and checkBackup; later: missing parent, damaged shared file, and reference cleanup |
 | Range delete | Cross-MemTable/SST/level deletion, old snapshot views, crash recovery, repair/check/backup, old-format compatibility, compaction merge |
 
 ## Risks
@@ -205,10 +205,10 @@ Each transition must keep snapshot-sequence visibility explainable. A new tombst
 
 | Phase | Deliverable | Acceptance |
 | --- | --- | --- |
-| 1 | Group commit switch and stats, disabled by default | Single-writer behavior unchanged; full tests pass |
-| 2 | Minimal group commit implementation | Concurrent write, sync, reopen, and stats tests pass |
-| 3 | Incremental backup manifest and checkBackup | Full backup remains compatible; manifest validation is explainable |
-| 4 | Shared SST/WAL incremental backups and reference cleanup | Consecutive incremental, cleanup, restore, and corruption tests pass |
+| 1 | Group commit switch and stats, disabled by default | Done: single-writer behavior is unchanged and the new property is observable |
+| 2 | Minimal group commit implementation | Done: concurrent write, sync, reopen, and stats tests pass |
+| 3 | Incremental backup manifest and checkBackup | Done: full backup remains compatible and manifest validation is explainable |
+| 4 | Minimal shared-SST incremental backup | Done: consecutive incremental backups, SST reuse, restore, and checkBackup pass; reference-count cleanup remains future work |
 | 5 | Range delete format compatibility review and test matrix | New/old format boundaries, repair/check/backup docs and tests are ready |
 | 6 | Full range delete compaction and recovery hardening | Snapshot, compaction, crash, and repair matrices pass |
 

@@ -16,7 +16,7 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 ## Non-Goals
 
 - Do not implement a RocksDB JNI or RocksJava compatibility layer.
-- Do not introduce MergeOperator, PrefixExtractor, transactions, TTL, secondary indexes, or runtime create/drop column family in this phase.
+- Do not introduce MergeOperator, PrefixExtractor, transactions, TTL, secondary indexes, or non-empty column-family drop/rename in this phase.
 - Do not change WAL, SST, MANIFEST, or CURRENT disk formats.
 - Do not promise compatibility with all RocksDB property names or return formats.
 
@@ -25,11 +25,12 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 | Capability | Current LDB behavior | Migration note |
 | --- | --- | --- |
 | Basic read/write | `put`, `delete`, `get`, and `write` are supported | Failures surface as `DBException` or argument errors |
-| Column families | Declared before open through `Options.addColumnFamily` | Runtime create/drop is not supported |
+| Column families | Declared before open through `Options.addColumnFamily`, with minimal runtime `list/create/drop-empty` support | Non-empty drop, rename, and column-family migration tombstones are still unsupported |
 | Range delete | `LdbWriteBatch.deleteRange` is supported | Check old-version readability before using data with range tombstones |
 | Read-only open | `Options.readOnly(true)` is supported | Read-only instances do not create new WALs and reject writes/compaction/checkpoint |
 | Statistics | Exposed through `LDB.getProperty` | No native RocksDB statistics object |
-| Checkpoint/Backup | Checkpoint and LDB backup APIs are supported | Checkpoint target directory must be empty |
+| Checkpoint/Backup | Checkpoint, full backup, and incremental-backup Java APIs are supported | Checkpoint target directory must be empty; incremental backup currently publishes a complete restorable directory |
+| Group Commit | Can be explicitly enabled through `Options.groupCommitEnabled` | Disabled by default; WAL records are still encoded per request |
 | Repair/Verify | Factory repair/check APIs are supported | Repair writes a structured report |
 
 ## Core Constraints
@@ -50,6 +51,7 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 | `ldb.api.optionValues` | Current effective key option values | Fields may be added |
 | `ldb.api.supportedFeatures` | Explicitly supported capability list | Fields may be added |
 | `ldb.api.unsupportedFeatures` | Explicitly unsupported capability list | Implemented capabilities may move out |
+| `ldb.api.ecosystemGaps` | Blocking reasons for key unsupported ecosystem features | Fields may be added |
 
 ### Options Mapping Policy
 
@@ -59,6 +61,9 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 | `error_if_exists` | `Options.errorIfExists` | supported |
 | `write_buffer_size` | `Options.writeBufferSize` | supported |
 | L0 slowdown delay | `Options.writeSlowdownDelayNanos` | supported |
+| Group commit switch | `Options.groupCommitEnabled` | supported, disabled by default |
+| Group commit collection delay | `Options.groupCommitMaxDelayNanos` | supported |
+| Group commit collection size | `Options.groupCommitMaxBatchBytes` | supported |
 | `max_open_files` | `Options.maxOpenFiles` | supported |
 | `block_size` | `Options.blockSize` | supported |
 | `block_restart_interval` | `Options.blockRestartInterval` | supported |
@@ -76,7 +81,7 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 
 ## Data Structures
 
-This phase adds no persistent data structures. It only adds documentation and read-only property strings; property output is not written into WAL, MANIFEST, SST, or repair/backup reports.
+Runtime column-family lifecycle adds the root-level `COLUMN-FAMILIES` registry to record runtime column-family id/name pairs. This file does not change WAL, MANIFEST, or SST formats; backup, checkpoint, check, and repair recognize and carry it.
 
 ## State Machine
 
@@ -91,7 +96,7 @@ This phase adds no persistent data structures. It only adds documentation and re
 1. Caller builds `Options` and opens LDB.
 2. After open, caller reads `getProperty("ldb.api.compatibility")` to detect the compatibility policy.
 3. Caller reads `ldb.api.optionsMapping` and `ldb.api.unsupportedFeatures` for startup diagnostics.
-4. Operations or tests read `ldb.operationStats`, `ldb.compactionStats`, `ldb.walPolicy`, and `ldb.snapshotCursorStats` for stable statistics entry points.
+4. Operations or tests read `ldb.operationStats`, `ldb.compactionStats`, `ldb.walPolicy`, `ldb.groupCommitStats`, and `ldb.snapshotCursorStats` for stable statistics entry points.
 
 ## Error Handling
 
@@ -141,17 +146,20 @@ Reading properties is side-effect free and can be repeated. `ldb.api.optionValue
 
 ## Tool-Command Review
 
-The repository now has a minimal `net.xdob.vexra.ldb.tool.LdbTool` CLI entry point with read-only `check`, `properties`, and the explicit side-effecting `repair`, `backup`, `restore`, and `checkpoint` commands. Instance-level `compactRange` is not exposed through the CLI yet. Therefore `ldbToolCommands` is partial, while `rocksdbToolCommands` remains unsupported.
+The repository now has a minimal `net.xdob.vexra.ldb.tool.LdbTool` CLI entry point with read-only `check`, `properties`, `check-backup`, `repair-plan`, and the explicit side-effecting `repair`, `backup`, `incremental-backup`, `restore`, and `checkpoint` commands. Instance-level `compactRange` is not exposed through the CLI yet. Therefore `ldbToolCommands` is partial, while `rocksdbToolCommands` remains unsupported.
 
 ### Candidate Commands
 
 | Command | Underlying capability | Writes DB | Default lock policy | Main output |
 | --- | --- | --- | --- | --- |
 | `ldb check <db>` | `LDBFactory.check` | No | No writer lock | Structured check report and health-reflecting exit code |
+| `ldb repair-plan <db>` | `LDBFactory.planRepair` | No | No writer lock | dry-run `RepairReport` JSON; no report file is written |
 | `ldb repair <db>` | `LDBFactory.repair` | Yes | Exclusive writer lock | `REPAIR-REPORT.json`, quarantined files, rebuilt MANIFEST/CURRENT info |
 | `ldb checkpoint <db> <target>` | `LDB.checkpoint` | Opens source normally, writes target | Target must be absent or empty | `CHECKPOINT-REPORT.json` |
 | `ldb backup <db> <backup-root>` | `LDBFactory.createBackup` | Reads source, writes backup dir | Offline source check | `BackupReport` JSON and verification result |
 | `ldb restore <backup> <target>` | `LDBFactory.restoreBackup` | Writes target DB | Target must be creatable or empty | `BackupReport` JSON and verification result |
+| `ldb incremental-backup <db> <backup-root>` | `LDBFactory.createIncrementalBackup` | Reads source, writes backup dir | Offline source check | `BackupReport` JSON and verification result |
+| `ldb check-backup <backup>` | `LDBFactory.checkBackup` | No | No writer lock | `CheckReport` JSON |
 | `ldb properties <db> [property...]` | `LDB.getProperty` | No | Read-only open by default | Property key/value output |
 | `ldb compact <db> [begin] [end]` | `LDB.compactRange` | Yes | Normal writer open | Compaction stats and errors |
 

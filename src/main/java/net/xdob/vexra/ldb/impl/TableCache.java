@@ -34,8 +34,7 @@ public class TableCache {
                     Options options) {
     requireNonNull(databaseDir, "databaseName is null");
 
-    // 这里先写死，后面你也可以挂到 Options 里
-    this.blockCache = new BlockCache(options.blockCacheSize());
+    this.blockCache = options.cacheBlocks() ? new BlockCache(options.blockCacheSize()) : null;
 
     cache = CacheBuilder.newBuilder()
         .maximumSize(tableCacheSize)
@@ -92,12 +91,21 @@ public class TableCache {
   public void close() {
     cache.invalidateAll();
     cache.cleanUp();
-    blockCache.invalidateAll();
+    if (blockCache != null) {
+      blockCache.invalidateAll();
+    }
     finalizer.destroy();
   }
 
   public void evict(long number) {
     cache.invalidate(number);
+  }
+
+  public String blockCacheStats() {
+    if (blockCache == null) {
+      return "enabled=false";
+    }
+    return blockCache.stats();
   }
 
   private static final class TableAndFile {

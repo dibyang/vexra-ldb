@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增默认关闭的 group commit 最小实现，提供 `Options.groupCommitEnabled`、`groupCommitMaxDelayNanos`、`groupCommitMaxBatchBytes` 和 `ldb.groupCommitStats`。
+- 新增 `LDBFactory.createIncrementalBackup` 与 `checkBackup`，通过 `BACKUP-MANIFEST.json` 记录复制文件与复用文件，并优先复用上一备份中的 SST 文件。
+- 新增 compaction 长压测回归和 benchmark properties 报告输出，便于发布前保留本地性能证据。
+- 新增 operation latency histogram property、`ldb.blockCacheStats` 以及 `incremental-backup`/`check-backup` 工具命令。
+
+- 新增运行时列族 `list/create/drop-empty` 最小实现和 `COLUMN-FAMILIES` 注册表，backup、checkpoint、check、repair 会携带并校验该注册表。
+- 新增列族生命周期中英设计文档和损坏注入矩阵，覆盖坏注册表、缺失注册表、坏 CURRENT、坏备份注册表和 runtime CF WAL-only repair。
+- 新增 `LDBFactory.planRepair` 和 `ldb repair-plan <db>` dry-run 入口，输出 repair 计划但不修改数据库目录。
+
+### Changed
+
+- 更新性能可靠性专项设计、项目设计和 API 兼容设计的中英文文档，标记 P1 差距的已完成范围与剩余限制。
+- `Options.cacheBlocks(false)` 现在会真正关闭 BlockCache，同时保留可观测的 disabled 状态。
+
+- `ldb.api.supportedFeatures` 标记 runtime column family list/create/drop-empty，`ldb.api.unsupportedFeatures` 保留 non-empty drop 与 rename。
+- 新增 `ldb.api.ecosystemGaps`，解释 MergeOperator、PrefixExtractor、transactions、TTL、custom Env、非空列族 drop/rename 等生态差距的阻塞原因。
+
 ## [0.2.0] - 2026-06-01
 
 ### Added

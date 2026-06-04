@@ -7,7 +7,7 @@ English | [中文](README.md)
 ## Features
 
 - Basic KV API: `put`, `get`, `delete`, `write`, and `addLong`.
-- Column families: register through `Options#addColumnFamily`; the default family is `LdbColumnFamily.DEFAULT`.
+- Column families: register through `Options#addColumnFamily` or the runtime `listColumnFamilies`/`createColumnFamily`/empty `dropColumnFamily` APIs; the default family is `LdbColumnFamily.DEFAULT`.
 - Write reliability: writes go to WAL first and are then applied to MemTable; restart recovery uses MANIFEST, SST, and WAL.
 - Read path: lookup checks MemTable, immutable MemTable, and Version/SSTable in order, with snapshot cursor support.
 - Storage files: supports LevelDB-style WAL, MANIFEST/CURRENT, SSTable, LOCK, INFO_LOG, and related files.

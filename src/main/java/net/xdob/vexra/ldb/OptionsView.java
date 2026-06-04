@@ -61,4 +61,10 @@ public interface OptionsView {
   long compactionRateLimitBytesPerSecond();
 
   long writeSlowdownDelayNanos();
+
+  boolean groupCommitEnabled();
+
+  long groupCommitMaxDelayNanos();
+
+  long groupCommitMaxBatchBytes();
 }

@@ -58,6 +58,7 @@ class LdbRepairTest {
     }
     deleteFilesWithPrefix(dbDir, "MANIFEST-");
     assertTrue(new File(dbDir, Filename.currentFileName()).delete());
+    assertTrue(new File(dbDir, "COLUMN-FAMILIES").delete());
 
     LDBFactory.factory.repair(dbDir, new Options());
 
@@ -142,6 +143,22 @@ class LdbRepairTest {
     assertTrue(report.contains("\"lastSequence\""));
   }
 
+  @Test
+  void shouldPlanRepairWithoutModifyingDatabaseDirectory() throws Exception {
+    File dbDir = new File(tempDir, "repair-plan");
+    createCompactedDefaultDb(dbDir);
+    deleteFilesWithPrefix(dbDir, "MANIFEST-");
+    assertTrue(new File(dbDir, Filename.currentFileName()).delete());
+    String[] before = sortedFileNames(dbDir);
+
+    String json = LDBFactory.factory.planRepair(dbDir, new Options());
+    assertTrue(json.contains("\"dryRun\": true"), json);
+    assertTrue(json.contains("\"recoveredSstFiles\""), json);
+    assertTrue(json.contains("\"manifestFileNumber\""), json);
+    assertFalse(new File(dbDir, "REPAIR-REPORT.json").exists());
+    assertArrayEquals(before, sortedFileNames(dbDir));
+  }
+
   /**
    * 验证 repair 遇到调用方未注册列族的 WAL 时会隔离该 WAL，并继续用可读 SST 修复。
    */
@@ -155,6 +172,7 @@ class LdbRepairTest {
     }
     deleteFilesWithPrefix(dbDir, "MANIFEST-");
     assertTrue(new File(dbDir, Filename.currentFileName()).delete());
+    assertTrue(new File(dbDir, "COLUMN-FAMILIES").delete());
 
     LDBFactory.factory.repair(dbDir, new Options());
 
@@ -238,6 +256,13 @@ class LdbRepairTest {
       raf.readFully(bytes);
     }
     return new String(bytes, UTF_8);
+  }
+
+  private static String[] sortedFileNames(File dir) {
+    String[] names = dir.list();
+    assertNotNull(names);
+    Arrays.sort(names);
+    return names;
   }
 
   /**

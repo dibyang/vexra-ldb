@@ -28,8 +28,10 @@ public final class LdbTool {
       "ldb.api.optionsMapping",
       "ldb.api.supportedFeatures",
       "ldb.api.unsupportedFeatures",
+      "ldb.api.ecosystemGaps",
       "ldb.api.optionValues",
       "ldb.operationStats",
+      "ldb.blockCacheStats",
       "ldb.compactionStats",
       "ldb.walPolicy",
       "ldb.snapshotCursorStats");
@@ -69,8 +71,17 @@ public final class LdbTool {
       if ("repair".equals(command)) {
         return runRepair(args, out, err);
       }
+      if ("repair-plan".equals(command)) {
+        return runRepairPlan(args, out, err);
+      }
       if ("backup".equals(command)) {
         return runBackup(args, out, err);
+      }
+      if ("incremental-backup".equals(command)) {
+        return runIncrementalBackup(args, out, err);
+      }
+      if ("check-backup".equals(command)) {
+        return runCheckBackup(args, out, err);
       }
       if ("restore".equals(command)) {
         return runRestore(args, out, err);
@@ -147,6 +158,20 @@ public final class LdbTool {
     return EXIT_OK;
   }
 
+  private static int runRepairPlan(String[] args, PrintStream out, PrintStream err) throws Exception {
+    if (args.length != 2) {
+      err.println("Usage error: repair-plan requires exactly one database directory");
+      printUsage(err);
+      return EXIT_USAGE;
+    }
+
+    String report = LDBFactory.factory.planRepair(
+        new File(args[1]),
+        new Options().createIfMissing(false));
+    out.print(report);
+    return EXIT_OK;
+  }
+
   private static int runBackup(String[] args, PrintStream out, PrintStream err) throws Exception {
     if (args.length != 3) {
       err.println("Usage error: backup requires a database directory and a backup root");
@@ -157,6 +182,35 @@ public final class LdbTool {
     LDBFactory.BackupReport report = LDBFactory.factory.createBackup(
         new File(args[1]),
         new File(args[2]),
+        new Options().createIfMissing(false));
+    out.print(report.toJson());
+    return report.isOk() ? EXIT_OK : EXIT_CHECK_FAILED;
+  }
+
+  private static int runIncrementalBackup(String[] args, PrintStream out, PrintStream err) throws Exception {
+    if (args.length != 3) {
+      err.println("Usage error: incremental-backup requires a database directory and a backup root");
+      printUsage(err);
+      return EXIT_USAGE;
+    }
+
+    LDBFactory.BackupReport report = LDBFactory.factory.createIncrementalBackup(
+        new File(args[1]),
+        new File(args[2]),
+        new Options().createIfMissing(false));
+    out.print(report.toJson());
+    return report.isOk() ? EXIT_OK : EXIT_CHECK_FAILED;
+  }
+
+  private static int runCheckBackup(String[] args, PrintStream out, PrintStream err) {
+    if (args.length != 2) {
+      err.println("Usage error: check-backup requires exactly one backup directory");
+      printUsage(err);
+      return EXIT_USAGE;
+    }
+
+    LDBFactory.CheckReport report = LDBFactory.factory.checkBackup(
+        new File(args[1]),
         new Options().createIfMissing(false));
     out.print(report.toJson());
     return report.isOk() ? EXIT_OK : EXIT_CHECK_FAILED;
@@ -226,8 +280,11 @@ public final class LdbTool {
     err.println("Usage:");
     err.println("  ldb check <db>");
     err.println("  ldb properties <db> [property...]");
+    err.println("  ldb repair-plan <db>");
     err.println("  ldb repair <db>");
     err.println("  ldb backup <db> <backupRoot>");
+    err.println("  ldb incremental-backup <db> <backupRoot>");
+    err.println("  ldb check-backup <backupDir>");
     err.println("  ldb restore <backupDir> <targetDir>");
     err.println("  ldb checkpoint <db> <targetDir>");
   }

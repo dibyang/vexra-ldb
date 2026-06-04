@@ -149,13 +149,13 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
 | Recovery and repair | WAL/SST normal recovery, file corruption, and process crash tests exist; `repair` has the 6.1 SST repair loop | Missing WAL replay into repair output, structured reports, multi-CF repair, and corrupt-WAL quarantine | P0 |
 | Read-only open | `readOnly(true)` is explicitly rejected | Missing true read-only open, no-lock/shared-lock policy, read-only diagnostics, and write protection | P1 |
 | Range delete | `deleteRange` is rejected before WAL append | Missing range tombstone, read-path masking, compaction merge rules, and compatibility tests | P1 |
-| Column-family lifecycle | Supports open-time column-family registration and per-CF reads/writes | Missing runtime create/drop/list, per-CF `compactRange`, per-CF properties, and lifecycle validation | P1 |
+| Column-family lifecycle | Supports open-time registration, per-CF reads/writes, per-CF compactRange/properties, and minimal runtime list/create/drop-empty lifecycle | Non-empty drop, rename, migration tombstones, and richer lifecycle validation still need design | P1 |
 | Compaction policy | Has basic background compaction, manual compaction, suspend/resume | Missing configurable triggers, rate limiting, cancellation, per-CF scoring, compression-policy validation, and long stress tests | P1 |
-| Writes and WAL | Supports WAL, sync, batch, and crash recovery | Missing systematic partial-WAL combinations, WAL archive/recycle policy, write throttling, and group-commit semantics | P1 |
+| Writes and WAL | Supports WAL, sync, batch, crash recovery, and a disabled-by-default minimal group commit | Missing systematic partial-WAL combinations, WAL archive/recycle policy, write throttling, and a long-run group-commit baseline | P1 |
 | Snapshot/iterator | Has snapshot cursor and basic iteration | Missing iterator leak matrix, reverse iteration, prefix/range scan contracts, and long-lived snapshot stress tests | P2 |
 | Verification and integrity | SST block checksum verification is implemented | Missing whole-DB verify/check command, optional startup full verification, and checkpoint verification reports | P2 |
-| Backup/checkpoint | Supports checkpoint, with ADB restore tests | Missing RocksDB-like incremental backup engine, verification, version cleanup, and restore reports | P2 |
-| Performance and observability | Has some diagnostic properties | Missing benchmarks, histograms, IO/compaction/write-stall metrics, slow-operation logs, and capacity watermarks | P2 |
+| Backup/checkpoint | Supports checkpoint, full backup, complete-directory incremental backup, verification, version cleanup, restore reports, and incremental-backup CLI commands | Missing a RocksDB-backup-engine-like shared object store, reference counts, and incremental-chain cleanup | P2 |
+| Performance and observability | Has benchmarks, operation histograms, block cache stats, IO/compaction/write-stall metrics, slow-operation logs, and capacity watermark properties | Missing external visualization, long-term trend storage, and real low-disk/high-concurrency environment reports | P2 |
 | API compatibility and ecosystem | Provides basic DBFactory/LDB APIs | Missing common RocksDB Options mapping, MergeOperator, PrefixExtractor, statistics, and tool commands | P3 |
 
 ### Follow-Up Implementation Order
@@ -169,6 +169,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - 6.2 increment: add WAL replay into repair output for cases where only WAL exists and no usable MANIFEST is available.
    - 6.3 increment: emit a structured `REPAIR-REPORT.json` with recoverable SST/WAL files, quarantined files, discarded WAL tails, rebuilt MANIFEST/CURRENT file numbers, and the last sequence.
    - 6.4 increment: cover multi-CF repair, corrupt-WAL quarantine, and mixed SST+WAL recovery; unknown column families are recovered or quarantined according to the caller-provided `Options`.
+   - 6.5 increment: add `LDBFactory.planRepair` and `ldb repair-plan <db>` dry-run entry points, scanning registry, SST, and WAL read-only and returning a JSON plan for files that would be recovered, replayed, or quarantined without writing MANIFEST/CURRENT/SST/report files.
    - Repair report fields: `databaseDir`, `recoveredSstFiles`, `replayedWalFiles`, `quarantinedFiles`, `discardedWalBytes`, `manifestFileNumber`, `currentFile`, `lastSequence`, and `nextFileNumber`; the report is diagnostic output and does not participate in database recovery semantics.
 
 2. Phase 7: Implement true read-only open.
@@ -182,7 +183,9 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - Add per-CF `compactRange(cf, begin, end)`, reusing the existing manual compaction scheduler. Because WAL files are currently shared globally, flush all column families before compaction to avoid losing non-target MemTable data when obsolete WAL files are removed, then run manual compaction only for the target column family.
    - Expose per-CF diagnostic `getProperty` entries: `ldb.columnFamily.<cfId>.memTableBytes` and `ldb.columnFamily.<cfId>.levelFiles`.
    - Do not introduce per-CF WAL in this phase; if finer WAL recycling is needed, design it together with Phase 14.
-   - Design runtime create/drop column-family metadata first, then implement after review.
+   - 8.3 Increment: added `docs/ldb-column-family-lifecycle-design.md` and the English copy, implemented the `COLUMN-FAMILIES` registry plus minimal runtime `list/create/drop-empty`; backup, checkpoint, check, and repair now recognize runtime-CF metadata.
+   - 8.4 Increment: added a corruption-injection matrix covering corrupt registry, missing registry causing runtime-CF WAL resolution failure, CURRENT pointing to a missing MANIFEST, corrupt backup registry rejecting restore, and runtime-CF WAL-only repair.
+   - Non-empty drop, rename, and column-family migration tombstones require a later focused design.
    - Tests: multi-CF compaction, unknown-CF failure, and CF directory/metadata recovery.
 
 4. Phase 9: Design and implement range delete.
@@ -200,6 +203,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - 10.2 increment: first wire slow-operation logging and basic latency histograms into the observability surface, with a configurable slow-operation threshold and `getProperty` entries for `get/write/compact/checkpoint` counts, average latency, max latency, and slow-operation counts; longer soak tests, repeated reopen tests, and write-stall semantics remain in 10.3.
    - 10.2 fix: hit-read stress testing showed that MemTable still scanned all entries for range tombstones even when no range tombstone existed, causing pure MemTable reads to degrade linearly; range tombstones now use a separate index so normal point reads go through skip-list seek only.
    - 10.3 increment: add a lightweight repeated-reopen/scan soak regression test and expose write-stall semantics: Level-0 soft triggers record slowdown delays, immutable MemTables or Level-0 stop triggers record waits, with counts, accumulated latency, and trigger thresholds available through properties.
+   - 10.4 increment: add operation latency histograms and `ldb.blockCacheStats`, exposing BlockCache enabled/maxEntries/size/hits/misses/puts/evictions, and make `Options.cacheBlocks(false)` truly disable the cache.
 
 6. Phase 11: Add whole-DB verify/check.
    - Add offline verify/check support that scans MANIFEST, SST, and WAL files and emits file-level, block-level, and sequence-level reports.
@@ -216,6 +220,8 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - Tests: first full backup, incremental backup, old-version cleanup, corrupt-backup verification failure, and reopen after restore.
    - 12.1 increment: first add offline full-backup/restore entry points `LDBFactory.createBackup/restoreBackup`, write into a temporary directory and publish only after verification, and emit `BACKUP-REPORT.json` plus `RESTORE-REPORT.json`; incremental backups, version cleanup, and shared-SST reference counting remain in 12.2.
    - 12.2 increment: add `LDBFactory.purgeOldBackups(root, keepLast)`, only deleting published `backup-000001` style directories, retaining the newest N versions, and returning a cleanup report; shared-file reference counting remains in a later increment.
+   - 12.3 increment: add `LDBFactory.createIncrementalBackup/checkBackup`, publish a complete restorable directory, write `BACKUP-MANIFEST.json`, and preferentially hard-link same-name same-length SST files from the previous backup; shared object storage and reference-count cleanup remain future enhancements.
+   - 12.4 increment: expose incremental backup and backup validation through `LdbTool incremental-backup` and `LdbTool check-backup`, reusing `BackupReport`/`CheckReport` JSON output and exit-code semantics.
 
 8. Phase 13: Enhance compaction policy.
    - Add configurable trigger thresholds, rate limiting, cancellation, and per-CF scoring while preserving existing defaults.
@@ -244,7 +250,8 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - 14.1 increment: keep the global WAL scheme unchanged and add WAL lifecycle observability properties for existing WALs, referenced WALs, recyclable WALs, and the current WAL as the acceptance entry point for later archive/recycle policy work.
    - 14.2 increment: add partial-WAL combination tests covering header truncation, checksum errors, and tail truncation across multi-WAL boundaries; the current policy skips corrupt or incomplete records while preserving preceding complete records.
    - 14.3 increment: add reopen/backup/repair acceptance coverage after WAL cleanup, verifying that once data is persisted to SST and obsolete WALs are cleaned, normal open, offline backup/restore, and repair can all read the complete data.
-   - 14.4 increment: explicitly expose current WAL policy properties: global WAL, archive disabled, obsolete-WAL deletion as recycle policy, group commit disabled for now, and write throttling delegated to existing write-stall behavior; any future policy change must update compatibility docs and tests first.
+   - 14.4 increment: explicitly expose current WAL policy properties: global WAL, archive disabled, obsolete-WAL deletion as recycle policy, group commit disabled by default, and write throttling delegated to existing write-stall behavior; any future policy change must update compatibility docs and tests first.
+   - 14.5 increment: add a minimal group commit implementation and statistics property. When enabled, concurrent writes enter a short-window aggregation queue and any sync request in the group forces the commit cycle to sync; WAL records are still encoded per request, preserving disk-format compatibility.
    - Phase 14 completion criteria: the global WAL scheme is confirmed, and WAL lifecycle observability, partial-write combinations, reopen/backup/repair after recycling, plus the current write-throttle/group-commit policy all have documentation and test entry points.
 
 10. Phase 15: Complete snapshot and iterator semantics.
@@ -267,6 +274,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
     - 16.2 increment: add LDB/RocksDB API compatibility and migration documentation that fixes the Options mapping, property-based statistics entry points, explicitly unsupported features, rollback strategy, and review boundary for future MergeOperator, PrefixExtractor, and tool-command work. The document does not change runtime behavior, but becomes the acceptance baseline for later ecosystem compatibility increments.
     - 16.3 increment: add an LDB tool-command design review that defines arguments, read-only/write boundaries, exit codes, and error semantics for `check`, `repair`, `checkpoint`, `backup`, `restore`, `properties`, and `compact`. No CLI implementation is provided yet; `rocksdbToolCommands` remains marked unsupported until a command entry point is implemented.
     - 16.4 increment: add dedicated MergeOperator/PrefixExtractor review boundaries, making clear that they affect WAL/SST formats, MemTable merging, read-path visibility, compaction merging, snapshot semantics, repair/check/backup compatibility, and downgrade strategy. `mergeOperator` and `prefixExtractor` remain unsupported for now; future work must proceed through a separate design and migration plan.
+    - 16.5 increment: add `ldb.api.ecosystemGaps`, exposing blocking reasons for MergeOperator, PrefixExtractor, transactions, TTL, custom Env, non-empty column-family drop/rename, RocksDB tool compatibility, and secondary indexes to migration layers.
     - Phase 16 completion criteria: Options mapping, runtime compatibility self-description, migration notes, tool-command semantics, and MergeOperator/PrefixExtractor review boundaries are documented, with `LdbApiCompatibilityTest` covering the core properties. Real CLI or Merge/Prefix implementations remain future independent phases and do not block closing this phase.
 
 12. Phase 17: Minimal LDB tool-command entry point.
@@ -279,6 +287,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
     - 17.2 increment: add `repair <db>` as the first explicit side-effecting tool command. It calls `LDBFactory.repair`, prints `REPAIR-REPORT.json` on success, returns exit code `4` for exceptions, and returns exit code `1` for bad arguments.
     - 17.3 increment: add `backup <db> <backupRoot>` and `restore <backupDir> <targetDir>` commands, reusing the offline backup/restore engine and printing `BackupReport` JSON. Reports with `ok=false` return exit code `2`; successful reports return `0`.
     - 17.4 increment: add `checkpoint <db> <targetDir>`, opening the source DB normally and calling the instance-level `checkpoint`; on success it prints `CHECKPOINT-REPORT.json`. Non-empty target directories or checkpoint verification failures return internal-error exit code `4`.
+    - 17.5 increment: add `incremental-backup <db> <backupRoot>` and `check-backup <backupDir>`, covering complete-directory incremental backup publishing and read-only backup validation.
 
 ### Near-Term Priority
 

@@ -86,6 +86,17 @@ public class LDBFactory
   }
 
   /**
+   * 生成 repair 计划报告但不修改数据库目录。
+   *
+   * 该入口用于发布前或运维前的 dry-run 诊断：它会读取注册表、SST 和 WAL，
+   * 标记可恢复文件与将被隔离的损坏文件，但不会写 MANIFEST、CURRENT、SST 或报告文件。
+   */
+  public String planRepair(File path, Options options)
+      throws IOException {
+    return new Repairer(path, options).plan().toJson();
+  }
+
+  /**
    * 离线校验 LDB 目录中的 CURRENT、MANIFEST、SST 和 WAL 文件，并返回结构化报告。
    *
    * 该方法不获取数据库锁、不写入文件，也不修改现有恢复流程；调用方可以用报告中的 failures
@@ -102,7 +113,17 @@ public class LDBFactory
    * `backup-000001` 形式的目录，避免半成品备份被误认为可恢复版本。
    */
   public BackupReport createBackup(File sourceDir, File backupRoot, Options options) throws IOException {
-    return new BackupEngine(sourceDir, backupRoot, options).createBackup();
+    return new BackupEngine(sourceDir, backupRoot, options).createBackup(false);
+  }
+
+  /**
+   * 创建离线增量备份。
+   *
+   * 当前增量备份仍发布为可独立恢复的 `backup-000001` 风格目录；当上一备份中存在同名同长度文件时，
+   * 优先创建硬链接复用文件，失败时回退为复制，并写入 `BACKUP-MANIFEST.json` 记录复用关系。
+   */
+  public BackupReport createIncrementalBackup(File sourceDir, File backupRoot, Options options) throws IOException {
+    return new BackupEngine(sourceDir, backupRoot, options).createBackup(true);
   }
 
   /**
@@ -112,6 +133,15 @@ public class LDBFactory
    */
   public BackupReport restoreBackup(File backupDir, File targetDir, Options options) throws IOException {
     return new BackupEngine(backupDir, targetDir, options).restoreBackup();
+  }
+
+  /**
+   * 校验备份目录完整性。
+   *
+   * 该入口复用 LDB 离线 check 逻辑，增量备份通过硬链接或复制发布为完整目录，因此无需 restore 即可校验。
+   */
+  public CheckReport checkBackup(File backupDir, Options options) {
+    return check(backupDir, options);
   }
 
   /**
@@ -292,6 +322,7 @@ public class LDBFactory
     private final Options options;
     private final InternalKeyComparator internalKeyComparator;
     private final CheckReport report = new CheckReport();
+    private List<LdbColumnFamily> columnFamilies;
 
     private Checker(File databaseDir, Options options) {
       this.databaseDir = databaseDir;
@@ -314,8 +345,13 @@ public class LDBFactory
         return report;
       }
 
+      loadColumnFamilyRegistry();
       checkCurrentFile();
       for (File file : Filename.listFiles(databaseDir)) {
+        if (ColumnFamilyRegistry.FILE_NAME.equals(file.getName()) && file.isFile()) {
+          report.addCheckedFile(file);
+          continue;
+        }
         FileInfo info;
         try {
           info = Filename.parseFileName(file);
@@ -367,6 +403,15 @@ public class LDBFactory
       }
     }
 
+    private void loadColumnFamilyRegistry() {
+      try {
+        columnFamilies = ColumnFamilyRegistry.load(databaseDir, options);
+      } catch (Throwable e) {
+        report.addFailure(new File(databaseDir, ColumnFamilyRegistry.FILE_NAME), rootMessage(e));
+        columnFamilies = options.getColumnFamilies();
+      }
+    }
+
     private void checkManifest(File manifest) {
       report.addCheckedFile(manifest);
       try (FileInputStream input = new FileInputStream(manifest);
@@ -374,7 +419,8 @@ public class LDBFactory
         CollectingLogMonitor monitor = new CollectingLogMonitor();
         LogReader reader = new LogReader(channel, monitor, true, 0);
         for (Slice record = reader.readRecord(); record != null; record = reader.readRecord()) {
-          new VersionEdit(record);
+          VersionEdit edit = new VersionEdit(record);
+          validateManifestEdit(manifest, edit);
           report.addManifestRecord();
         }
         if (monitor.hasCorruption()) {
@@ -382,6 +428,24 @@ public class LDBFactory
         }
       } catch (Throwable e) {
         report.addFailure(manifest, rootMessage(e));
+      }
+    }
+
+    private void validateManifestEdit(File manifest, VersionEdit edit) {
+      for (VersionEdit.CfLevel cfLevel : edit.getNewFiles().keySet()) {
+        validateRegisteredManifestCf(manifest, cfLevel.getCfId());
+      }
+      for (VersionEdit.CfLevel cfLevel : edit.getDeletedFiles().keySet()) {
+        validateRegisteredManifestCf(manifest, cfLevel.getCfId());
+      }
+      for (VersionEdit.CfLevel cfLevel : edit.getCompactPointers().keySet()) {
+        validateRegisteredManifestCf(manifest, cfLevel.getCfId());
+      }
+    }
+
+    private void validateRegisteredManifestCf(File manifest, int cfId) {
+      if (findColumnFamily(cfId) == null) {
+        report.addFailure(manifest, "Unknown column family id in MANIFEST: " + cfId);
       }
     }
 
@@ -395,7 +459,7 @@ public class LDBFactory
             new InternalUserComparator(internalKeyComparator),
             true,
             options,
-            new BlockCache(options.blockCacheSize()));
+            options.cacheBlocks() ? new BlockCache(options.blockCacheSize()) : null);
         try {
           InternalTableIterator iterator = new InternalTableIterator(table.iterator());
           iterator.seekToFirst();
@@ -449,7 +513,7 @@ public class LDBFactory
     }
 
     private LdbColumnFamily findColumnFamily(int cfId) {
-      for (LdbColumnFamily cf : options.getColumnFamilies()) {
+      for (LdbColumnFamily cf : columnFamilies) {
         if (cf.getId() == cfId) {
           return cf;
         }
@@ -503,6 +567,7 @@ public class LDBFactory
     private File targetDir;
     private boolean ok = true;
     private final List<String> copiedFiles = new ArrayList<>();
+    private final List<String> reusedFiles = new ArrayList<>();
     private final List<String> failures = new ArrayList<>();
     private CheckReport checkReport;
 
@@ -520,6 +585,10 @@ public class LDBFactory
 
     private void addCopiedFile(String name) {
       copiedFiles.add(name);
+    }
+
+    private void addReusedFile(String name) {
+      reusedFiles.add(name);
     }
 
     private void addFailure(String failure) {
@@ -571,6 +640,13 @@ public class LDBFactory
     }
 
     /**
+     * 返回从上一备份复用的 LDB 文件名列表。
+     */
+    public List<String> getReusedFiles() {
+      return Collections.unmodifiableList(reusedFiles);
+    }
+
+    /**
      * 返回备份或恢复失败原因。
      */
     public List<String> getFailures() {
@@ -595,6 +671,7 @@ public class LDBFactory
       appendJsonField(builder, "targetDir", targetDir == null ? "" : targetDir.getAbsolutePath(), true);
       appendJsonField(builder, "ok", ok, true);
       appendJsonField(builder, "copiedFiles", copiedFiles, true);
+      appendJsonField(builder, "reusedFiles", reusedFiles, true);
       appendJsonField(builder, "failures", failures, true);
       appendJsonField(builder, "checkReport", checkReport == null ? "" : checkReport.toString(), false);
       builder.append("\n}\n");
@@ -735,6 +812,7 @@ public class LDBFactory
   private static final class BackupEngine {
     private static final String BACKUP_REPORT_FILE = "BACKUP-REPORT.json";
     private static final String RESTORE_REPORT_FILE = "RESTORE-REPORT.json";
+    private static final String BACKUP_MANIFEST_FILE = "BACKUP-MANIFEST.json";
 
     private final File sourceDir;
     private final File targetRoot;
@@ -785,9 +863,9 @@ public class LDBFactory
       return report;
     }
 
-    private BackupReport createBackup() throws IOException {
+    private BackupReport createBackup(boolean incremental) throws IOException {
       BackupReport report = new BackupReport();
-      report.setAction("backup");
+      report.setAction(incremental ? "incremental-backup" : "backup");
       report.setSourceDir(sourceDir);
 
       CheckReport sourceCheck = factory.check(sourceDir, options);
@@ -806,12 +884,14 @@ public class LDBFactory
 
       File backupDir = nextBackupDir(targetRoot);
       File tempDir = new File(targetRoot, backupDir.getName() + ".tmp");
+      File parentBackup = incremental ? latestPublishedBackup(targetRoot) : null;
       if (tempDir.exists()) {
         throw new IOException("Temporary backup directory already exists: " + tempDir);
       }
       report.setTargetDir(backupDir);
       try {
-        copyOwnedFiles(sourceDir, tempDir, report);
+        copyOwnedFiles(sourceDir, tempDir, parentBackup, report);
+        writeBackupManifest(new File(tempDir, BACKUP_MANIFEST_FILE), backupDir, parentBackup, report);
         writeReport(new File(tempDir, BACKUP_REPORT_FILE), report);
         CheckReport backupCheck = factory.check(tempDir, options);
         report.setCheckReport(backupCheck);
@@ -841,7 +921,7 @@ public class LDBFactory
         return report;
       }
       prepareEmptyDirectory(targetRoot);
-      copyOwnedFiles(sourceDir, targetRoot, report);
+      copyOwnedFiles(sourceDir, targetRoot, null, report);
       CheckReport restoreCheck = factory.check(targetRoot, options);
       report.setCheckReport(restoreCheck);
       writeReport(new File(targetRoot, RESTORE_REPORT_FILE), report);
@@ -863,6 +943,20 @@ public class LDBFactory
         }
       }
       return new File(backupRoot, String.format("backup-%06d", max + 1));
+    }
+
+    private static File latestPublishedBackup(File backupRoot) {
+      List<File> backups = listPublishedBackups(backupRoot);
+      if (backups.isEmpty()) {
+        return null;
+      }
+      Collections.sort(backups, new Comparator<File>() {
+        @Override
+        public int compare(File left, File right) {
+          return left.getName().compareTo(right.getName());
+        }
+      });
+      return backups.get(backups.size() - 1);
     }
 
     private static List<File> listPublishedBackups(File backupRoot) {
@@ -905,9 +999,19 @@ public class LDBFactory
       }
     }
 
-    private void copyOwnedFiles(File source, File target, BackupReport report) throws IOException {
+    private void copyOwnedFiles(File source, File target, File reuseFrom, BackupReport report) throws IOException {
       prepareEmptyDirectory(target);
       for (File file : Filename.listFiles(source)) {
+        if (ColumnFamilyRegistry.FILE_NAME.equals(file.getName()) && file.isFile()) {
+          File dst = new File(target, file.getName());
+          java.nio.file.Files.copy(
+              file.toPath(),
+              dst.toPath(),
+              java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+              java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
+          report.addCopiedFile(file.getName());
+          continue;
+        }
         FileInfo info;
         try {
           info = Filename.parseFileName(file);
@@ -918,6 +1022,18 @@ public class LDBFactory
           continue;
         }
         File dst = new File(target, file.getName());
+        File reusable = reuseFrom == null || info.getFileType() != FileType.TABLE
+            ? null
+            : new File(reuseFrom, file.getName());
+        if (reusable != null && reusable.isFile() && reusable.length() == file.length()) {
+          try {
+            java.nio.file.Files.createLink(dst.toPath(), reusable.toPath());
+            report.addReusedFile(file.getName());
+            continue;
+          } catch (IOException | UnsupportedOperationException e) {
+            // 硬链接只是增量备份的空间优化，失败时回退为复制，保持备份目录可独立恢复。
+          }
+        }
         java.nio.file.Files.copy(
             file.toPath(),
             dst.toPath(),
@@ -925,6 +1041,39 @@ public class LDBFactory
             java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
         report.addCopiedFile(file.getName());
       }
+    }
+
+    private void writeBackupManifest(File file, File backupDir, File parentBackup, BackupReport report) throws IOException {
+      try (FileOutputStream output = new FileOutputStream(file)) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("{\n");
+        appendManifestField(builder, "formatVersion", 1, true);
+        appendManifestField(builder, "backupId", backupDir.getName(), true);
+        appendManifestField(builder, "parentBackupId", parentBackup == null ? "" : parentBackup.getName(), true);
+        appendManifestField(builder, "action", report.getAction(), true);
+        appendManifestField(builder, "copiedFiles", report.getCopiedFiles(), true);
+        appendManifestField(builder, "reusedFiles", report.getReusedFiles(), true);
+        appendManifestField(builder, "published", true, false);
+        builder.append("\n}\n");
+        output.write(builder.toString().getBytes(UTF_8));
+        output.flush();
+        output.getFD().sync();
+      }
+    }
+
+    private static void appendManifestField(StringBuilder builder, String name, Object value, boolean comma) {
+      builder.append("  \"").append(name).append("\": ");
+      if (value instanceof String) {
+        builder.append('"').append(CheckReport.escape((String) value)).append('"');
+      } else if (value instanceof List) {
+        CheckReport.appendJsonList(builder, (List<?>) value);
+      } else {
+        builder.append(value);
+      }
+      if (comma) {
+        builder.append(',');
+      }
+      builder.append('\n');
     }
 
     private void publishDirectory(File tempDir, File backupDir) throws IOException {
@@ -978,6 +1127,7 @@ public class LDBFactory
     private final Options options;
     private final InternalKeyComparator internalKeyComparator;
     private final RepairReport report = new RepairReport();
+    private List<LdbColumnFamily> columnFamilies;
 
     private Repairer(File databaseDir, Options options) {
       this.databaseDir = databaseDir;
@@ -987,6 +1137,7 @@ public class LDBFactory
           ? new CustomUserComparator(comparator)
           : new BytewiseComparator();
       this.internalKeyComparator = new InternalKeyComparator(userComparator);
+      this.columnFamilies = this.options.getColumnFamilies();
     }
 
     private void repair() throws IOException {
@@ -996,6 +1147,7 @@ public class LDBFactory
       if (!databaseDir.isDirectory()) {
         throw new IOException("Database path is not a directory: " + databaseDir);
       }
+      columnFamilies = ColumnFamilyRegistry.load(databaseDir, options);
       report.setDatabaseDir(databaseDir);
 
       List<FileMetaData> liveTables = new ArrayList<>();
@@ -1050,6 +1202,74 @@ public class LDBFactory
       report.setLastSequence(maxSequence);
       report.setNextFileNumber(nextFileNumber);
       report.write(databaseDir);
+    }
+
+    private RepairReport plan() throws IOException {
+      if (!databaseDir.exists()) {
+        throw new FileNotFoundException("Database directory does not exist: " + databaseDir);
+      }
+      if (!databaseDir.isDirectory()) {
+        throw new IOException("Database path is not a directory: " + databaseDir);
+      }
+      columnFamilies = ColumnFamilyRegistry.load(databaseDir, options);
+      report.setDryRun(true);
+      report.setDatabaseDir(databaseDir);
+
+      List<Long> logs = new ArrayList<>();
+      long maxFileNumber = 1;
+      long maxSequence = 0;
+      boolean hasRecoverableInput = false;
+
+      for (File file : Filename.listFiles(databaseDir)) {
+        FileInfo info = Filename.parseFileName(file);
+        if (info == null) {
+          continue;
+        }
+        maxFileNumber = Math.max(maxFileNumber, info.getFileNumber());
+        if (info.getFileType() == FileType.TABLE) {
+          try {
+            FileMetaData metaData = readTableMetadata(info.getFileNumber());
+            report.addRecoveredSst(file.getName());
+            maxSequence = Math.max(maxSequence, metaData.getLargest().getSequenceNumber());
+            hasRecoverableInput = true;
+          } catch (RuntimeException e) {
+            report.addQuarantinedFile(file.getName(), "", "planned-corrupt");
+          } catch (IOException e) {
+            report.addQuarantinedFile(file.getName(), "", "planned-corrupt");
+          }
+        } else if (info.getFileType() == FileType.LOG) {
+          logs.add(info.getFileNumber());
+        }
+      }
+
+      Collections.sort(logs);
+      for (Long logNumber : logs) {
+        try {
+          ParsedWalLog parsed = parseWalLog(logNumber);
+          report.addReplayedWal(Filename.logFileName(logNumber));
+          report.addDiscardedWalBytes(parsed.getDiscardedBytes());
+          maxSequence = Math.max(maxSequence, parsed.getMaxSequence());
+          if (!parsed.getBatches().isEmpty()) {
+            hasRecoverableInput = true;
+          }
+        } catch (RuntimeException e) {
+          report.addQuarantinedFile(Filename.logFileName(logNumber), "", "planned-corrupt");
+        } catch (IOException e) {
+          report.addQuarantinedFile(Filename.logFileName(logNumber), "", "planned-corrupt");
+        }
+      }
+
+      if (!hasRecoverableInput) {
+        throw new IOException("No readable SST or WAL records found for repair: " + databaseDir);
+      }
+
+      long manifestNumber = maxFileNumber + 1;
+      long repairedLogNumber = manifestNumber + 1;
+      report.setManifestFileNumber(manifestNumber);
+      report.setCurrentFile(Filename.currentFileName());
+      report.setLastSequence(maxSequence);
+      report.setNextFileNumber(repairedLogNumber + 1);
+      return report;
     }
 
     private FileMetaData readTableMetadata(long fileNumber) throws IOException {
@@ -1165,7 +1385,7 @@ public class LDBFactory
       }
 
       Map<Integer, MemTable> memTables = new HashMap<>();
-      for (LdbColumnFamily cf : options.getColumnFamilies()) {
+      for (LdbColumnFamily cf : columnFamilies) {
         memTables.put(cf.getId(), new MemTable(internalKeyComparator));
       }
 
@@ -1256,7 +1476,7 @@ public class LDBFactory
      * 根据调用方传入的 Options 解析 WAL 中的列族 id，避免 repair 猜测未知列族语义。
      */
     private LdbColumnFamily findColumnFamily(int cfId) {
-      for (LdbColumnFamily cf : options.getColumnFamilies()) {
+      for (LdbColumnFamily cf : columnFamilies) {
         if (cf.getId() == cfId) {
           return cf;
         }
@@ -1540,11 +1760,12 @@ public class LDBFactory
       }
     }
 
-    private static final class RepairReport {
+    public static final class RepairReport {
       private File databaseDir;
       private final List<String> recoveredSstFiles = new ArrayList<>();
       private final List<String> replayedWalFiles = new ArrayList<>();
       private final List<String> quarantinedFiles = new ArrayList<>();
+      private boolean dryRun;
       private long discardedWalBytes;
       private long manifestFileNumber;
       private String currentFile;
@@ -1553,6 +1774,10 @@ public class LDBFactory
 
       private void setDatabaseDir(File databaseDir) {
         this.databaseDir = databaseDir;
+      }
+
+      private void setDryRun(boolean dryRun) {
+        this.dryRun = dryRun;
       }
 
       private void addRecoveredSst(String file) {
@@ -1564,7 +1789,11 @@ public class LDBFactory
       }
 
       private void addQuarantinedFile(String source, String target, String reason) {
-        quarantinedFiles.add(source + " -> " + target + " (" + reason + ")");
+        if (target == null || target.isEmpty()) {
+          quarantinedFiles.add(source + " (" + reason + ")");
+        } else {
+          quarantinedFiles.add(source + " -> " + target + " (" + reason + ")");
+        }
       }
 
       private void addDiscardedWalBytes(long bytes) {
@@ -1594,10 +1823,16 @@ public class LDBFactory
         }
       }
 
-      private String toJson() {
+      /**
+       * 输出结构化 repair 报告 JSON。
+       *
+       * dry-run 报告不会对应磁盘上的 `REPAIR-REPORT.json`，调用方可直接读取该字符串。
+       */
+      public String toJson() {
         StringBuilder builder = new StringBuilder();
         builder.append("{\n");
         appendField(builder, "databaseDir", databaseDir == null ? "" : databaseDir.getAbsolutePath(), true);
+        appendField(builder, "dryRun", Boolean.toString(dryRun), false, true);
         appendArray(builder, "recoveredSstFiles", recoveredSstFiles, true);
         appendArray(builder, "replayedWalFiles", replayedWalFiles, true);
         appendArray(builder, "quarantinedFiles", quarantinedFiles, true);

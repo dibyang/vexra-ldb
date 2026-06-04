@@ -19,7 +19,7 @@ This document describes the design that is implemented today. It is the baseline
 
 - This document does not propose new runtime behavior.
 - It does not promise full RocksDB API or disk-format compatibility.
-- It does not implement runtime create/drop column family, MergeOperator, PrefixExtractor, or complete range tombstone semantics.
+- It does not implement non-empty column-family drop/rename, MergeOperator, PrefixExtractor, or complete range tombstone semantics.
 - It does not replace existing focused design documents such as range delete and API compatibility designs.
 
 ## Current Design
@@ -58,9 +58,9 @@ This document describes the design that is implemented today. It is the baseline
 1. The caller enters the write path through `put`, `delete`, `addLong`, or `write(LdbWriteBatch)`.
 2. `LDbImpl` validates database state, read-only state, batch type, and batch content.
 3. Plugins receive `beforeWrite`; the batch is validated again afterwards so plugin mutation cannot bypass constraints.
-4. A global sequence range is allocated under the mutex.
+4. A global sequence range is allocated under the mutex; when `groupCommitEnabled` is enabled and the batch is non-empty, write requests first enter the group-commit queue.
 5. The batch is encoded as a WAL record: `sequenceBegin + updateSize + operations`.
-6. The WAL record is written and synced according to the write options and implementation policy.
+6. The WAL record is written and synced according to the write options or group sync policy; if any request in a group requires sync, that commit cycle must sync.
 7. The batch is applied to the target column-family MemTables.
 8. If a MemTable exceeds `writeBufferSize`, it is switched to an immutable MemTable and flush/compaction is scheduled.
 9. A post-write snapshot may be returned according to `WriteOptions`.
@@ -86,10 +86,11 @@ This document describes the design that is implemented today. It is the baseline
 
 ### Maintenance Flow
 
-- `checkpoint(targetDir)`: flushes first, suspends compaction, freezes the file set, copies or hard-links CURRENT, MANIFEST, live SST, referenced WAL, and INFO_LOG files, and writes `CHECKPOINT-REPORT.json`.
-- `LDBFactory.check`: offline scan of CURRENT, MANIFEST, SST, and WAL. It returns `CheckReport`, does not acquire the write lock, and does not modify the directory.
+- `checkpoint(targetDir)`: flushes first, suspends compaction, freezes the file set, copies or hard-links CURRENT, MANIFEST, `COLUMN-FAMILIES`, live SST, referenced WAL, and INFO_LOG files, and writes `CHECKPOINT-REPORT.json`.
+- `LDBFactory.check`: offline scan of CURRENT, MANIFEST, `COLUMN-FAMILIES`, SST, and WAL. It returns `CheckReport`, does not acquire the write lock, and does not modify the directory.
 - `LDBFactory.repair`: rebuilds MANIFEST/CURRENT from available SST/WAL files, quarantines corrupt files, and writes `REPAIR-REPORT.json`.
 - `createBackup/restoreBackup`: creates full backups and restores them through a temporary-directory publish flow, producing JSON reports.
+- `createIncrementalBackup/checkBackup`: creates a complete restorable incremental backup directory, preferentially hard-linking same-name same-length SST files from the previous backup and writing `BACKUP-MANIFEST.json`.
 - `purgeOldBackups`: removes only published `backup-000001` style directories.
 
 ## Core Constraints
@@ -123,6 +124,9 @@ This document describes the design that is implemented today. It is the baseline
 | `LDB#compactRange` | Manually compacts a key range |
 | `LDB#checkpoint` | Creates a verifiable checkpoint |
 | `LDB#getProperty` | Reads a diagnostic property |
+| `LDB#listColumnFamilies` | Returns the current effective column-family snapshot |
+| `LDB#createColumnFamily` | Creates a runtime column family and persists `COLUMN-FAMILIES` |
+| `LDB#dropColumnFamily` | Drops an empty column family; default and non-empty families fail |
 
 ### Main Options
 
@@ -147,6 +151,9 @@ This document describes the design that is implemented today. It is the baseline
 | `level0StopWritesTrigger` | L0 write stop trigger |
 | `writeSlowdownDelayNanos` | Per-write slowdown delay after the L0 soft trigger is hit |
 | `compactionRateLimitBytesPerSecond` | Compaction output rate limit; 0 disables it |
+| `groupCommitEnabled` | Default false; concurrent writes enter the group-commit queue when enabled |
+| `groupCommitMaxDelayNanos` | Group-commit collection window, default 200 microseconds |
+| `groupCommitMaxBatchBytes` | Per-cycle group-commit collection cap, default 1 MiB |
 
 ### Tool Commands
 
@@ -156,6 +163,8 @@ This document describes the design that is implemented today. It is the baseline
 | `properties <db> [property...]` | Read-only open, no disk writes | Property JSON |
 | `repair <db>` | Rebuilds metadata and quarantines corrupt files | `REPAIR-REPORT.json` |
 | `backup <db> <backupRoot>` | Creates a backup directory | `BackupReport` JSON |
+| `incremental-backup <db> <backupRoot>` | Creates a complete restorable incremental backup directory | `BackupReport` JSON |
+| `check-backup <backupDir>` | Read-only backup-directory validation | `CheckReport` JSON |
 | `restore <backupDir> <targetDir>` | Creates a restored target directory | `BackupReport` JSON |
 | `checkpoint <db> <targetDir>` | Creates a checkpoint directory | `CHECKPOINT-REPORT.json` |
 

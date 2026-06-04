@@ -149,13 +149,13 @@
 | 恢复与修复 | 已覆盖 WAL/SST 正常恢复、文件级损坏、进程级 crash；`repair` 已具备 6.1 的 SST 修复闭环 | 缺少 WAL replay 到修复输出、结构化报告、多列族 repair 和坏 WAL 隔离 | P0 |
 | 只读能力 | `readOnly(true)` 当前显式拒绝 | 缺少真正只读打开、无锁/共享锁策略、只读诊断与安全保护 | P1 |
 | Range Delete | `deleteRange` 进入 WAL 前拒绝 | 缺少 range tombstone、读路径遮蔽、compaction 合并和兼容测试 | P1 |
-| 列族生命周期 | 支持打开时注册列族和按列族读写 | 缺少运行时 create/drop/list、列族级 compactRange、列族级属性和生命周期校验 | P1 |
+| 列族生命周期 | 支持打开时注册列族、按列族读写、列族级 compactRange/属性，以及运行时 list/create/drop-empty 最小生命周期 | 非空 drop、rename、列族迁移 tombstone 和更复杂生命周期校验仍待设计 | P1 |
 | Compaction 策略 | 有基础后台 compaction、手工 compact、暂停/恢复 | 缺少可配置触发阈值、限速、取消、按列族评分、压缩策略验证和长时间压力测试 | P1 |
-| 写入与 WAL | 支持 WAL、sync、batch、crash 恢复 | 缺少更系统的半写 WAL 组合测试、WAL 归档/回收策略、写入限流、group commit 行为定义 | P1 |
+| 写入与 WAL | 支持 WAL、sync、batch、crash 恢复、默认关闭的 group commit 最小实现 | 缺少更系统的半写 WAL 组合测试、WAL 归档/回收策略、写入限流和 group commit 长期压测基线 | P1 |
 | Snapshot/Iterator | 有 snapshot cursor 和基础迭代 | 缺少 iterator 资源泄漏矩阵、反向迭代、prefix/range scan 行为约束和长生命周期 snapshot 压测 | P2 |
 | 校验与数据完整性 | 已补 SST block checksum 读取校验 | 缺少全库 verify/check 命令、启动时可选全量校验、checkpoint 校验报告 | P2 |
-| 备份/Checkpoint | 支持 checkpoint，ADB 已有 restore 用例 | 缺少 RocksDB backup engine 类似的增量备份、校验、版本清理和恢复报告 | P2 |
-| 性能与观测 | 有部分诊断属性 | 缺少 benchmark、histogram、IO/compaction/write stall 指标、慢操作日志和容量水位 | P2 |
+| 备份/Checkpoint | 支持 checkpoint、全量备份、完整目录形式的增量备份、校验、版本清理、恢复报告和增量备份 CLI | 缺少 RocksDB backup engine 类似的共享对象仓库、引用计数和增量链清理 | P2 |
+| 性能与观测 | 已有 benchmark、operation histogram、block cache stats、IO/compaction/write stall 指标、慢操作日志和容量水位属性 | 缺少外部可视化、长期趋势存储和真实低磁盘/高并发环境压测报告 | P2 |
 | API 兼容与生态 | 提供基础 DBFactory/LDB API | 缺少 RocksDB 常见 Options 映射、MergeOperator、PrefixExtractor、统计和工具命令 | P3 |
 
 ### 后继实施顺序
@@ -169,6 +169,7 @@
    - 6.2 增量：再补 WAL replay 到修复输出的能力，覆盖只有 WAL、无可用 MANIFEST 的恢复场景。
    - 6.3 增量：输出结构化 `REPAIR-REPORT.json`，记录可恢复 SST/WAL、隔离文件、丢弃尾部 WAL、重建 MANIFEST/CURRENT 文件号和最后序列号。
    - 6.4 增量：覆盖多列族 repair、坏 WAL 隔离、SST+WAL 混合恢复；未知列族按调用方 `Options` 是否注册决定恢复或隔离。
+   - 6.5 增量：新增 `LDBFactory.planRepair` 和 `ldb repair-plan <db>` dry-run 入口，只读扫描注册表、SST 和 WAL，输出 JSON 格式的恢复、重放和隔离计划，不写 MANIFEST/CURRENT/SST/报告文件。
    - repair 报告字段：`databaseDir`、`recoveredSstFiles`、`replayedWalFiles`、`quarantinedFiles`、`discardedWalBytes`、`manifestFileNumber`、`currentFile`、`lastSequence`、`nextFileNumber`；报告是诊断产物，不参与数据库恢复语义。
 
 2. 第七阶段：实现真正只读打开。
@@ -182,7 +183,9 @@
    - 新增列族级 `compactRange(cf, begin, end)`，复用现有手动 compaction 调度；由于当前 WAL 为全局共享，执行前 flush 所有列族以避免旧 WAL 被清理时丢失非目标列族 MemTable 数据，随后只对目标列族触发 manual compaction。
    - 暴露列族级 `getProperty` 诊断项：`ldb.columnFamily.<cfId>.memTableBytes` 和 `ldb.columnFamily.<cfId>.levelFiles`。
    - 不在本阶段引入列族级 WAL；如需优化 WAL 回收粒度，进入第十四阶段统一设计。
-   - 评估运行时 create/drop column family 的磁盘元数据方案，先形成设计文档再实现。
+   - 8.3 增量：新增 `docs/ldb-column-family-lifecycle-design.md` 及英文副本，落地 `COLUMN-FAMILIES` 注册表和运行时 `list/create/drop-empty` 最小实现；backup、checkpoint、check 和 repair 已识别 runtime CF 注册表。
+   - 8.4 增量：补充损坏注入矩阵，覆盖坏注册表、缺失注册表导致 runtime CF WAL 无法解释、CURRENT 指向缺失 MANIFEST、坏备份注册表拒绝 restore，以及 runtime CF WAL-only repair。
+   - 非空 drop、rename 和列族迁移 tombstone 需要后续单独设计。
    - 测试：多列族 compact、未知列族失败、列族目录/元数据恢复。
 
 4. 第九阶段：Range Delete 设计与落地。
@@ -200,6 +203,7 @@
    - 10.2 增量：先把慢操作日志和基础延迟直方图接入观测面，提供可配置慢操作阈值，并通过 `getProperty` 暴露 `get/write/compact/checkpoint` 的次数、平均耗时、最大耗时和慢操作次数；更长时间的 soak、反复 reopen 和 write stall 行为定义继续留到 10.3。
    - 10.2 修复：命中读压测暴露 MemTable 在无 range tombstone 时仍执行全表 tombstone 扫描，导致纯 MemTable 读随条目数线性退化；已改为单独维护 range tombstone 索引，普通 point get 直接走 skip-list seek。
    - 10.3 增量：补轻量反复 reopen/scan soak 回归，并把 write stall 语义接入观测面：Level-0 soft trigger 记录 slowdown delay，immutable MemTable 或 Level-0 stop trigger 记录 wait，暴露次数、累计耗时和触发阈值。
+   - 10.4 增量：补充 operation latency histogram 和 `ldb.blockCacheStats`，暴露 BlockCache enabled/maxEntries/size/hits/misses/puts/evictions，并让 `Options.cacheBlocks(false)` 真正关闭缓存。
 
 6. 第十一阶段：全库 verify/check。
    - 新增离线 verify/check 能力，扫描 MANIFEST、SST 和 WAL，输出文件级、block 级和序列号级校验报告。
@@ -216,6 +220,8 @@
    - 测试：首次全量备份、增量备份、清理旧版本、损坏备份校验失败、restore 后 reopen。
    - 12.1 增量：先新增离线全量备份/恢复入口 `LDBFactory.createBackup/restoreBackup`，采用临时目录写入、校验通过后发布，输出 `BACKUP-REPORT.json` 和 `RESTORE-REPORT.json`；增量备份、版本清理和共享 SST 引用计数留到 12.2。
    - 12.2 增量：新增 `LDBFactory.purgeOldBackups(root, keepLast)`，只清理已发布的 `backup-000001` 风格目录，保留最新 N 个版本并输出清理报告；共享文件引用计数仍留给后续增量。
+   - 12.3 增量：新增 `LDBFactory.createIncrementalBackup/checkBackup`，发布完整可恢复目录，写入 `BACKUP-MANIFEST.json`，并优先通过硬链接复用上一备份中的同名同长度 SST 文件；共享对象仓库和引用计数清理仍为后续增强。
+   - 12.4 增量：将增量备份和备份校验暴露到 `LdbTool incremental-backup` 与 `LdbTool check-backup`，复用 `BackupReport`/`CheckReport` JSON 输出和退出码语义。
 
 8. 第十三阶段：Compaction 策略增强。
    - 增加可配置触发阈值、限速、取消和按列族评分能力，保留默认行为兼容现有调用方。
@@ -244,7 +250,8 @@
    - 14.1 增量：先保持全局 WAL 方案不变，新增 WAL 生命周期观测属性，暴露现存 WAL、引用 WAL、可回收 WAL 和当前 WAL，作为后续归档/回收策略的验收入口。
    - 14.2 增量：补齐 WAL 半写组合测试，覆盖 header 截断、checksum 错误和多 WAL 边界尾部截断；当前策略为跳过损坏或不完整 record，保留此前完整记录。
    - 14.3 增量：补齐 WAL 清理后 reopen/backup/repair 验收，验证已落 SST 且旧 WAL 被清理后，常规打开、离线备份恢复和 repair 均能读取完整数据。
-   - 14.4 增量：显式暴露当前 WAL 策略属性：全局 WAL、归档关闭、obsolete WAL 删除回收、group commit 暂不启用、写入限流沿用 write-stall；后续若改变策略必须先更新兼容性文档和测试。
+   - 14.4 增量：显式暴露当前 WAL 策略属性：全局 WAL、归档关闭、obsolete WAL 删除回收、group commit 默认关闭、写入限流沿用 write-stall；后续若改变策略必须先更新兼容性文档和测试。
+   - 14.5 增量：新增 group commit 最小实现和统计属性，开启后并发写请求进入短窗口聚合队列，组内任一 sync 请求会触发本轮 sync；WAL record 仍按请求分别编码，保持磁盘格式兼容。
    - 第十四阶段完成判定：全局 WAL 方案已确认，WAL 生命周期观测、半写组合、回收后 reopen/backup/repair，以及写入限流/group commit 当前策略均已有文档和测试入口。
 
 10. 第十五阶段：Snapshot/Iterator 完整性。
@@ -267,6 +274,7 @@
     - 16.2 增量：新增 LDB/RocksDB API 兼容与迁移说明文档，固化 Options 映射、property 统计入口、显式 unsupported 能力、回滚策略和后续 MergeOperator/PrefixExtractor/工具命令评审边界；文档不改变运行时行为，但作为后续生态兼容实现的验收基线。
     - 16.3 增量：补充 LDB 工具命令设计评审，先定义 `check`、`repair`、`checkpoint`、`backup`、`restore`、`properties`、`compact` 的参数、只读/写入边界、退出码和错误语义；当前仍不提供 CLI 实现，`rocksdbToolCommands` 继续标记为 unsupported，待命令入口实现后再迁出。
     - 16.4 增量：补充 MergeOperator/PrefixExtractor 专项评审边界，明确二者会触及 WAL/SST 格式、MemTable 合并、读路径可见性、compaction 合并、snapshot 语义、repair/check/backup 兼容和降级策略；当前继续保持 `mergeOperator`、`prefixExtractor` unsupported，后续必须以独立设计和迁移方案推进。
+    - 16.5 增量：新增 `ldb.api.ecosystemGaps`，把 MergeOperator、PrefixExtractor、transactions、TTL、custom Env、非空列族 drop/rename、RocksDB 工具兼容和二级索引的阻塞原因暴露给迁移层。
     - 第十六阶段完成判定：Options 映射、运行时兼容性自描述、迁移说明、工具命令语义和 MergeOperator/PrefixExtractor 评审边界均已文档化并有 `LdbApiCompatibilityTest` 验证核心 property；真正 CLI 或 Merge/Prefix 实现作为后续独立阶段，不阻塞本阶段关闭。
 
 12. 第十七阶段：LDB 工具命令最小入口。
@@ -279,6 +287,7 @@
     - 17.2 增量：新增 `repair <db>` 命令，作为第一个显式副作用工具命令；命令调用 `LDBFactory.repair`，成功后输出 `REPAIR-REPORT.json` 内容，异常返回退出码 `4`，参数错误返回退出码 `1`。
     - 17.3 增量：新增 `backup <db> <backupRoot>` 和 `restore <backupDir> <targetDir>` 命令，复用离线备份/恢复引擎并输出 `BackupReport` JSON；报告 `ok=false` 返回退出码 `2`，成功返回 `0`。
     - 17.4 增量：新增 `checkpoint <db> <targetDir>` 命令，正常打开源库并调用实例级 `checkpoint`，成功后输出 `CHECKPOINT-REPORT.json`；目标目录非空或 checkpoint 校验失败返回内部错误退出码 `4`。
+    - 17.5 增量：新增 `incremental-backup <db> <backupRoot>` 和 `check-backup <backupDir>` 命令，覆盖完整目录形式的增量备份发布和只读备份校验。
 
 ### 近期优先级
 

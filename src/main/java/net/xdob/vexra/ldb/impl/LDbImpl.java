@@ -77,6 +77,13 @@ public class LDbImpl implements LDB {
   private final AtomicLong writeImmutableWaitNanos = new AtomicLong();
   private final AtomicLong writeLevel0StopWaitCount = new AtomicLong();
   private final AtomicLong writeLevel0StopWaitNanos = new AtomicLong();
+  private final Object groupCommitMutex = new Object();
+  private final LinkedList<GroupCommitRequest> groupCommitQueue = new LinkedList<>();
+  private final AtomicLong groupCommitGroupCount = new AtomicLong();
+  private final AtomicLong groupCommitRequestCount = new AtomicLong();
+  private final AtomicLong groupCommitSyncCount = new AtomicLong();
+  private final AtomicLong groupCommitWaitNanos = new AtomicLong();
+  private boolean groupCommitLeaderActive;
   private final AtomicBoolean compactionRunning = new AtomicBoolean();
   private final AtomicLong compactionRunCount = new AtomicLong();
   private final AtomicLong compactionSuccessCount = new AtomicLong();
@@ -140,7 +147,10 @@ public class LDbImpl implements LDB {
         dbLock = new DbLock(new File(databaseDir, Filename.lockFileName()));
       }
 
-      for (LdbColumnFamily cf : options.getColumnFamilies()) {
+      List<LdbColumnFamily> openedColumnFamilies = ColumnFamilyRegistry.load(databaseDir, options);
+      checkArgument(!openedColumnFamilies.isEmpty(), "No column families configured");
+
+      for (LdbColumnFamily cf : openedColumnFamilies) {
         ColumnFamilyState cfState = new ColumnFamilyState(cf, databaseDir, options, internalKeyComparator);
         cfs.put(cf.getId(), cfState);
       }
@@ -168,6 +178,8 @@ public class LDbImpl implements LDB {
       versions.setLastSequence(lastSequence);
 
       if (!options.readOnly()) {
+        ColumnFamilyRegistry.store(databaseDir, listColumnFamiliesLocked());
+        forceDirectory(databaseDir);
         // 再创建新 WAL，并把 logNumber + lastSequence 一起写进 MANIFEST
         long logFileNumber = versions.getNextFileNumber();
         this.log = Logs.createLogWriter(
@@ -273,7 +285,7 @@ public class LDbImpl implements LDB {
 
     @Override
     public List<LdbColumnFamily> getColumnFamilies() {
-      return Collections.unmodifiableList(new ArrayList<>(options.getColumnFamilies()));
+      return LDbImpl.this.listColumnFamilies();
     }
 
     @Override
@@ -504,6 +516,9 @@ public class LDbImpl implements LDB {
     private final int level0StopWritesTrigger;
     private final long compactionRateLimitBytesPerSecond;
     private final long writeSlowdownDelayNanos;
+    private final boolean groupCommitEnabled;
+    private final long groupCommitMaxDelayNanos;
+    private final long groupCommitMaxBatchBytes;
 
     private OptionsSnapshot(Options options) {
       this.createIfMissing = options.createIfMissing();
@@ -533,6 +548,9 @@ public class LDbImpl implements LDB {
       this.level0StopWritesTrigger = options.level0StopWritesTrigger();
       this.compactionRateLimitBytesPerSecond = options.compactionRateLimitBytesPerSecond();
       this.writeSlowdownDelayNanos = options.writeSlowdownDelayNanos();
+      this.groupCommitEnabled = options.groupCommitEnabled();
+      this.groupCommitMaxDelayNanos = options.groupCommitMaxDelayNanos();
+      this.groupCommitMaxBatchBytes = options.groupCommitMaxBatchBytes();
     }
 
     @Override
@@ -668,6 +686,21 @@ public class LDbImpl implements LDB {
     @Override
     public long writeSlowdownDelayNanos() {
       return writeSlowdownDelayNanos;
+    }
+
+    @Override
+    public boolean groupCommitEnabled() {
+      return groupCommitEnabled;
+    }
+
+    @Override
+    public long groupCommitMaxDelayNanos() {
+      return groupCommitMaxDelayNanos;
+    }
+
+    @Override
+    public long groupCommitMaxBatchBytes() {
+      return groupCommitMaxBatchBytes;
     }
   }
 
@@ -832,8 +865,8 @@ public class LDbImpl implements LDB {
     Collections.sort(logs);
 
     Map<Integer, MemTable> recoveringMemTables = new HashMap<>();
-    for (LdbColumnFamily cf : options.getColumnFamilies()) {
-      recoveringMemTables.put(cf.getId(), new MemTable(internalKeyComparator));
+    for (ColumnFamilyState state : cfs.values()) {
+      recoveringMemTables.put(state.getColumnFamily().getId(), new MemTable(internalKeyComparator));
     }
     long maxSequence = 0;
     for (Long fileNumber : logs) {
@@ -1118,6 +1151,9 @@ public class LDbImpl implements LDB {
       if (compactionProperty != null) {
         return compactionProperty;
       }
+      if ("ldb.blockCacheStats".equals(name)) {
+        return tableCache.blockCacheStats();
+      }
 
       mutex.lock();
       try {
@@ -1149,7 +1185,10 @@ public class LDbImpl implements LDB {
         return "false";
       }
       if ("ldb.walGroupCommitEnabled".equals(name)) {
-        return "false";
+        return Boolean.toString(options.groupCommitEnabled());
+      }
+      if ("ldb.groupCommitStats".equals(name)) {
+        return groupCommitStats();
       }
       if ("ldb.walWriteThrottlePolicy".equals(name)) {
         return "write-stall";
@@ -1177,6 +1216,9 @@ public class LDbImpl implements LDB {
       }
       if ("ldb.totalBytes".equals(name)) {
         return Long.toString(fileStats().totalBytes());
+      }
+      if ("ldb.liveDataBytes".equals(name)) {
+        return Long.toString(liveDataBytes());
       }
       if ("ldb.walBytes".equals(name)) {
         return Long.toString(fileStats().bytes(FileType.LOG));
@@ -1210,13 +1252,7 @@ public class LDbImpl implements LDB {
         return columnFamilyProperty;
       }
       if ("ldb.columnFamilies".equals(name)) {
-        List<LdbColumnFamily> columnFamilies = new ArrayList<>(options.getColumnFamilies());
-        Collections.sort(columnFamilies, new Comparator<LdbColumnFamily>() {
-          @Override
-          public int compare(LdbColumnFamily left, LdbColumnFamily right) {
-            return Integer.compare(left.getId(), right.getId());
-          }
-        });
+        List<LdbColumnFamily> columnFamilies = listColumnFamiliesLocked();
         StringBuilder builder = new StringBuilder();
         for (LdbColumnFamily cf : columnFamilies) {
           if (builder.length() > 0) {
@@ -1298,16 +1334,31 @@ public class LDbImpl implements LDB {
           + ",mergeOperator=unsupported"
           + ",prefixExtractor=unsupported"
           + ",rocksdbToolCommands=unsupported"
-          + ",ldbToolCommands=partial";
+          + ",ldbToolCommands=partial"
+          + ",runtimeColumnFamilyLifecycle=minimal";
     }
     if ("ldb.api.supportedFeatures".equals(name)) {
       return "basicReadWrite,columnFamilies,rangeDelete,readOnly,checkpoint,backup,verifyCheck,repair,"
+          + "incrementalBackup,groupCommit,operationHistograms,blockCacheStats,"
           + "snapshotCursor,reverseSnapshotCursor,properties,plugins,ldbToolCheck,ldbToolProperties,"
-          + "ldbToolRepair,ldbToolBackup,ldbToolRestore,ldbToolCheckpoint";
+          + "ldbToolIncrementalBackup,ldbToolCheckBackup,"
+          + "ldbToolRepair,ldbToolBackup,ldbToolRestore,ldbToolCheckpoint,"
+          + "runtimeColumnFamilyList,runtimeColumnFamilyCreate,runtimeColumnFamilyDropEmpty";
     }
     if ("ldb.api.unsupportedFeatures".equals(name)) {
       return "mergeOperator,prefixExtractor,rocksdbToolCommands,transactions,customEnv,ttl,"
-          + "runtimeColumnFamilyLifecycle,secondaryIndex";
+          + "runtimeColumnFamilyDropNonEmpty,runtimeColumnFamilyRename,secondaryIndex";
+    }
+    if ("ldb.api.ecosystemGaps".equals(name)) {
+      return "mergeOperator=requiresDeterministicOperatorAndDiskMetadata"
+          + ",prefixExtractor=requiresComparatorFilterAndSnapshotSemantics"
+          + ",transactions=requiresIsolationAndCommitProtocol"
+          + ",ttl=requiresExpirationMetadataAndCompactionPolicy"
+          + ",customEnv=requiresFilesystemAbstraction"
+          + ",runtimeColumnFamilyDropNonEmpty=requiresManifestTombstoneAndRecoveryRules"
+          + ",runtimeColumnFamilyRename=requiresPersistentCfIdentityMigration"
+          + ",rocksdbToolCommands=requiresCommandCompatibilityLayer"
+          + ",secondaryIndex=requiresIndexFormatAndConsistencyModel";
     }
     if ("ldb.api.optionsMapping".equals(name)) {
       return "createIfMissing=supported"
@@ -1330,6 +1381,9 @@ public class LDbImpl implements LDB {
           + ",level0SlowdownWritesTrigger=supported"
           + ",level0StopWritesTrigger=supported"
           + ",writeSlowdownDelayNanos=supported"
+          + ",groupCommitEnabled=supported"
+          + ",groupCommitMaxDelayNanos=supported"
+          + ",groupCommitMaxBatchBytes=supported"
           + ",compactionRateLimitBytesPerSecond=supported"
           + ",compactionSuspendTimeoutMillis=supported"
           + ",closeTimeoutMillis=supported"
@@ -1365,11 +1419,14 @@ public class LDbImpl implements LDB {
         + ",cacheBlocks=" + options.cacheBlocks()
         + ",blockCacheSize=" + options.blockCacheSize()
         + ",readOnly=" + options.readOnly()
-        + ",columnFamilyCount=" + options.getColumnFamilies().size()
+        + ",columnFamilyCount=" + cfs.size()
         + ",level0CompactionTrigger=" + options.level0CompactionTrigger()
         + ",level0SlowdownWritesTrigger=" + options.level0SlowdownWritesTrigger()
         + ",level0StopWritesTrigger=" + options.level0StopWritesTrigger()
         + ",writeSlowdownDelayNanos=" + options.writeSlowdownDelayNanos()
+        + ",groupCommitEnabled=" + options.groupCommitEnabled()
+        + ",groupCommitMaxDelayNanos=" + options.groupCommitMaxDelayNanos()
+        + ",groupCommitMaxBatchBytes=" + options.groupCommitMaxBatchBytes()
         + ",compactionRateLimitBytesPerSecond=" + options.compactionRateLimitBytesPerSecond()
         + ",compactionSuspendTimeoutMillis=" + options.compactionSuspendTimeoutMillis()
         + ",closeTimeoutMillis=" + options.closeTimeoutMillis()
@@ -1431,6 +1488,16 @@ public class LDbImpl implements LDB {
 
   private long activeSnapshotCursorCount() {
     return snapshotCursorOpenCount.get() - snapshotCursorCloseCount.get();
+  }
+
+  private String groupCommitStats() {
+    return "enabled=" + options.groupCommitEnabled()
+        + ",maxDelayNanos=" + options.groupCommitMaxDelayNanos()
+        + ",maxBatchBytes=" + options.groupCommitMaxBatchBytes()
+        + ",groups=" + groupCommitGroupCount.get()
+        + ",requests=" + groupCommitRequestCount.get()
+        + ",syncGroups=" + groupCommitSyncCount.get()
+        + ",waitNanos=" + groupCommitWaitNanos.get();
   }
 
   private OperationStats operationStats(String operation) {
@@ -1728,6 +1795,14 @@ public class LDbImpl implements LDB {
     return bytes;
   }
 
+  private long liveDataBytes() {
+    long bytes = totalMemTableBytes();
+    for (FileMetaData fileMetaData : versions.getLiveFiles()) {
+      bytes += fileMetaData.getFileSize();
+    }
+    return Math.max(bytes, fileStats().totalBytes());
+  }
+
   private String columnFamilyMemTableBytes() {
     List<ColumnFamilyState> states = sortedColumnFamilyStates();
     StringBuilder builder = new StringBuilder();
@@ -1773,7 +1848,7 @@ public class LDbImpl implements LDB {
     return "scheme=global"
         + ",archive=disabled"
         + ",recycle=delete-obsolete"
-        + ",groupCommit=disabled"
+        + ",groupCommit=" + (options.groupCommitEnabled() ? "enabled" : "disabled")
         + ",writeThrottle=write-stall";
   }
 
@@ -1882,14 +1957,20 @@ public class LDbImpl implements LDB {
   }
 
   private static final class OperationStats {
+    private static final long[] HISTOGRAM_BUCKET_MICROS = {10, 100, 1_000, 10_000};
+
     private final String name;
     private final AtomicLong count = new AtomicLong();
     private final AtomicLong totalNanos = new AtomicLong();
     private final AtomicLong maxNanos = new AtomicLong();
     private final AtomicLong slowCount = new AtomicLong();
+    private final AtomicLong[] histogramBuckets = new AtomicLong[HISTOGRAM_BUCKET_MICROS.length + 1];
 
     private OperationStats(String name) {
       this.name = name;
+      for (int i = 0; i < histogramBuckets.length; i++) {
+        histogramBuckets[i] = new AtomicLong();
+      }
     }
 
     private void record(long elapsedNanos, long thresholdMicros, File databaseDir) {
@@ -1897,6 +1978,7 @@ public class LDbImpl implements LDB {
       totalNanos.addAndGet(elapsedNanos);
       updateMax(elapsedNanos);
       long elapsedMicros = TimeUnit.NANOSECONDS.toMicros(elapsedNanos);
+      histogramBuckets[bucketIndex(elapsedMicros)].incrementAndGet();
       if (elapsedMicros >= thresholdMicros) {
         slowCount.incrementAndGet();
         LOG.warn("Slow LDB operation {} took {} us for {}", name, elapsedMicros, databaseDir);
@@ -1930,6 +2012,9 @@ public class LDbImpl implements LDB {
       if ("slowCount".equals(property)) {
         return Long.toString(slowCount.get());
       }
+      if ("histogramMicros".equals(property)) {
+        return histogramMicros();
+      }
       return null;
     }
 
@@ -1937,7 +2022,34 @@ public class LDbImpl implements LDB {
       return name + ".count=" + property("count")
           + "," + name + ".avgMicros=" + property("avgMicros")
           + "," + name + ".maxMicros=" + property("maxMicros")
-          + "," + name + ".slowCount=" + property("slowCount");
+          + "," + name + ".slowCount=" + property("slowCount")
+          + "," + name + ".histogramMicros=" + property("histogramMicros");
+    }
+
+    private int bucketIndex(long elapsedMicros) {
+      for (int i = 0; i < HISTOGRAM_BUCKET_MICROS.length; i++) {
+        if (elapsedMicros <= HISTOGRAM_BUCKET_MICROS[i]) {
+          return i;
+        }
+      }
+      return HISTOGRAM_BUCKET_MICROS.length;
+    }
+
+    private String histogramMicros() {
+      StringBuilder builder = new StringBuilder();
+      for (int i = 0; i < HISTOGRAM_BUCKET_MICROS.length; i++) {
+        if (builder.length() > 0) {
+          builder.append(';');
+        }
+        builder.append("le").append(HISTOGRAM_BUCKET_MICROS[i]).append('=')
+            .append(histogramBuckets[i].get());
+      }
+      if (builder.length() > 0) {
+        builder.append(';');
+      }
+      builder.append("gt").append(HISTOGRAM_BUCKET_MICROS[HISTOGRAM_BUCKET_MICROS.length - 1])
+          .append('=').append(histogramBuckets[HISTOGRAM_BUCKET_MICROS.length].get());
+      return builder.toString();
     }
   }
 
@@ -2434,39 +2546,211 @@ public class LDbImpl implements LDB {
       validateWriteBatch(updates);
       notifyBeforeWrite(updates, options);
       validateWriteBatch(updates);
-      final Snapshot snapshot;
-      mutex.lock();
-      try {
-        long sequenceEnd;
-
-        if (!updates.isEmpty()) {
-          makeRoomForWrite(false, updates);
-
-          long sequenceBegin = lastSequence + 1;
-          sequenceEnd = sequenceBegin + updates.size() - 1;
-          lastSequence = sequenceEnd;
-          versions.setLastSequence(sequenceEnd);
-
-          Slice record = writeWriteBatch(updates, sequenceBegin);
-          appendToLog(record, options.sync());
-
-          updates.forEach(new InsertIntoHandler(getColumnFamilyStateMap(), sequenceBegin, versions ));
-        } else {
-          sequenceEnd = lastSequence;
-        }
-
-        if (options.snapshot()) {
-          snapshot = new SnapshotImpl(versions.getCurrent(), sequenceEnd);
-        } else {
-          snapshot = null;
-        }
-      } finally {
-        mutex.unlock();
-      }
+      Snapshot snapshot = this.options.groupCommitEnabled() && !updates.isEmpty()
+          ? writeWithGroupCommit(updates, options)
+          : writeAlone(updates, options);
       notifyAfterWrite(updates, options, snapshot);
       return snapshot;
     } finally {
       writeStats.record(System.nanoTime() - start, this.options.slowOperationThresholdMicros(), databaseDir);
+    }
+  }
+
+  private Snapshot writeAlone(LdbWriteBatchImpl updates, WriteOptions options) {
+    mutex.lock();
+    try {
+      long sequenceEnd = applyWriteLocked(updates, options, options.sync());
+      return options.snapshot() ? new SnapshotImpl(versions.getCurrent(), sequenceEnd) : null;
+    } finally {
+      mutex.unlock();
+    }
+  }
+
+  private Snapshot writeWithGroupCommit(LdbWriteBatchImpl updates, WriteOptions options) {
+    GroupCommitRequest request = new GroupCommitRequest(updates, options);
+    boolean leader = false;
+    synchronized (groupCommitMutex) {
+      groupCommitQueue.add(request);
+      groupCommitMutex.notifyAll();
+      while (!request.done) {
+        if (!groupCommitLeaderActive && groupCommitQueue.peek() == request) {
+          groupCommitLeaderActive = true;
+          leader = true;
+          break;
+        }
+        waitForGroupCommit(request);
+      }
+    }
+    if (leader) {
+      runGroupCommitLeader(request);
+    } else if (request.failure != null) {
+      throw request.failure;
+    }
+    return request.snapshot;
+  }
+
+  private void waitForGroupCommit(GroupCommitRequest request) {
+    try {
+      groupCommitMutex.wait();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      if (!request.done) {
+        request.done = true;
+        request.failure = new DBException("Interrupted while waiting for group commit", e);
+        groupCommitQueue.remove(request);
+      }
+    }
+  }
+
+  private void runGroupCommitLeader(GroupCommitRequest leaderRequest) {
+    while (!leaderRequest.done) {
+      List<GroupCommitRequest> group = collectGroupCommitRequests();
+      RuntimeException failure = null;
+      try {
+        applyGroupCommit(group);
+      } catch (RuntimeException e) {
+        failure = e;
+      }
+      synchronized (groupCommitMutex) {
+        for (GroupCommitRequest request : group) {
+          request.failure = failure;
+          request.done = true;
+        }
+        groupCommitLeaderActive = false;
+        groupCommitMutex.notifyAll();
+      }
+      if (failure != null && leaderRequest.failure != null) {
+        throw leaderRequest.failure;
+      }
+      synchronized (groupCommitMutex) {
+        if (!leaderRequest.done && !groupCommitLeaderActive && groupCommitQueue.peek() == leaderRequest) {
+          groupCommitLeaderActive = true;
+          continue;
+        }
+      }
+    }
+    if (leaderRequest.failure != null) {
+      throw leaderRequest.failure;
+    }
+  }
+
+  private List<GroupCommitRequest> collectGroupCommitRequests() {
+    long start = System.nanoTime();
+    long deadline = start + options.groupCommitMaxDelayNanos();
+    synchronized (groupCommitMutex) {
+      while (System.nanoTime() < deadline && estimatedGroupCommitBytes() < options.groupCommitMaxBatchBytes()) {
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) {
+          break;
+        }
+        try {
+          long millis = TimeUnit.NANOSECONDS.toMillis(remaining);
+          int nanos = (int) (remaining - TimeUnit.MILLISECONDS.toNanos(millis));
+          groupCommitMutex.wait(millis, nanos);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          break;
+        }
+      }
+      List<GroupCommitRequest> group = new ArrayList<>();
+      long bytes = 0;
+      while (!groupCommitQueue.isEmpty()) {
+        GroupCommitRequest next = groupCommitQueue.peek();
+        long nextBytes = Math.max(1, next.updates.getApproximateSize());
+        if (!group.isEmpty() && bytes + nextBytes > options.groupCommitMaxBatchBytes()) {
+          break;
+        }
+        group.add(groupCommitQueue.removeFirst());
+        bytes += nextBytes;
+      }
+      groupCommitWaitNanos.addAndGet(System.nanoTime() - start);
+      return group;
+    }
+  }
+
+  private long estimatedGroupCommitBytes() {
+    long bytes = 0;
+    for (GroupCommitRequest request : groupCommitQueue) {
+      bytes += Math.max(1, request.updates.getApproximateSize());
+    }
+    return bytes;
+  }
+
+  private void applyGroupCommit(List<GroupCommitRequest> group) {
+    if (group.isEmpty()) {
+      return;
+    }
+    boolean sync = false;
+    for (GroupCommitRequest request : group) {
+      sync |= request.options.sync();
+    }
+    mutex.lock();
+    try {
+      List<GroupCommitRequest> prepared = new ArrayList<>(group.size());
+      for (GroupCommitRequest request : group) {
+        makeRoomForWrite(false, request.updates);
+      }
+      for (int i = 0; i < group.size(); i++) {
+        GroupCommitRequest request = group.get(i);
+        long sequenceBegin = lastSequence + 1;
+        long sequenceEnd = sequenceBegin + request.updates.size() - 1;
+        lastSequence = sequenceEnd;
+        versions.setLastSequence(sequenceEnd);
+
+        Slice record = writeWriteBatch(request.updates, sequenceBegin);
+        appendToLog(record, sync && i == group.size() - 1);
+        request.sequenceEnd = sequenceEnd;
+        prepared.add(request);
+      }
+      // WAL 全部写入成功后再统一应用 MemTable，避免组内后续 WAL 失败时出现
+      // “调用方收到失败但前序请求已经可见”的部分提交状态。
+      for (GroupCommitRequest request : prepared) {
+        long sequenceBegin = request.sequenceEnd - request.updates.size() + 1;
+        request.updates.forEach(new InsertIntoHandler(getColumnFamilyStateMap(), sequenceBegin, versions));
+        request.snapshot = request.options.snapshot() ? new SnapshotImpl(versions.getCurrent(), request.sequenceEnd) : null;
+      }
+    } finally {
+      mutex.unlock();
+    }
+    groupCommitGroupCount.incrementAndGet();
+    groupCommitRequestCount.addAndGet(group.size());
+    if (sync) {
+      groupCommitSyncCount.incrementAndGet();
+    }
+  }
+
+  private long applyWriteLocked(LdbWriteBatchImpl updates, WriteOptions options, boolean sync) {
+    long sequenceEnd;
+
+    if (!updates.isEmpty()) {
+      makeRoomForWrite(false, updates);
+
+      long sequenceBegin = lastSequence + 1;
+      sequenceEnd = sequenceBegin + updates.size() - 1;
+      lastSequence = sequenceEnd;
+      versions.setLastSequence(sequenceEnd);
+
+      Slice record = writeWriteBatch(updates, sequenceBegin);
+      appendToLog(record, sync);
+
+      updates.forEach(new InsertIntoHandler(getColumnFamilyStateMap(), sequenceBegin, versions ));
+    } else {
+      sequenceEnd = lastSequence;
+    }
+    return sequenceEnd;
+  }
+
+  private static final class GroupCommitRequest {
+    private final LdbWriteBatchImpl updates;
+    private final WriteOptions options;
+    private long sequenceEnd;
+    private Snapshot snapshot;
+    private RuntimeException failure;
+    private boolean done;
+
+    private GroupCommitRequest(LdbWriteBatchImpl updates, WriteOptions options) {
+      this.updates = updates;
+      this.options = options;
     }
   }
 
@@ -3132,6 +3416,108 @@ public class LDbImpl implements LDB {
   }
 
   @Override
+  public List<LdbColumnFamily> listColumnFamilies() {
+    mutex.lock();
+    try {
+      return Collections.unmodifiableList(listColumnFamiliesLocked());
+    } finally {
+      mutex.unlock();
+    }
+  }
+
+  private List<LdbColumnFamily> listColumnFamiliesLocked() {
+    List<LdbColumnFamily> result = new ArrayList<>();
+    for (ColumnFamilyState state : cfs.values()) {
+      result.add(state.getColumnFamily());
+    }
+    Collections.sort(result, new Comparator<LdbColumnFamily>() {
+      @Override
+      public int compare(LdbColumnFamily left, LdbColumnFamily right) {
+        return Integer.compare(left.getId(), right.getId());
+      }
+    });
+    return result;
+  }
+
+  @Override
+  public LdbColumnFamily createColumnFamily(int cfId, String name) throws DBException {
+    checkWritable("createColumnFamily");
+    checkBackgroundException();
+    LdbColumnFamily cf = new PersistentColumnFamily(cfId, name);
+
+    mutex.lock();
+    try {
+      if (cfs.containsKey(cfId)) {
+        throw new DBException("Column family id already exists: " + cfId);
+      }
+      for (ColumnFamilyState state : cfs.values()) {
+        if (state.getColumnFamily().getName().equals(name)) {
+          throw new DBException("Column family name already exists: " + name);
+        }
+      }
+
+      ColumnFamilyState state = new ColumnFamilyState(cf, databaseDir, options, internalKeyComparator);
+      cfs.put(cfId, state);
+      try {
+        ColumnFamilyRegistry.store(databaseDir, listColumnFamiliesLocked());
+        forceDirectory(databaseDir);
+      } catch (IOException e) {
+        cfs.remove(cfId);
+        state.close();
+        throw new DBException("Failed to persist column family registry: " + name, e);
+      }
+      return cf;
+    } catch (IOException e) {
+      throw new DBException("Failed to create column family: " + name, e);
+    } finally {
+      mutex.unlock();
+    }
+  }
+
+  @Override
+  public void dropColumnFamily(LdbColumnFamily cf) throws DBException {
+    requireNonNull(cf, "cf is null");
+    checkWritable("dropColumnFamily");
+    checkBackgroundException();
+    if (cf.getId() == LdbColumnFamily.DEFAULT.getId()) {
+      throw new DBException("Default column family cannot be dropped");
+    }
+
+    mutex.lock();
+    try {
+      ColumnFamilyState state = getColumnFamilyState(cf);
+      if (!isColumnFamilyEmpty(state)) {
+        throw new DBException("Only empty column families can be dropped in the minimal lifecycle implementation: "
+            + cf.getName());
+      }
+
+      cfs.remove(cf.getId());
+      try {
+        ColumnFamilyRegistry.store(databaseDir, listColumnFamiliesLocked());
+        forceDirectory(databaseDir);
+      } catch (IOException e) {
+        cfs.put(cf.getId(), state);
+        throw new DBException("Failed to persist column family registry after drop: " + cf.getName(), e);
+      }
+      state.close();
+    } finally {
+      mutex.unlock();
+    }
+  }
+
+  private boolean isColumnFamilyEmpty(ColumnFamilyState state) {
+    if (!state.getMemTable().isEmpty() || state.getImmutableMemTable() != null) {
+      return false;
+    }
+    for (int level = 0; level < NUM_LEVELS; level++) {
+      if (versions.numberOfFilesInLevel(state.getColumnFamily().getId(), level) > 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  @Override
   public void checkpoint(String targetDir) throws DBException {
     long start = System.nanoTime();
     requireNonNull(targetDir, "targetDir is null");
@@ -3221,6 +3607,11 @@ public class LDbImpl implements LDB {
     }
 
     // 3. 所有 live SST/TABLE 文件
+    File columnFamilyRegistry = new File(databaseDir, ColumnFamilyRegistry.FILE_NAME);
+    if (columnFamilyRegistry.exists()) {
+      result.add(columnFamilyRegistry);
+    }
+
     Set<Long> live = new HashSet<>();
     for (FileMetaData meta : versions.getLiveFiles()) {
       live.add(meta.getNumber());

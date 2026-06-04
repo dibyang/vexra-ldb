@@ -14,7 +14,7 @@
 
 ## 非目标
 
-- 本文档不直接实现 group commit、增量备份或新的 range delete 格式。
+- 本文档记录 group commit、增量备份和 range delete 后续工作的设计边界；其中 group commit 最小实现、增量备份最小实现、compaction 长压测入口和 benchmark 报告输出已在 `0.3.0-SNAPSHOT` 落地。
 - 不引入 RocksDB JNI、RocksJava 或外部存储服务。
 - 不改变现有 `LDBFactory.createBackup/restoreBackup`、`LDB#checkpoint` 和 `LdbWriteBatch.deleteRange` 的当前兼容行为。
 
@@ -22,8 +22,8 @@
 
 | 方向 | 当前能力 | 主要缺口 |
 | --- | --- | --- |
-| 写入路径 | 单 writer 顺序写 WAL，再应用 MemTable；已有 write stall 计数和可配置 slowdown delay | 没有把多个并发写请求合并到同一次 WAL append/sync 的 group commit |
-| 备份 | 离线全量 backup/restore，临时目录发布，`BACKUP-REPORT.json`、`RESTORE-REPORT.json` 和清理旧版本 | 没有共享 SST/WAL 文件、引用计数、备份元数据索引和增量恢复校验 |
+| 写入路径 | 单 writer 顺序写 WAL，再应用 MemTable；已有 write stall 计数、可配置 slowdown delay 和默认关闭的 group commit 最小实现 | Group commit 仍按请求分别写 WAL record，尚未把多个请求编码成单条 WAL record，也未形成长期吞吐/尾延迟基线 |
+| 备份 | 离线全量 backup/restore，临时目录发布，`BACKUP-REPORT.json`、`RESTORE-REPORT.json`、清理旧版本、`BACKUP-MANIFEST.json` 和可独立恢复的增量备份目录 | 增量备份当前只复用同名同长度 SST 文件，硬链接失败会回退复制；尚未实现共享对象仓库、引用计数和增量链清理 |
 | Range Delete | API、WAL/SST/MemTable/read/compaction 已具备基础语义，读路径已避免无谓全表 tombstone 扫描 | 仍缺少格式版本边界、旧版本兼容策略、更长 snapshot/compaction/repair 矩阵和降级规则 |
 
 ## 核心约束
@@ -40,19 +40,19 @@
 
 | 接口/属性 | 建议 | 说明 |
 | --- | --- | --- |
-| `Options.enableGroupCommit(boolean)` | 默认 `false` | 灰度开关，保持现有单 writer 行为 |
-| `Options.groupCommitMaxBatchBytes(long)` | 默认待压测确定 | 限制单次聚合大小，避免超大 WAL record 或长尾延迟 |
-| `Options.groupCommitMaxDelayNanos(long)` | 默认待压测确定 | 控制等待窗口，超过后立即提交 |
-| `ldb.groupCommitStats` | 新 property | 暴露聚合次数、平均 batch 数、最大等待时间、sync 分组次数、fallback 次数 |
+| `Options.groupCommitEnabled(boolean)` | 默认 `false` | 灰度开关，保持现有单 writer 行为 |
+| `Options.groupCommitMaxBatchBytes(long)` | 默认 1 MiB | 限制单次聚合大小，避免过大的组提交窗口 |
+| `Options.groupCommitMaxDelayNanos(long)` | 默认 200 微秒 | 控制等待窗口，超过后立即提交 |
+| `ldb.groupCommitStats` | 已新增 property | 暴露 enabled、maxDelayNanos、maxBatchBytes、groups、requests、syncGroups 和 waitNanos |
 
 ### 增量备份
 
 | 接口/属性 | 建议 | 说明 |
 | --- | --- | --- |
-| `LDBFactory.createIncrementalBackup(File sourceDir, File backupRoot, Options options)` | 新增可选 API | 不改变现有全量备份入口 |
-| `LDBFactory.restoreBackup(File backupDir, File targetDir, Options options)` | 复用 | restore 应可识别全量和增量备份元数据 |
-| `LDBFactory.checkBackup(File backupDir, Options options)` | 新增评估项 | 独立校验备份集合，避免 restore 时才发现损坏 |
-| `BACKUP-MANIFEST.json` | 新增备份根元数据 | 记录版本、文件引用、校验值、父备份、发布状态 |
+| `LDBFactory.createIncrementalBackup(File sourceDir, File backupRoot, Options options)` | 已新增可选 API | 不改变现有全量备份入口；当前发布完整可恢复目录 |
+| `LDBFactory.restoreBackup(File backupDir, File targetDir, Options options)` | 复用 | restore 可直接恢复全量或增量发布目录 |
+| `LDBFactory.checkBackup(File backupDir, Options options)` | 已新增校验入口 | 独立校验备份目录，避免 restore 时才发现损坏 |
+| `BACKUP-MANIFEST.json` | 已新增备份元数据 | 记录版本、备份 id、父备份、复制文件、复用文件和发布状态 |
 
 ### Range Delete 完整落地
 
@@ -131,9 +131,9 @@
 
 1. 对源库执行 `check`，失败则不创建新备份。
 2. 读取上一发布备份的 `BACKUP-MANIFEST.json`。
-3. 对仍可复用且校验一致的 SST/WAL 建立引用，对新增文件复制到临时目录。
+3. 对仍可复用的同名同长度 SST 文件优先建立硬链接；硬链接失败或非 SST 文件则复制到临时目录。
 4. 写入本次备份 manifest 和报告。
-5. 对完整备份视图执行校验。
+5. 对完整备份视图执行 `checkBackup`/离线 check 校验。
 6. 原子发布备份目录，更新备份根索引。
 
 ### Range Delete
@@ -151,8 +151,8 @@
 | Group commit WAL 写失败 | 整组失败，不应用 MemTable，调用方收到同一 cause |
 | Group commit sync 失败 | 整组失败，记录 `syncFailures`，重开后按 WAL 实际内容恢复 |
 | 增量备份源库 check 失败 | 不发布版本，报告 `ok=false` |
-| 增量备份共享文件校验失败 | 禁止复用，必要时降级复制；仍失败则本次备份失败 |
-| Restore 缺少父备份 | 失败并报告缺失链路，不创建目标库 |
+| 增量备份共享文件复用失败 | 禁止复用并降级复制；仍失败则本次备份失败 |
+| Restore 缺少父备份 | 当前发布目录是完整视图，可独立恢复；未来共享对象仓库模式需失败并报告缺失链路 |
 | Range tombstone 格式不认识 | 新版本按兼容策略处理；旧版本必须明确失败或只读拒绝，不能静默忽略 |
 
 ## 幂等性
@@ -173,22 +173,22 @@
 | 能力 | 旧数据 | 新数据 | 旧版本行为 |
 | --- | --- | --- | --- |
 | Group commit | 兼容 | WAL record 仍沿用现有格式 | 可读 |
-| 增量备份 | 全量备份仍可恢复 | 新增备份元数据，不改变 DB 数据文件格式 | 旧版本备份工具不识别增量元数据 |
+| 增量备份 | 全量备份仍可恢复 | 新增备份元数据，不改变 DB 数据文件格式；发布目录保持完整可恢复 | 旧版本备份工具可按普通目录恢复数据，但不理解增量复用元数据 |
 | Range delete | 旧库可读 | 可能引入新 SST/WAL range tombstone 格式 | 必须明确失败或拒绝打开 |
 
 ## 灰度/迁移
 
 1. 先上线观测属性和压力测试，不启用新行为。
 2. Group commit 在测试环境以小等待窗口灰度，观察 p99 写延迟、sync 次数和吞吐。
-3. 增量备份先支持“全量 + manifest 校验”，再启用共享 SST，最后启用清理引用计数。
+3. 增量备份已支持“完整目录 + manifest + SST 硬链接复用”，后续再启用共享对象仓库和引用计数清理。
 4. Range delete 先补格式兼容测试和 repair/check 报告，再启用写入新格式。
 
 ## 测试方案
 
 | 方向 | 必测项 |
 | --- | --- |
-| Group commit | 并发写顺序、sync/fasync 组合、WAL 写失败、MemTable 应用失败、reopen 后 sequence 连续、统计属性 |
-| 增量备份 | 首次全量、连续增量、父备份缺失、共享文件损坏、清理旧版本、restore 后 reopen、checkBackup |
+| Group commit | 已覆盖并发写、sync/non-sync 组合、reopen 后可恢复和统计属性；后续补 WAL 注入失败、MemTable 应用失败和更长尾延迟报告 |
+| 增量备份 | 已覆盖首次增量、连续增量、SST 复用、restore 后 reopen、checkBackup；后续补父备份缺失、共享文件损坏和引用清理 |
 | Range delete | 跨 MemTable/SST/level 删除、snapshot 旧视图、crash recovery、repair/check/backup、旧格式兼容、compaction 合并 |
 
 ## 风险点
@@ -205,10 +205,10 @@
 
 | 阶段 | 交付物 | 验收 |
 | --- | --- | --- |
-| 1 | Group commit 观测属性和开关，默认关闭 | 单 writer 行为不变，全量测试通过 |
-| 2 | Group commit 最小实现 | 并发写、sync、reopen 和统计测试通过 |
-| 3 | 增量备份 manifest 与 checkBackup | 全量备份兼容，manifest 校验可解释 |
-| 4 | 共享 SST/WAL 增量备份和引用清理 | 连续增量、清理、restore、损坏注入通过 |
+| 1 | Group commit 观测属性和开关，默认关闭 | 已完成：单 writer 行为不变，新增 property 可观测 |
+| 2 | Group commit 最小实现 | 已完成：并发写、sync、reopen 和统计测试通过 |
+| 3 | 增量备份 manifest 与 checkBackup | 已完成：全量备份兼容，manifest 校验可解释 |
+| 4 | 共享 SST 增量备份最小实现 | 已完成：连续增量、SST 复用、restore 和 checkBackup 通过；引用计数清理仍是后续工作 |
 | 5 | Range delete 格式兼容评审与测试矩阵 | 新旧格式边界、repair/check/backup 文档和测试齐备 |
 | 6 | Range delete 完整压缩与恢复强化 | snapshot、compaction、crash、repair 全矩阵通过 |
 
