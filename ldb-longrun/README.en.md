@@ -248,7 +248,7 @@ run/<instance>.pid
 logs/<instance>.out
 ```
 
-Every `start` rotates the previous log to `logs/<instance>.out.1`, `.2`, and so on, then creates a fresh `logs/<instance>.out` for the new run. The instance first prints `START` and multiple `CONFIG` lines, and the running workload prints `PROGRESS` lines with `progressPercent` at `metrics.interval`. When `logs` or `watch` follows a running instance, `PROGRESS` lines are refreshed in place as a single console progress line with a character bar, for example `PROGRESS [##########----------]  50% ...`, while the log file keeps the complete line-by-line history.
+Every `start` rotates the previous log to `logs/<instance>.out.1`, `.2`, and so on, then creates a fresh `logs/<instance>.out` for the new run. The instance first prints `START` and multiple `CONFIG` lines, and the running workload prints `PROGRESS` lines with `progressPercent`, `windowOpsPerSecond`, `avgOpsPerSecond`, `minOpsPerSecond`, and `maxOpsPerSecond` at `metrics.interval`. When `logs` or `watch` follows a running instance, `PROGRESS` lines are refreshed in place as a single console progress line with a character bar, for example `PROGRESS [##########----------]  50% ...`, while the log file keeps the complete line-by-line history. After completion, the main log prints a `SUMMARY` line with avg/min/max, p05/p50/p95, throughputDropRatio, finalSizeBytes, and sizeAmplification.
 
 Crash/recovery mode writes `CRASH PROGRESS` to the main log, which shows parent-process progress by `crash.cycles`. Worker `START`, `CONFIG`, and `PROGRESS` lines are written to `logs/<instance>-worker.out` for debugging individual worker phases.
 

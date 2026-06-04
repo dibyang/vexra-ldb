@@ -80,6 +80,7 @@ public final class SmokeRunner {
         long nextFault = faultInterval > 0 ? System.currentTimeMillis() + faultInterval : Long.MAX_VALUE;
         long faultEvents = 0;
         long commitEveryOps = Math.max(1, config.commitEveryOps());
+        ProgressStats progressStats = new ProgressStats(startMillis, state.operations());
         while (System.currentTimeMillis() < deadline) {
           oneOperation(config, db, state, ledger, random);
           if (state.operations() % commitEveryOps == 0 || System.currentTimeMillis() >= nextSave) {
@@ -117,14 +118,16 @@ public final class SmokeRunner {
           }
           if (System.currentTimeMillis() >= nextMetrics) {
             metrics.sample(RunStats.fromState(state, reopenChecks, recoveryChecks));
-            printProgress(out, startMillis, config.durationMillis(), state, reopenChecks, recoveryChecks, faultEvents);
+            printProgress(out, startMillis, config.durationMillis(), state,
+                reopenChecks, recoveryChecks, faultEvents, progressStats);
             nextMetrics = System.currentTimeMillis() + config.metricsIntervalMillis();
           }
         }
         state.recordCommit();
         state.save(stateDir);
         metrics.sample(RunStats.fromState(state, reopenChecks, recoveryChecks));
-        printProgress(out, startMillis, config.durationMillis(), state, reopenChecks, recoveryChecks, faultEvents);
+        printProgress(out, startMillis, config.durationMillis(), state,
+            reopenChecks, recoveryChecks, faultEvents, progressStats);
         verifier.verifyActive(db, state);
         verifier.verifyLedger(db, state, ledger);
         long physicalSize = directorySize(dbDir);
@@ -133,6 +136,7 @@ public final class SmokeRunner {
         metrics.reclamation("success", "resource sample", physicalSize, physicalSize, liveDataBytes);
         metrics.event("verify", "PASS", "final verify succeeded");
         ReportSummary summary = new ReportAnalyzer().analyze(workDir);
+        printSummary(out, summary);
         out.println("PASS smoke operations=" + state.operations()
             + " reads=" + state.reads()
             + " writes=" + state.writes()
@@ -248,11 +252,17 @@ public final class SmokeRunner {
   }
 
   private static void printProgress(PrintStream out, long startMillis, long durationMillis, CommittedState state,
-                                    long reopenChecks, long recoveryChecks, long faultEvents) {
+                                    long reopenChecks, long recoveryChecks, long faultEvents,
+                                    ProgressStats progressStats) {
     long now = System.currentTimeMillis();
+    ProgressSnapshot snapshot = progressStats.sample(now, state.operations());
     out.println("PROGRESS timeMillis=" + now
         + " progressPercent=" + progressPercent(now, startMillis, durationMillis)
         + " operations=" + state.operations()
+        + " windowOpsPerSecond=" + formatDouble(snapshot.windowOpsPerSecond)
+        + " avgOpsPerSecond=" + formatDouble(snapshot.avgOpsPerSecond)
+        + " minOpsPerSecond=" + formatDouble(snapshot.minOpsPerSecond)
+        + " maxOpsPerSecond=" + formatDouble(snapshot.maxOpsPerSecond)
         + " reads=" + state.reads()
         + " writes=" + state.writes()
         + " removes=" + state.removes()
@@ -261,6 +271,24 @@ public final class SmokeRunner {
         + " reopenChecks=" + reopenChecks
         + " recoveryChecks=" + recoveryChecks
         + " faultEvents=" + faultEvents);
+  }
+
+  private static void printSummary(PrintStream out, ReportSummary summary) {
+    out.println("SUMMARY status=" + summary.get("status")
+        + " operations=" + summary.get("operations")
+        + " avgOpsPerSecond=" + summary.get("avgOpsPerSecond")
+        + " minOpsPerSecond=" + summary.get("minOpsPerSecond")
+        + " maxOpsPerSecond=" + summary.get("maxOpsPerSecond")
+        + " p05OpsPerSecond=" + summary.get("p05OpsPerSecond")
+        + " p50OpsPerSecond=" + summary.get("p50OpsPerSecond")
+        + " p95OpsPerSecond=" + summary.get("p95OpsPerSecond")
+        + " throughputDropRatio=" + summary.get("throughputDropRatio")
+        + " finalSizeBytes=" + summary.get("finalSizeBytes")
+        + " sizeAmplification=" + summary.get("sizeAmplification"));
+  }
+
+  private static String formatDouble(double value) {
+    return String.format(java.util.Locale.ROOT, "%.3f", value);
   }
 
   private static String progressPercent(long now, long startMillis, long durationMillis) {
@@ -333,5 +361,51 @@ public final class SmokeRunner {
       }
     }
     return total;
+  }
+
+  private static final class ProgressStats {
+    private final long startMillis;
+    private final long startOperations;
+    private long lastMillis;
+    private long lastOperations;
+    private double minOpsPerSecond = Double.MAX_VALUE;
+    private double maxOpsPerSecond;
+
+    private ProgressStats(long startMillis, long startOperations) {
+      this.startMillis = startMillis;
+      this.startOperations = startOperations;
+      this.lastMillis = startMillis;
+      this.lastOperations = startOperations;
+    }
+
+    private ProgressSnapshot sample(long now, long operations) {
+      double windowOpsPerSecond = opsPerSecond(operations - lastOperations, now - lastMillis);
+      double avgOpsPerSecond = opsPerSecond(operations - startOperations, now - startMillis);
+      minOpsPerSecond = Math.min(minOpsPerSecond, windowOpsPerSecond);
+      maxOpsPerSecond = Math.max(maxOpsPerSecond, windowOpsPerSecond);
+      lastMillis = now;
+      lastOperations = operations;
+      return new ProgressSnapshot(windowOpsPerSecond, avgOpsPerSecond,
+          minOpsPerSecond == Double.MAX_VALUE ? 0.0D : minOpsPerSecond, maxOpsPerSecond);
+    }
+
+    private static double opsPerSecond(long operations, long elapsedMillis) {
+      return elapsedMillis <= 0 ? 0.0D : operations * 1000.0D / elapsedMillis;
+    }
+  }
+
+  private static final class ProgressSnapshot {
+    private final double windowOpsPerSecond;
+    private final double avgOpsPerSecond;
+    private final double minOpsPerSecond;
+    private final double maxOpsPerSecond;
+
+    private ProgressSnapshot(double windowOpsPerSecond, double avgOpsPerSecond,
+                             double minOpsPerSecond, double maxOpsPerSecond) {
+      this.windowOpsPerSecond = windowOpsPerSecond;
+      this.avgOpsPerSecond = avgOpsPerSecond;
+      this.minOpsPerSecond = minOpsPerSecond;
+      this.maxOpsPerSecond = maxOpsPerSecond;
+    }
   }
 }

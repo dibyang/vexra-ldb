@@ -39,6 +39,12 @@ class SmokeRunnerTest {
     assertTrue(output.contains("CONFIG workload.keySpace=100"));
     assertTrue(output.contains("PROGRESS timeMillis="));
     assertTrue(output.contains("progressPercent="));
+    assertTrue(output.contains("windowOpsPerSecond="));
+    assertTrue(output.contains("avgOpsPerSecond="));
+    assertTrue(output.contains("minOpsPerSecond="));
+    assertTrue(output.contains("maxOpsPerSecond="));
+    assertTrue(output.contains("SUMMARY status="));
+    assertTrue(output.contains("p50OpsPerSecond="));
     assertTrue(output.contains("PASS smoke"));
   }
 

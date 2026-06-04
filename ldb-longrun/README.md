@@ -131,9 +131,9 @@ run/<instance>.pid
 logs/<instance>.out
 ```
 
-每次 `start` 会把旧日志轮转为 `logs/<instance>.out.1`、`.2` 等，并为新测试创建新的 `logs/<instance>.out`。实例启动后会先输出 `START` 和多行 `CONFIG`，运行中按 `metrics.interval` 输出带 `progressPercent` 的 `PROGRESS` 行。
+每次 `start` 会把旧日志轮转为 `logs/<instance>.out.1`、`.2` 等，并为新测试创建新的 `logs/<instance>.out`。实例启动后会先输出 `START` 和多行 `CONFIG`，运行中按 `metrics.interval` 输出带 `progressPercent`、`windowOpsPerSecond`、`avgOpsPerSecond`、`minOpsPerSecond` 和 `maxOpsPerSecond` 的 `PROGRESS` 行。
 
-`logs` 和 `watch` 跟随运行实例时，会把 `PROGRESS` 行在控制台原地刷新成单行进度条，例如 `PROGRESS [##########----------]  50% ...`；日志文件仍保留完整逐行历史。
+`logs` 和 `watch` 跟随运行实例时，会把 `PROGRESS` 行在控制台原地刷新成单行进度条，例如 `PROGRESS [##########----------]  50% ...`；日志文件仍保留完整逐行历史。测试结束后主日志会打印 `SUMMARY` 行，包含 avg/min/max、p05/p50/p95、throughputDropRatio、finalSizeBytes 和 sizeAmplification。
 
 crash/recovery 模式主日志输出 `CRASH PROGRESS`，表示父进程按 `crash.cycles` 统计的整体进度。worker 自身的 `START`、`CONFIG` 和 `PROGRESS` 写入 `logs/<instance>-worker.out`，用于排查单个 worker 阶段。
 
