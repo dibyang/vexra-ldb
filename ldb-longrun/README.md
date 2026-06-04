@@ -108,7 +108,8 @@ bash ./install-completion.bash
 默认 profile 位于发行包 `config/`：
 
 - `smoke.properties`：默认 5 分钟快速验证。
-- `performance.properties`：默认 10 分钟轻量性能压测，输出 ops/s 分位数和吞吐下降比例。
+- `performance.properties`：默认 3 分钟轻量性能压测，`workload.syncWrites=false`，用于观察引擎吞吐。
+- `performance-durable.properties`：默认 3 分钟同步落盘性能压测，`workload.syncWrites=true`，用于观察 durable write/fsync 口径。
 - `nightly.properties`：默认 12 小时夜间长跑。
 - `soak.properties`：默认 7 天长稳压测，可通过 `--run.duration=30d` 覆盖。
 - `reopen.properties`：周期性 close/open，并记录 `reopenChecks`。
@@ -192,6 +193,15 @@ work/<profile>/report/summary.properties
 ```
 
 核心指标包括 Operations、Commits、Reopen Checks、Recovery Checks、Avg/Min/Max Ops/s、P05/P50/P95 Ops/s、Throughput Drop Ratio、Final Size Bytes、Size Amplification、Reclamation Events、Fault Injection Events、Suspicious Log Lines、Failures 和 Warnings。
+
+性能测试建议先区分两个口径：
+
+```bash
+./bin/longrun watch -c performance
+./bin/longrun watch -c performance-durable
+```
+
+`performance` 使用异步写，主要看 LDB 引擎吞吐；`performance-durable` 使用同步写，主要看落盘和 fsync 成本。
 
 ## 发布验收
 

@@ -156,7 +156,7 @@ public final class SmokeRunner {
     if (decision < config.writeRatio()) {
       write(config, db, state, ledger, random, keyId);
     } else if (decision < config.writeRatio() + config.removeRatio()) {
-      remove(db, state, ledger, keyId);
+      remove(config, db, state, ledger, keyId);
     } else {
       read(db, state, ledger, keyId);
     }
@@ -169,14 +169,15 @@ public final class SmokeRunner {
     int max = Math.max(min, config.valueSizeMax());
     int size = min + random.nextInt(max - min + 1);
     db.put(ValueModel.key(keyId), ValueModel.encode(config.seed(), keyId, sequence, size),
-        new WriteOptions().sync(true));
+        new WriteOptions().sync(config.syncWrites()));
     state.recordWrite(keyId, sequence);
     ledger.add(Ledger.Kind.WRITE, keyId, sequence);
   }
 
-  private void remove(LDB db, CommittedState state, Ledger ledger, long keyId) {
+  private void remove(LongRunConfig config, LDB db, CommittedState state,
+                      Ledger ledger, long keyId) {
     state.nextSequence();
-    db.delete(ValueModel.key(keyId), new WriteOptions().sync(true));
+    db.delete(ValueModel.key(keyId), new WriteOptions().sync(config.syncWrites()));
     state.recordRemove(keyId);
     ledger.add(Ledger.Kind.REMOVE, keyId, -1);
   }
@@ -233,6 +234,7 @@ public final class SmokeRunner {
     out.println("CONFIG workload.readRatio=" + config.readRatio());
     out.println("CONFIG workload.writeRatio=" + config.writeRatio());
     out.println("CONFIG workload.removeRatio=" + config.removeRatio());
+    out.println("CONFIG workload.syncWrites=" + config.syncWrites());
     out.println("CONFIG metrics.intervalMillis=" + config.metricsIntervalMillis());
     out.println("CONFIG state.intervalMillis=" + config.stateIntervalMillis());
     out.println("CONFIG check.reopenIntervalMillis=" + config.reopenIntervalMillis());

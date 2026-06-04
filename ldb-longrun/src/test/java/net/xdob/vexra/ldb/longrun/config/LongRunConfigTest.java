@@ -43,6 +43,7 @@ class LongRunConfigTest {
         "-k", "123",
         "-m", "mixed",
         "-a", "100",
+        "-S", "false",
         "-q", "0.55",
         "-y", "0.35",
         "-x", "0.1",
@@ -70,6 +71,7 @@ class LongRunConfigTest {
     assertEquals("123", values.get("workload.keySpace"));
     assertEquals("mixed", values.get("workload.mode"));
     assertEquals("100", values.get("workload.commitEveryOps"));
+    assertEquals("false", values.get("workload.syncWrites"));
     assertEquals("0.55", values.get("workload.readRatio"));
     assertEquals("0.35", values.get("workload.writeRatio"));
     assertEquals("0.1", values.get("workload.removeRatio"));
@@ -110,6 +112,21 @@ class LongRunConfigTest {
 
     assertEquals("smoke", config.runName());
     assertEquals(1000L, config.durationMillis());
+  }
+
+  @Test
+  void loadsPerformanceProfilesWithDifferentDurabilityMode() throws Exception {
+    LongRunConfig performance = LongRunConfig.load(new String[] {
+        "-c", "performance"
+    });
+    LongRunConfig durable = LongRunConfig.load(new String[] {
+        "-c", "performance-durable"
+    });
+
+    assertEquals("performance", performance.runName());
+    assertEquals(false, performance.syncWrites());
+    assertEquals("performance-durable", durable.runName());
+    assertEquals(true, durable.syncWrites());
   }
 
   @Test

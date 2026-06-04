@@ -128,6 +128,8 @@ public final class LongRunConfig {
         return "workload.valueSizeMax";
       case "a":
         return "workload.commitEveryOps";
+      case "S":
+        return "workload.syncWrites";
       case "q":
         return "workload.readRatio";
       case "y":
@@ -178,6 +180,7 @@ public final class LongRunConfig {
     p.setProperty("workload.writeRatio", "0.35");
     p.setProperty("workload.removeRatio", "0.10");
     p.setProperty("workload.commitEveryOps", "1000");
+    p.setProperty("workload.syncWrites", "true");
     p.setProperty("metrics.interval", "10s");
     p.setProperty("state.interval", "30s");
     p.setProperty("check.reopenInterval", "0");
@@ -297,6 +300,10 @@ public final class LongRunConfig {
 
   public int commitEveryOps() {
     return Integer.parseInt(get("workload.commitEveryOps"));
+  }
+
+  public boolean syncWrites() {
+    return Boolean.parseBoolean(get("workload.syncWrites"));
   }
 
   public long metricsIntervalMillis() {
