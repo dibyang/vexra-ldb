@@ -361,13 +361,65 @@ public final class InstanceCommands {
   }
 
   private static void kill(String pid) throws Exception {
-    Process process;
     if (isWindows()) {
-      process = new ProcessBuilder("cmd", "/c", "taskkill /PID " + pid + " /T /F").start();
+      Process process = new ProcessBuilder("cmd", "/c", "taskkill /PID " + pid + " /T /F").start();
+      process.waitFor();
     } else {
-      process = new ProcessBuilder("sh", "-c", "kill " + pid).start();
+      killUnixTree(pid);
     }
+  }
+
+  private static void killUnixTree(String pid) throws Exception {
+    if (!isNumeric(pid)) {
+      return;
+    }
+    for (String child : unixChildren(pid)) {
+      killUnixTree(child);
+    }
+    signalUnix(pid, "TERM");
+    Thread.sleep(200L);
+    if (isAlive(pid)) {
+      for (String child : unixChildren(pid)) {
+        killUnixTree(child);
+      }
+      signalUnix(pid, "KILL");
+    }
+  }
+
+  private static List<String> unixChildren(String pid) throws Exception {
+    File childrenFile = new File("/proc/" + pid + "/task/" + pid + "/children");
+    List<String> children = new ArrayList<>();
+    if (!childrenFile.isFile()) {
+      return children;
+    }
+    String text = new String(java.nio.file.Files.readAllBytes(childrenFile.toPath()),
+        java.nio.charset.StandardCharsets.UTF_8).trim();
+    if (text.isEmpty()) {
+      return children;
+    }
+    for (String child : text.split("\\s+")) {
+      if (isNumeric(child)) {
+        children.add(child);
+      }
+    }
+    return children;
+  }
+
+  private static void signalUnix(String pid, String signal) throws Exception {
+    Process process = new ProcessBuilder("kill", "-" + signal, pid).start();
     process.waitFor();
+  }
+
+  private static boolean isNumeric(String value) {
+    if (value == null || value.isEmpty()) {
+      return false;
+    }
+    for (int i = 0; i < value.length(); i++) {
+      if (!Character.isDigit(value.charAt(i))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static String javaBinary() {
