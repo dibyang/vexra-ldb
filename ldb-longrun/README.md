@@ -108,6 +108,7 @@ bash ./install-completion.bash
 默认 profile 位于发行包 `config/`：
 
 - `smoke.properties`：默认 5 分钟快速验证。
+- `performance.properties`：默认 10 分钟轻量性能压测，输出 ops/s 分位数和吞吐下降比例。
 - `nightly.properties`：默认 12 小时夜间长跑。
 - `soak.properties`：默认 7 天长稳压测，可通过 `--run.duration=30d` 覆盖。
 - `reopen.properties`：周期性 close/open，并记录 `reopenChecks`。
@@ -190,7 +191,7 @@ work/<profile>/report/summary.properties
 ./bin/longrun report --workDir work/smoke
 ```
 
-核心指标包括 Operations、Commits、Reopen Checks、Recovery Checks、Ops/s、Throughput Drop Ratio、Final Size Bytes、Size Amplification、Reclamation Events、Fault Injection Events、Suspicious Log Lines、Failures 和 Warnings。
+核心指标包括 Operations、Commits、Reopen Checks、Recovery Checks、Avg/Min/Max Ops/s、P05/P50/P95 Ops/s、Throughput Drop Ratio、Final Size Bytes、Size Amplification、Reclamation Events、Fault Injection Events、Suspicious Log Lines、Failures 和 Warnings。
 
 ## 发布验收
 

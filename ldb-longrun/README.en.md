@@ -225,6 +225,7 @@ PowerShell completion script file:
 Default profiles are shipped under `config/`:
 
 - `smoke.properties`: 5-minute quick validation by default.
+- `performance.properties`: 10-minute lightweight performance stress run with ops/s percentiles and throughput drop reporting.
 - `nightly.properties`: 12-hour nightly run by default.
 - `soak.properties`: 7-day soak by default, override with `--run.duration=30d` when needed.
 - `reopen.properties`: periodic close/open with `reopenChecks`.
@@ -301,7 +302,7 @@ Manual re-analysis:
 bin/longrun report --workDir work/smoke
 ```
 
-Core metrics include Operations, Commits, Reopen Checks, Recovery Checks, Ops/s, Throughput Drop Ratio, Final Size Bytes, Size Amplification, Reclamation Events, Fault Injection Events, Suspicious Log Lines, Failures, and Warnings.
+Core metrics include Operations, Commits, Reopen Checks, Recovery Checks, Avg/Min/Max Ops/s, P05/P50/P95 Ops/s, Throughput Drop Ratio, Final Size Bytes, Size Amplification, Reclamation Events, Fault Injection Events, Suspicious Log Lines, Failures, and Warnings.
 
 ## Release Acceptance
 

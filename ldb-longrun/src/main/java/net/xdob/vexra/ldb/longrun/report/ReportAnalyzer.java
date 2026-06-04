@@ -9,6 +9,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.DoubleSummaryStatistics;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,7 @@ public final class ReportAnalyzer {
     FaultStats faultStats = faultStats(new File(workDir, "metrics/fault.csv"));
     int samples = 0;
     DoubleSummaryStatistics opsStats = new DoubleSummaryStatistics();
+    List<Double> opsPerSecondSamples = new ArrayList<>();
     if (ops.isFile()) {
       try (BufferedReader reader = new BufferedReader(new FileReader(ops))) {
         String line = reader.readLine();
@@ -48,7 +50,9 @@ public final class ReportAnalyzer {
           if (parts.length >= 12) {
             runId = parts[1];
             operations = parseLong(parts[4]);
-            opsStats.accept(parseDouble(parts[5]));
+            double opsPerSecond = parseDouble(parts[5]);
+            opsStats.accept(opsPerSecond);
+            opsPerSecondSamples.add(opsPerSecond);
             reads = parseLong(parts[6]);
             writes = parseLong(parts[7]);
             removes = parseLong(parts[8]);
@@ -71,6 +75,10 @@ public final class ReportAnalyzer {
     double avgOps = samples == 0 ? 0 : opsStats.getAverage();
     double minOps = samples == 0 ? 0 : opsStats.getMin();
     double maxOps = samples == 0 ? 0 : opsStats.getMax();
+    double p05Ops = percentile(opsPerSecondSamples, 0.05D);
+    double p50Ops = percentile(opsPerSecondSamples, 0.50D);
+    double p95Ops = percentile(opsPerSecondSamples, 0.95D);
+    double throughputDropRatio = p50Ops <= 0.0D ? 0.0D : Math.max(0.0D, 1.0D - p05Ops / p50Ops);
     long suspicious = suspiciousLines(new File(workDir, "logs"));
     if (suspicious > 0) {
       failures.add("suspicious log lines: " + suspicious);
@@ -104,7 +112,10 @@ public final class ReportAnalyzer {
     summary.put("avgOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", avgOps));
     summary.put("minOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", minOps));
     summary.put("maxOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", maxOps));
-    summary.put("throughputDropRatio", "0.000");
+    summary.put("p05OpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", p05Ops));
+    summary.put("p50OpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", p50Ops));
+    summary.put("p95OpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", p95Ops));
+    summary.put("throughputDropRatio", String.format(java.util.Locale.ROOT, "%.3f", throughputDropRatio));
     summary.put("reclamationEvents", reclamationStats.events);
     summary.put("reclamationSuccessEvents", reclamationStats.success);
     summary.put("reclamationBackoffEvents", reclamationStats.backoff);
@@ -335,5 +346,16 @@ public final class ReportAnalyzer {
 
   private static double parseDouble(String value) {
     return Double.parseDouble(value.trim());
+  }
+
+  private static double percentile(List<Double> values, double percentile) {
+    if (values.isEmpty()) {
+      return 0.0D;
+    }
+    List<Double> sorted = new ArrayList<>(values);
+    Collections.sort(sorted);
+    int index = (int) Math.ceil(percentile * sorted.size()) - 1;
+    index = Math.max(0, Math.min(sorted.size() - 1, index));
+    return sorted.get(index);
   }
 }

@@ -40,6 +40,10 @@ class ReportAnalyzerTest {
     assertEquals("PASS", summary.get("status"));
     assertEquals("20", summary.get("operations"));
     assertEquals("2", summary.get("metricSamples"));
+    assertEquals("100.000", summary.get("p05OpsPerSecond"));
+    assertEquals("100.000", summary.get("p50OpsPerSecond"));
+    assertEquals("200.000", summary.get("p95OpsPerSecond"));
+    assertEquals("0.000", summary.get("throughputDropRatio"));
     assertEquals("2.000", summary.get("sizeAmplification"));
     assertEquals("1", summary.get("reclamationEvents"));
     assertTrue(new File(workDir, "report/summary.md").isFile());
