@@ -23,11 +23,11 @@ class ReportAnalyzerTest {
     assertTrue(metrics.mkdirs());
     assertTrue(state.mkdirs());
     try (FileOutputStream out = new FileOutputStream(new File(metrics, "ops.csv"))) {
-      out.write(("timeMillis,runId,instance,workerEpoch,operations,opsPerSecond,reads,writes,removes,commits,reopenChecks,recoveryChecks,readsPerSecond,writesPerSecond,removesPerSecond\n"
-          + "1,smoke,a,0,10,100.0,5,4,1,1,0,0,50.0,40.0,10.0\n"
-          + "2,smoke,a,0,20,200.0,10,8,2,2,0,0,100.0,80.0,20.0\n"
-          + "3,smoke,a,0,30,300.0,15,12,3,3,0,0,150.0,120.0,30.0\n"
-          + "4,smoke,a,0,40,400.0,20,16,4,4,0,0,200.0,160.0,40.0\n").getBytes(StandardCharsets.UTF_8));
+      out.write(("timeMillis,runId,instance,workerEpoch,operations,opsPerSecond,reads,writes,removes,commits,reopenChecks,recoveryChecks,readsPerSecond,writesPerSecond,removesPerSecond,sampleElapsedMillis\n"
+          + "1,smoke,a,0,10,100.0,5,4,1,1,0,0,50.0,40.0,10.0,3000\n"
+          + "2,smoke,a,0,20,200.0,10,8,2,2,0,0,100.0,80.0,20.0,3000\n"
+          + "3,smoke,a,0,30,300.0,15,12,3,3,0,0,150.0,120.0,30.0,3000\n"
+          + "4,smoke,a,0,40,400.0,20,16,4,4,0,0,200.0,160.0,40.0,100\n").getBytes(StandardCharsets.UTF_8));
     }
     try (FileOutputStream out = new FileOutputStream(new File(metrics, "reclamation.csv"))) {
       out.write(("timeMillis,status,message,beforeFileSize,afterFileSize,shrinkBytes,fillRate,estimatedReclaimedBytes,candidateChunks,backoffCount,noProgressCount,successCount\n"
@@ -43,21 +43,22 @@ class ReportAnalyzerTest {
     assertEquals("40", summary.get("operations"));
     assertEquals("4", summary.get("metricSamples"));
     assertEquals("2", summary.get("warmupSamples"));
-    assertEquals("2", summary.get("measuredSamples"));
-    assertEquals("350.000", summary.get("avgOpsPerSecond"));
+    assertEquals("1", summary.get("trailingPartialSamples"));
+    assertEquals("1", summary.get("measuredSamples"));
+    assertEquals("300.000", summary.get("avgOpsPerSecond"));
     assertEquals("300.000", summary.get("minOpsPerSecond"));
     assertEquals("300.000", summary.get("p05OpsPerSecond"));
     assertEquals("300.000", summary.get("p50OpsPerSecond"));
-    assertEquals("400.000", summary.get("p95OpsPerSecond"));
-    assertEquals("175.000", summary.get("avgReadOpsPerSecond"));
+    assertEquals("300.000", summary.get("p95OpsPerSecond"));
+    assertEquals("150.000", summary.get("avgReadOpsPerSecond"));
     assertEquals("150.000", summary.get("p50ReadOpsPerSecond"));
-    assertEquals("200.000", summary.get("p95ReadOpsPerSecond"));
-    assertEquals("140.000", summary.get("avgWriteOpsPerSecond"));
+    assertEquals("150.000", summary.get("p95ReadOpsPerSecond"));
+    assertEquals("120.000", summary.get("avgWriteOpsPerSecond"));
     assertEquals("120.000", summary.get("p50WriteOpsPerSecond"));
-    assertEquals("160.000", summary.get("p95WriteOpsPerSecond"));
-    assertEquals("35.000", summary.get("avgRemoveOpsPerSecond"));
+    assertEquals("120.000", summary.get("p95WriteOpsPerSecond"));
+    assertEquals("30.000", summary.get("avgRemoveOpsPerSecond"));
     assertEquals("30.000", summary.get("p50RemoveOpsPerSecond"));
-    assertEquals("40.000", summary.get("p95RemoveOpsPerSecond"));
+    assertEquals("30.000", summary.get("p95RemoveOpsPerSecond"));
     assertEquals("0.000", summary.get("throughputDropRatio"));
     assertEquals("2.000", summary.get("sizeAmplification"));
     assertEquals("1", summary.get("reclamationEvents"));

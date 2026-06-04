@@ -135,7 +135,7 @@ logs/<instance>.out
 
 每次 `start` 会把旧日志轮转为 `logs/<instance>.out.1`、`.2` 等，并为新测试创建新的 `logs/<instance>.out`。实例启动后会先输出 `START` 和多行 `CONFIG`，日志文件中的运行期 `PROGRESS` 行会按 `metrics.interval` 保留 `progressPercent`、`windowOpsPerSecond`、`avgOpsPerSecond`、`minOpsPerSecond` 和 `maxOpsPerSecond` 等完整字段。
 
-`logs` 和 `watch` 跟随运行实例时，会把 `PROGRESS` 行在控制台原地刷新成短进度条，例如 `PROGRESS [##########----------]  50% ops=100000 win=68000/s avg=52000/s min=18000/s max=68000/s keys=50000 slow=0 imm=0 l0wait=0 comp=0 backlog=false`，避免终端换行；日志文件仍保留完整逐行历史，并额外记录 LDB write stall 与 compaction 指标。workload 到达 100% 后会先打印 `RESULT phase=workload`，随后用 `FINAL phase=verify/resource/report` 标记最终校验和报告阶段。测试结束后主日志会打印 `SUMMARY` 行，包含总体 avg/min/max、p05/p50/p95、读/写/删各自的 p50/p95、throughputDropRatio、finalSizeBytes 和 sizeAmplification；性能统计默认跳过启动 warmup 采样，并通过 `warmupSamples` 和 `measuredSamples` 标明统计口径。
+`logs` 和 `watch` 跟随运行实例时，会把 `PROGRESS` 行在控制台原地刷新成短进度条，例如 `PROGRESS [##########----------]  50% ops=100000 win=68000/s avg=52000/s min=18000/s max=68000/s keys=50000 slow=0 imm=0 l0wait=0 comp=0 backlog=false`，避免终端换行；日志文件仍保留完整逐行历史，并额外记录 LDB write stall 与 compaction 指标。workload 到达 100% 后会先打印 `RESULT phase=workload`，随后用 `FINAL phase=verify/resource/report` 标记最终校验和报告阶段。测试结束后主日志会打印 `SUMMARY` 行，包含总体 avg/min/max、p05/p50/p95、读/写/删各自的 p50/p95、throughputDropRatio、finalSizeBytes 和 sizeAmplification；性能统计默认跳过启动 warmup 采样和明显不足一个采样周期的尾窗口，并通过 `warmupSamples`、`trailingPartialSamples` 和 `measuredSamples` 标明统计口径。
 
 crash/recovery 模式主日志输出 `CRASH PROGRESS`，表示父进程按 `crash.cycles` 统计的整体进度。worker 自身的 `START`、`CONFIG` 和 `PROGRESS` 写入 `logs/<instance>-worker.out`，用于排查单个 worker 阶段。
 

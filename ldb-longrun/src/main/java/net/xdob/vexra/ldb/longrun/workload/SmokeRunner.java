@@ -329,6 +329,7 @@ public final class SmokeRunner {
         + " operations=" + summary.get("operations")
         + " metricSamples=" + summary.get("metricSamples")
         + " warmupSamples=" + summary.get("warmupSamples")
+        + " trailingPartialSamples=" + summary.get("trailingPartialSamples")
         + " measuredSamples=" + summary.get("measuredSamples")
         + " avgOpsPerSecond=" + summary.get("avgOpsPerSecond")
         + " minOpsPerSecond=" + summary.get("minOpsPerSecond")

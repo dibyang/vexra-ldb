@@ -44,6 +44,7 @@ public final class ReportAnalyzer {
     List<Double> allReadsPerSecondSamples = new ArrayList<>();
     List<Double> allWritesPerSecondSamples = new ArrayList<>();
     List<Double> allRemovesPerSecondSamples = new ArrayList<>();
+    List<Long> allSampleElapsedMillis = new ArrayList<>();
     if (ops.isFile()) {
       try (BufferedReader reader = new BufferedReader(new FileReader(ops))) {
         String line = reader.readLine();
@@ -65,6 +66,9 @@ public final class ReportAnalyzer {
               allWritesPerSecondSamples.add(parseDouble(parts[13]));
               allRemovesPerSecondSamples.add(parseDouble(parts[14]));
             }
+            if (parts.length >= 16) {
+              allSampleElapsedMillis.add(parseLong(parts[15]));
+            }
             samples++;
           }
         }
@@ -73,11 +77,12 @@ public final class ReportAnalyzer {
       warnings.add("metrics/ops.csv is missing");
     }
     int warmupSamples = allOpsPerSecondSamples.size() > 2 ? 2 : Math.max(0, allOpsPerSecondSamples.size() - 1);
-    List<Double> measuredOpsPerSecondSamples = allOpsPerSecondSamples.subList(warmupSamples,
-        allOpsPerSecondSamples.size());
-    List<Double> measuredReadsPerSecondSamples = measuredSamples(allReadsPerSecondSamples, warmupSamples);
-    List<Double> measuredWritesPerSecondSamples = measuredSamples(allWritesPerSecondSamples, warmupSamples);
-    List<Double> measuredRemovesPerSecondSamples = measuredSamples(allRemovesPerSecondSamples, warmupSamples);
+    int measuredEnd = measuredEndIndex(allOpsPerSecondSamples, allSampleElapsedMillis, warmupSamples);
+    int trailingPartialSamples = allOpsPerSecondSamples.size() - measuredEnd;
+    List<Double> measuredOpsPerSecondSamples = allOpsPerSecondSamples.subList(warmupSamples, measuredEnd);
+    List<Double> measuredReadsPerSecondSamples = measuredSamples(allReadsPerSecondSamples, warmupSamples, measuredEnd);
+    List<Double> measuredWritesPerSecondSamples = measuredSamples(allWritesPerSecondSamples, warmupSamples, measuredEnd);
+    List<Double> measuredRemovesPerSecondSamples = measuredSamples(allRemovesPerSecondSamples, warmupSamples, measuredEnd);
     DoubleSummaryStatistics opsStats = new DoubleSummaryStatistics();
     for (Double opsPerSecond : measuredOpsPerSecondSamples) {
       opsStats.accept(opsPerSecond);
@@ -129,6 +134,7 @@ public final class ReportAnalyzer {
     summary.put("finalSizeBytes", finalSizeBytes);
     summary.put("metricSamples", samples);
     summary.put("warmupSamples", warmupSamples);
+    summary.put("trailingPartialSamples", trailingPartialSamples);
     summary.put("measuredSamples", measuredOpsPerSecondSamples.size());
     summary.put("avgOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", avgOps));
     summary.put("minOpsPerSecond", String.format(java.util.Locale.ROOT, "%.3f", minOps));
@@ -372,12 +378,31 @@ public final class ReportAnalyzer {
     return Double.parseDouble(value.trim());
   }
 
-  private static List<Double> measuredSamples(List<Double> samples, int warmupSamples) {
+  private static List<Double> measuredSamples(List<Double> samples, int warmupSamples, int measuredEnd) {
     if (samples.isEmpty()) {
       return Collections.emptyList();
     }
-    int start = Math.min(Math.max(0, warmupSamples), samples.size());
-    return samples.subList(start, samples.size());
+    int end = Math.min(Math.max(0, measuredEnd), samples.size());
+    int start = Math.min(Math.max(0, warmupSamples), end);
+    return samples.subList(start, end);
+  }
+
+  private static int measuredEndIndex(List<Double> samples, List<Long> elapsedMillis, int warmupSamples) {
+    if (samples.size() <= warmupSamples + 1 || elapsedMillis.size() != samples.size()) {
+      return samples.size();
+    }
+    int last = samples.size() - 1;
+    List<Long> baseline = new ArrayList<>(elapsedMillis.subList(warmupSamples, last));
+    if (baseline.isEmpty()) {
+      return samples.size();
+    }
+    Collections.sort(baseline);
+    long medianElapsed = baseline.get(baseline.size() / 2);
+    long lastElapsed = elapsedMillis.get(last);
+    if (medianElapsed > 0 && lastElapsed * 2 < medianElapsed) {
+      return last;
+    }
+    return samples.size();
   }
 
   private static DoubleSummaryStatistics stats(List<Double> values) {

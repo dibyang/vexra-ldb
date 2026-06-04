@@ -47,7 +47,7 @@ public final class MetricsWriter implements Closeable {
     this.reclamation = writer(reclamationFile);
     this.fault = writer(faultFile);
     if (opsHeader) {
-      this.ops.println("timeMillis,runId,instance,workerEpoch,operations,opsPerSecond,reads,writes,removes,commits,reopenChecks,recoveryChecks,readsPerSecond,writesPerSecond,removesPerSecond");
+      this.ops.println("timeMillis,runId,instance,workerEpoch,operations,opsPerSecond,reads,writes,removes,commits,reopenChecks,recoveryChecks,readsPerSecond,writesPerSecond,removesPerSecond,sampleElapsedMillis");
     }
     if (reclamationHeader) {
       this.reclamation.println("timeMillis,status,message,beforeFileSize,afterFileSize,shrinkBytes,fillRate,estimatedReclaimedBytes,candidateChunks,backoffCount,noProgressCount,successCount");
@@ -89,7 +89,8 @@ public final class MetricsWriter implements Closeable {
         + stats.recoveryChecks() + ","
         + String.format(Locale.ROOT, "%.3f", readsPerSecond) + ","
         + String.format(Locale.ROOT, "%.3f", writesPerSecond) + ","
-        + String.format(Locale.ROOT, "%.3f", removesPerSecond));
+        + String.format(Locale.ROOT, "%.3f", removesPerSecond) + ","
+        + elapsed);
     ops.flush();
     lastMillis = now;
     lastOperations = stats.operations();
