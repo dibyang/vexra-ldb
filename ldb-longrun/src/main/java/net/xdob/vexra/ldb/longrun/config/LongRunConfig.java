@@ -7,7 +7,9 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collections;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -164,6 +166,8 @@ public final class LongRunConfig {
         return "limits.maxDbSizeGb";
       case "M":
         return "ldb.writeBufferSizeMb";
+      case "P":
+        return "ldb.plugins";
       default:
         return option;
     }
@@ -199,6 +203,21 @@ public final class LongRunConfig {
     p.setProperty("fault.retainedCopies", "5");
     p.setProperty("limits.maxDbSizeGb", "20");
     p.setProperty("ldb.writeBufferSizeMb", "64");
+    p.setProperty("ldb.groupCommit.enabled", "false");
+    p.setProperty("ldb.groupCommit.maxDelayNanos", "200000");
+    p.setProperty("ldb.groupCommit.maxBatchBytes", "1048576");
+    p.setProperty("ldb.plugins", "");
+    p.setProperty("ldb.plugin.discovery.enabled", "false");
+    p.setProperty("ldb.plugin.capability.enforcement", "false");
+    p.setProperty("ldb.plugin.callbackTimeoutMillis", "0");
+    p.setProperty("ldb.plugin.autoDisableOnTimeout", "false");
+    p.setProperty("ldb.plugin.autoDisableFailureThreshold", "0");
+    p.setProperty("ldb.plugin.async.enabled", "false");
+    p.setProperty("ldb.plugin.async.queueCapacity", "1024");
+    p.setProperty("ldb.plugin.async.closeTimeoutMillis", "30000");
+    p.setProperty("ldb.plugin.maxTotalCallbackMillis", "0");
+    p.setProperty("ldb.plugin.external.enabled", "false");
+    p.setProperty("ldb.plugin.dir", "");
     return p;
   }
 
@@ -376,6 +395,105 @@ public final class LongRunConfig {
 
   public long ldbWriteBufferSizeMb() {
     return Long.parseLong(get("ldb.writeBufferSizeMb"));
+  }
+
+  public boolean ldbGroupCommitEnabled() {
+    return Boolean.parseBoolean(get("ldb.groupCommit.enabled"));
+  }
+
+  public long ldbGroupCommitMaxDelayNanos() {
+    return Long.parseLong(get("ldb.groupCommit.maxDelayNanos"));
+  }
+
+  public long ldbGroupCommitMaxBatchBytes() {
+    return Long.parseLong(get("ldb.groupCommit.maxBatchBytes"));
+  }
+
+  public List<String> pluginNames() {
+    String value = get("ldb.plugins");
+    if (value == null || value.trim().isEmpty()) {
+      return Collections.emptyList();
+    }
+    List<String> names = new ArrayList<>();
+    for (String part : value.split(",")) {
+      String name = part.trim();
+      if (!name.isEmpty()) {
+        names.add(name);
+      }
+    }
+    return Collections.unmodifiableList(names);
+  }
+
+  public boolean pluginDiscoveryEnabled() {
+    return Boolean.parseBoolean(get("ldb.plugin.discovery.enabled"));
+  }
+
+  public boolean pluginCapabilityEnforcement() {
+    return Boolean.parseBoolean(get("ldb.plugin.capability.enforcement"));
+  }
+
+  public long pluginCallbackTimeoutMillis() {
+    return Long.parseLong(get("ldb.plugin.callbackTimeoutMillis"));
+  }
+
+  public boolean pluginAutoDisableOnTimeout() {
+    return Boolean.parseBoolean(get("ldb.plugin.autoDisableOnTimeout"));
+  }
+
+  public int pluginAutoDisableFailureThreshold() {
+    return Integer.parseInt(get("ldb.plugin.autoDisableFailureThreshold"));
+  }
+
+  public boolean pluginAsyncEnabled() {
+    return Boolean.parseBoolean(get("ldb.plugin.async.enabled"));
+  }
+
+  public int pluginAsyncQueueCapacity() {
+    return Integer.parseInt(get("ldb.plugin.async.queueCapacity"));
+  }
+
+  public long pluginAsyncCloseTimeoutMillis() {
+    return Long.parseLong(get("ldb.plugin.async.closeTimeoutMillis"));
+  }
+
+  public long pluginMaxTotalCallbackMillis() {
+    return Long.parseLong(get("ldb.plugin.maxTotalCallbackMillis"));
+  }
+
+  public boolean pluginExternalEnabled() {
+    return Boolean.parseBoolean(get("ldb.plugin.external.enabled"));
+  }
+
+  public File pluginDir() {
+    String value = get("ldb.plugin.dir");
+    return value == null || value.trim().isEmpty() ? null : new File(value.trim());
+  }
+
+  public boolean pluginEnabled(String name) {
+    return Boolean.parseBoolean(properties.getProperty("ldb.plugin." + name + ".enabled", "true"));
+  }
+
+  public Map<String, String> pluginConfig(String name) {
+    String prefix = "ldb.plugin." + name + ".";
+    Map<String, String> values = new LinkedHashMap<>();
+    for (String key : properties.stringPropertyNames()) {
+      if (key.startsWith(prefix)) {
+        String local = key.substring(prefix.length());
+        if (!"enabled".equals(local)) {
+          values.put(local, properties.getProperty(key));
+        }
+      }
+    }
+    return Collections.unmodifiableMap(values);
+  }
+
+  public Integer pluginOrder(String name) {
+    String value = properties.getProperty("ldb.plugin." + name + ".order");
+    return value == null || value.trim().isEmpty() ? null : Integer.valueOf(value.trim());
+  }
+
+  public String pluginVersionRange(String name) {
+    return properties.getProperty("ldb.plugin." + name + ".versionRange", "").trim();
   }
 
   public String get(String key) {

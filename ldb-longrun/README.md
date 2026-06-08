@@ -105,11 +105,28 @@ bash ./install-completion.bash
 
 补全同时注册 `longrun`、`bin/longrun` 和 `./bin/longrun`。注意 `./bin/longrun<TAB>` 没有空格时，bash 仍在补可执行文件路径；需要输入 `./bin/longrun <TAB>` 才会补 longrun 的 command。
 
+## 插件样例
+
+`plugin-sample.properties` 演示 longrun 如何通过 ServiceLoader provider 启用插件：
+
+```bash
+./bin/longrun watch -c plugin-sample
+```
+
+样例插件名为 `sample-audit`，源码和开发说明见：
+
+- `src/main/java/net/xdob/vexra/ldb/longrun/config/LongRunSampleAuditPlugin.java`
+- `src/main/java/net/xdob/vexra/ldb/longrun/config/LongRunSamplePluginProvider.java`
+- `../docs/ldb-plugin-developer-guide.md`
+
+插件化文档总入口见 `../docs/ldb-plugin-docs-index.md`。
+
 ## Profiles
 
 默认 profile 位于发行包 `config/`：
 
 - `smoke.properties`：默认 5 分钟快速验证。
+- `plugin-sample.properties`：1 分钟插件开发样例，启用 `sample-audit` provider 并输出插件报告字段。
 - `performance.properties`：默认 3 分钟轻量混合性能压测，小 value，`workload.syncWrites=false`，默认 `check.finalVerify=false`，用于观察引擎综合吞吐。
 - `performance-write.properties`：默认 3 分钟写入主导性能压测，小 value，`workload.syncWrites=false`，默认 `check.finalVerify=false`，用于观察写路径吞吐。
 - `performance-read.properties`：默认 3 分钟读取主导性能压测，小 value，`workload.syncWrites=false`，默认 `check.finalVerify=false`，用于观察读路径吞吐。

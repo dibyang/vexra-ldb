@@ -224,11 +224,28 @@ PowerShell completion script file:
 . "<path-to-repo>\ldb-longrun\longrun-completion.ps1"
 ```
 
+## Plugin Sample
+
+`plugin-sample.properties` shows how longrun enables a plugin through a ServiceLoader provider:
+
+```bash
+bin/longrun watch -c plugin-sample
+```
+
+The sample plugin is named `sample-audit`. Source and guide:
+
+- `src/main/java/net/xdob/vexra/ldb/longrun/config/LongRunSampleAuditPlugin.java`
+- `src/main/java/net/xdob/vexra/ldb/longrun/config/LongRunSamplePluginProvider.java`
+- `../docs/ldb-plugin-developer-guide.en.md`
+
+The plugin documentation entry point is `../docs/ldb-plugin-docs-index.en.md`.
+
 ## Profiles
 
 Default profiles are shipped under `config/`:
 
 - `smoke.properties`: 5-minute quick validation by default.
+- `plugin-sample.properties`: 1-minute plugin development sample that enables the `sample-audit` provider and reports plugin fields.
 - `performance.properties`: 3-minute mixed small-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for overall engine throughput.
 - `performance-write.properties`: 3-minute write-heavy small-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for write-path throughput.
 - `performance-read.properties`: 3-minute read-heavy small-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for read-path throughput.

@@ -1,11 +1,13 @@
 package net.xdob.vexra.ldb.longrun.workload;
 
 import net.xdob.vexra.ldb.LDB;
+import net.xdob.vexra.ldb.LdbPlugin;
 import net.xdob.vexra.ldb.Options;
 import net.xdob.vexra.ldb.SnapshotCursor;
 import net.xdob.vexra.ldb.WriteOptions;
 import net.xdob.vexra.ldb.impl.LDBFactory;
 import net.xdob.vexra.ldb.longrun.config.LongRunConfig;
+import net.xdob.vexra.ldb.longrun.config.LongRunPluginResolver;
 import net.xdob.vexra.ldb.longrun.fault.FaultInjector;
 import net.xdob.vexra.ldb.longrun.fault.FaultResult;
 import net.xdob.vexra.ldb.longrun.instance.WorkDirLock;
@@ -23,6 +25,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.PrintStream;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 import java.util.Properties;
 
@@ -52,6 +55,7 @@ public final class SmokeRunner {
       }
       try (MetricsWriter metrics = new MetricsWriter(config)) {
       LDB db = openDb(dbDir, config, true);
+      printPluginState(out, db);
       long reopenChecks = 0;
       long recoveryChecks = 0;
       out.println("START run=" + config.runName()
@@ -143,6 +147,8 @@ public final class SmokeRunner {
         writeResourceState(stateDir, physicalSize, liveDataBytes);
         metrics.reclamation("success", "resource sample", physicalSize, physicalSize, liveDataBytes);
         out.println("FINAL phase=report");
+        writeRunState(stateDir, config);
+        writePluginState(stateDir, db);
         ReportSummary summary = new ReportAnalyzer().analyze(workDir);
         printSummary(out, summary);
         out.println("PASS " + config.runName() + " operations=" + state.operations()
@@ -255,6 +261,21 @@ public final class SmokeRunner {
     out.println("CONFIG fault.kinds=" + config.faultKinds());
     out.println("CONFIG fault.retainedCopies=" + config.faultRetainedCopies());
     out.println("CONFIG ldb.writeBufferSizeMb=" + config.ldbWriteBufferSizeMb());
+    out.println("CONFIG ldb.groupCommit.enabled=" + config.ldbGroupCommitEnabled());
+    out.println("CONFIG ldb.groupCommit.maxDelayNanos=" + config.ldbGroupCommitMaxDelayNanos());
+    out.println("CONFIG ldb.groupCommit.maxBatchBytes=" + config.ldbGroupCommitMaxBatchBytes());
+    out.println("CONFIG ldb.plugins=" + join(config.pluginNames()));
+    out.println("CONFIG ldb.plugin.discovery.enabled=" + config.pluginDiscoveryEnabled());
+    out.println("CONFIG ldb.plugin.capability.enforcement=" + config.pluginCapabilityEnforcement());
+    out.println("CONFIG ldb.plugin.callbackTimeoutMillis=" + config.pluginCallbackTimeoutMillis());
+    out.println("CONFIG ldb.plugin.autoDisableOnTimeout=" + config.pluginAutoDisableOnTimeout());
+    out.println("CONFIG ldb.plugin.autoDisableFailureThreshold=" + config.pluginAutoDisableFailureThreshold());
+    out.println("CONFIG ldb.plugin.async.enabled=" + config.pluginAsyncEnabled());
+    out.println("CONFIG ldb.plugin.async.queueCapacity=" + config.pluginAsyncQueueCapacity());
+    out.println("CONFIG ldb.plugin.async.closeTimeoutMillis=" + config.pluginAsyncCloseTimeoutMillis());
+    out.println("CONFIG ldb.plugin.maxTotalCallbackMillis=" + config.pluginMaxTotalCallbackMillis());
+    out.println("CONFIG ldb.plugin.external.enabled=" + config.pluginExternalEnabled());
+    out.println("CONFIG ldb.plugin.dir=" + (config.pluginDir() == null ? "" : config.pluginDir().getPath()));
   }
 
   private static ProgressSnapshot printProgress(PrintStream out, long startMillis, long durationMillis,
@@ -295,10 +316,70 @@ public final class SmokeRunner {
 
   private static LDB openDb(File dbDir, LongRunConfig config, boolean createIfMissing)
       throws Exception {
-    return LDBFactory.factory.open(dbDir, new Options()
+    Options options = new Options()
         .createIfMissing(createIfMissing)
         .verifyChecksums(true)
-        .writeBufferSize(config.ldbWriteBufferSizeBytes()));
+        .writeBufferSize(config.ldbWriteBufferSizeBytes())
+        .groupCommitEnabled(config.ldbGroupCommitEnabled())
+        .groupCommitMaxDelayNanos(config.ldbGroupCommitMaxDelayNanos())
+        .groupCommitMaxBatchBytes(config.ldbGroupCommitMaxBatchBytes())
+        .pluginCapabilityEnforcement(config.pluginCapabilityEnforcement())
+        .pluginCallbackTimeoutMillis(config.pluginCallbackTimeoutMillis())
+        .pluginAutoDisableOnTimeout(config.pluginAutoDisableOnTimeout())
+        .pluginAutoDisableFailureThreshold(config.pluginAutoDisableFailureThreshold())
+        .pluginAsyncEnabled(config.pluginAsyncEnabled())
+        .pluginAsyncQueueCapacity(config.pluginAsyncQueueCapacity())
+        .pluginAsyncCloseTimeoutMillis(config.pluginAsyncCloseTimeoutMillis())
+        .pluginMaxTotalCallbackMillis(config.pluginMaxTotalCallbackMillis());
+    List<LdbPlugin> plugins = new LongRunPluginResolver().resolve(config);
+    for (LdbPlugin plugin : plugins) {
+      options.addPlugin(plugin);
+    }
+    return LDBFactory.factory.open(dbDir, options);
+  }
+
+  private static void printPluginState(PrintStream out, LDB db) {
+    out.println("PLUGIN list=" + property(db, "ldb.plugins"));
+    out.println("PLUGIN stats=" + property(db, "ldb.pluginStats"));
+    out.println("PLUGIN executionPolicy=" + property(db, "ldb.plugin.executionPolicy"));
+    out.println("PLUGIN asyncStats=" + property(db, "ldb.plugin.asyncStats"));
+    out.println("PLUGIN degraded=" + property(db, "ldb.plugin.degraded"));
+    out.println("PLUGIN disabled=" + property(db, "ldb.plugin.disabled"));
+    out.println("PLUGIN sandbox=" + property(db, "ldb.plugin.sandbox"));
+  }
+
+  private static void writeRunState(File stateDir, LongRunConfig config) throws Exception {
+    if (!stateDir.exists() && !stateDir.mkdirs()) {
+      throw new IllegalStateException("failed to create state dir: " + stateDir);
+    }
+    Properties properties = new Properties();
+    properties.setProperty("workloadSyncWrites", Boolean.toString(config.syncWrites()));
+    properties.setProperty("ldbGroupCommitEnabled", Boolean.toString(config.ldbGroupCommitEnabled()));
+    properties.setProperty("ldbGroupCommitMaxDelayNanos", Long.toString(config.ldbGroupCommitMaxDelayNanos()));
+    properties.setProperty("ldbGroupCommitMaxBatchBytes", Long.toString(config.ldbGroupCommitMaxBatchBytes()));
+    properties.setProperty("ldbPluginAsyncEnabled", Boolean.toString(config.pluginAsyncEnabled()));
+    properties.setProperty("ldbPluginMaxTotalCallbackMillis", Long.toString(config.pluginMaxTotalCallbackMillis()));
+    try (FileOutputStream out = new FileOutputStream(new File(stateDir, "run.properties"))) {
+      properties.store(out, "longrun run state");
+    }
+  }
+
+  private static void writePluginState(File stateDir, LDB db) throws Exception {
+    if (!stateDir.exists() && !stateDir.mkdirs()) {
+      throw new IllegalStateException("failed to create state dir: " + stateDir);
+    }
+    Properties properties = new Properties();
+    properties.setProperty("plugins", property(db, "ldb.plugins"));
+    properties.setProperty("pluginStats", property(db, "ldb.pluginStats"));
+    properties.setProperty("pluginLastFailure", property(db, "ldb.plugin.lastFailure"));
+    properties.setProperty("pluginExecutionPolicy", property(db, "ldb.plugin.executionPolicy"));
+    properties.setProperty("pluginAsyncStats", property(db, "ldb.plugin.asyncStats"));
+    properties.setProperty("pluginDegraded", property(db, "ldb.plugin.degraded"));
+    properties.setProperty("pluginDisabled", property(db, "ldb.plugin.disabled"));
+    properties.setProperty("pluginSandbox", property(db, "ldb.plugin.sandbox"));
+    try (FileOutputStream out = new FileOutputStream(new File(stateDir, "plugin.properties"))) {
+      properties.store(out, "longrun plugin state");
+    }
   }
 
   private static String property(LDB db, String name) {
@@ -343,6 +424,9 @@ public final class SmokeRunner {
         + " p95WriteOpsPerSecond=" + summary.get("p95WriteOpsPerSecond")
         + " p50RemoveOpsPerSecond=" + summary.get("p50RemoveOpsPerSecond")
         + " p95RemoveOpsPerSecond=" + summary.get("p95RemoveOpsPerSecond")
+        + " workloadSyncWrites=" + summary.get("workloadSyncWrites")
+        + " ldbGroupCommitEnabled=" + summary.get("ldbGroupCommitEnabled")
+        + " ldbPluginAsyncEnabled=" + summary.get("ldbPluginAsyncEnabled")
         + " throughputDropRatio=" + summary.get("throughputDropRatio")
         + " finalSizeBytes=" + summary.get("finalSizeBytes")
         + " sizeAmplification=" + summary.get("sizeAmplification"));
@@ -350,6 +434,13 @@ public final class SmokeRunner {
 
   private static String formatDouble(double value) {
     return String.format(java.util.Locale.ROOT, "%.3f", value);
+  }
+
+  private static String join(List<String> values) {
+    if (values == null || values.isEmpty()) {
+      return "";
+    }
+    return String.join(",", values);
   }
 
   private static String progressPercent(long now, long startMillis, long durationMillis) {

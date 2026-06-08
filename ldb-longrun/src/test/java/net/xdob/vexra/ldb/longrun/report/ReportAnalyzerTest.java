@@ -36,6 +36,24 @@ class ReportAnalyzerTest {
     try (FileOutputStream out = new FileOutputStream(new File(state, "resource.properties"))) {
       out.write(("physicalSizeBytes=100\nliveDataBytes=50\n").getBytes(StandardCharsets.UTF_8));
     }
+    try (FileOutputStream out = new FileOutputStream(new File(state, "plugin.properties"))) {
+      out.write(("plugins=0:diagnostic:order=0:capabilities=OBSERVE_WRITE\n"
+          + "pluginStats=count=1,callbacks=2,failures=0\n"
+          + "pluginLastFailure=\n"
+          + "pluginExecutionPolicy=asyncEnabled=false,beforeWrite=syncFailFast\n"
+          + "pluginAsyncStats=enabled=false,submitted=0\n"
+          + "pluginDegraded=false\n"
+          + "pluginDisabled=\n"
+          + "pluginSandbox=false\n").getBytes(StandardCharsets.UTF_8));
+    }
+    try (FileOutputStream out = new FileOutputStream(new File(state, "run.properties"))) {
+      out.write(("workloadSyncWrites=false\n"
+          + "ldbGroupCommitEnabled=true\n"
+          + "ldbGroupCommitMaxDelayNanos=1000\n"
+          + "ldbGroupCommitMaxBatchBytes=8192\n"
+          + "ldbPluginAsyncEnabled=true\n"
+          + "ldbPluginMaxTotalCallbackMillis=7000\n").getBytes(StandardCharsets.UTF_8));
+    }
 
     ReportSummary summary = new ReportAnalyzer().analyze(workDir);
 
@@ -62,6 +80,18 @@ class ReportAnalyzerTest {
     assertEquals("0.000", summary.get("throughputDropRatio"));
     assertEquals("2.000", summary.get("sizeAmplification"));
     assertEquals("1", summary.get("reclamationEvents"));
+    assertEquals("0:diagnostic:order=0:capabilities=OBSERVE_WRITE", summary.get("plugins"));
+    assertEquals("count=1,callbacks=2,failures=0", summary.get("pluginStats"));
+    assertEquals("asyncEnabled=false,beforeWrite=syncFailFast", summary.get("pluginExecutionPolicy"));
+    assertEquals("enabled=false,submitted=0", summary.get("pluginAsyncStats"));
+    assertEquals("false", summary.get("pluginDegraded"));
+    assertEquals("false", summary.get("pluginSandbox"));
+    assertEquals("false", summary.get("workloadSyncWrites"));
+    assertEquals("true", summary.get("ldbGroupCommitEnabled"));
+    assertEquals("1000", summary.get("ldbGroupCommitMaxDelayNanos"));
+    assertEquals("8192", summary.get("ldbGroupCommitMaxBatchBytes"));
+    assertEquals("true", summary.get("ldbPluginAsyncEnabled"));
+    assertEquals("7000", summary.get("ldbPluginMaxTotalCallbackMillis"));
     assertTrue(new File(workDir, "report/summary.md").isFile());
     assertTrue(new File(workDir, "report/summary.properties").isFile());
   }
@@ -173,6 +203,10 @@ class ReportAnalyzerTest {
     assertUtf8(Paths.get("..", "docs", "ldb-longrun-test-tool-design.en.md"));
     assertUtf8(Paths.get("..", "docs", "ldb-longrun-test-tool-implementation-plan.md"));
     assertUtf8(Paths.get("..", "docs", "ldb-longrun-test-tool-implementation-plan.en.md"));
+    assertUtf8(Paths.get("..", "docs", "ldb-plugin-improvement-execution-plan.md"));
+    assertUtf8(Paths.get("..", "docs", "ldb-plugin-improvement-execution-plan.en.md"));
+    assertUtf8(Paths.get("..", "docs", "vexra-ldb-external-commitment.md"));
+    assertUtf8(Paths.get("..", "docs", "vexra-ldb-external-commitment.en.md"));
   }
 
   private static void assertUtf8(Path path) throws Exception {

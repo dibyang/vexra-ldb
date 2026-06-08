@@ -92,6 +92,8 @@ public final class ReportAnalyzer {
     DoubleSummaryStatistics removeStats = stats(measuredRemovesPerSecondSamples);
     long finalSizeBytes = directorySize(workDir);
     ResourceStats resourceStats = resourceStats(new File(workDir, "state/resource.properties"));
+    PluginState pluginState = pluginState(new File(workDir, "state/plugin.properties"));
+    RunState runState = runState(new File(workDir, "state/run.properties"));
     ReclamationStats reclamationStats = reclamationStats(new File(workDir, "metrics/reclamation.csv"));
     if (resourceStats.physicalSizeBytes > 0) {
       finalSizeBytes = resourceStats.physicalSizeBytes;
@@ -161,6 +163,20 @@ public final class ReportAnalyzer {
     summary.put("faultInjectionStatusCounts", faultStats.statusCounts);
     summary.put("faultInjectionKindCounts", faultStats.kindCounts);
     summary.put("suspiciousLogLines", suspicious);
+    summary.put("plugins", pluginState.plugins);
+    summary.put("pluginStats", pluginState.pluginStats);
+    summary.put("pluginLastFailure", pluginState.pluginLastFailure);
+    summary.put("pluginExecutionPolicy", pluginState.pluginExecutionPolicy);
+    summary.put("pluginAsyncStats", pluginState.pluginAsyncStats);
+    summary.put("pluginDegraded", pluginState.pluginDegraded);
+    summary.put("pluginDisabled", pluginState.pluginDisabled);
+    summary.put("pluginSandbox", pluginState.pluginSandbox);
+    summary.put("workloadSyncWrites", runState.workloadSyncWrites);
+    summary.put("ldbGroupCommitEnabled", runState.ldbGroupCommitEnabled);
+    summary.put("ldbGroupCommitMaxDelayNanos", runState.ldbGroupCommitMaxDelayNanos);
+    summary.put("ldbGroupCommitMaxBatchBytes", runState.ldbGroupCommitMaxBatchBytes);
+    summary.put("ldbPluginAsyncEnabled", runState.ldbPluginAsyncEnabled);
+    summary.put("ldbPluginMaxTotalCallbackMillis", runState.ldbPluginMaxTotalCallbackMillis);
     summary.put("failures", failures.size());
     summary.put("warnings", warnings.size());
     summary.put("recentEvents", recentEvents(new File(workDir, "metrics/events.log")));
@@ -278,6 +294,44 @@ public final class ReportAnalyzer {
     return stats;
   }
 
+  private static PluginState pluginState(File file) throws IOException {
+    PluginState state = new PluginState();
+    if (!file.isFile()) {
+      return state;
+    }
+    java.util.Properties properties = new java.util.Properties();
+    try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+      properties.load(in);
+    }
+    state.plugins = properties.getProperty("plugins", "");
+    state.pluginStats = properties.getProperty("pluginStats", "");
+    state.pluginLastFailure = properties.getProperty("pluginLastFailure", "");
+    state.pluginExecutionPolicy = properties.getProperty("pluginExecutionPolicy", "");
+    state.pluginAsyncStats = properties.getProperty("pluginAsyncStats", "");
+    state.pluginDegraded = properties.getProperty("pluginDegraded", "");
+    state.pluginDisabled = properties.getProperty("pluginDisabled", "");
+    state.pluginSandbox = properties.getProperty("pluginSandbox", "");
+    return state;
+  }
+
+  private static RunState runState(File file) throws IOException {
+    RunState state = new RunState();
+    if (!file.isFile()) {
+      return state;
+    }
+    java.util.Properties properties = new java.util.Properties();
+    try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+      properties.load(in);
+    }
+    state.workloadSyncWrites = properties.getProperty("workloadSyncWrites", "");
+    state.ldbGroupCommitEnabled = properties.getProperty("ldbGroupCommitEnabled", "");
+    state.ldbGroupCommitMaxDelayNanos = properties.getProperty("ldbGroupCommitMaxDelayNanos", "");
+    state.ldbGroupCommitMaxBatchBytes = properties.getProperty("ldbGroupCommitMaxBatchBytes", "");
+    state.ldbPluginAsyncEnabled = properties.getProperty("ldbPluginAsyncEnabled", "");
+    state.ldbPluginMaxTotalCallbackMillis = properties.getProperty("ldbPluginMaxTotalCallbackMillis", "");
+    return state;
+  }
+
   private static ReclamationStats reclamationStats(File file) throws IOException {
     ReclamationStats stats = new ReclamationStats();
     if (!file.isFile()) {
@@ -304,6 +358,26 @@ public final class ReportAnalyzer {
   private static final class ResourceStats {
     private long physicalSizeBytes;
     private long liveDataBytes;
+  }
+
+  private static final class PluginState {
+    private String plugins = "";
+    private String pluginStats = "";
+    private String pluginLastFailure = "";
+    private String pluginExecutionPolicy = "";
+    private String pluginAsyncStats = "";
+    private String pluginDegraded = "";
+    private String pluginDisabled = "";
+    private String pluginSandbox = "";
+  }
+
+  private static final class RunState {
+    private String workloadSyncWrites = "";
+    private String ldbGroupCommitEnabled = "";
+    private String ldbGroupCommitMaxDelayNanos = "";
+    private String ldbGroupCommitMaxBatchBytes = "";
+    private String ldbPluginAsyncEnabled = "";
+    private String ldbPluginMaxTotalCallbackMillis = "";
   }
 
   private static final class ReclamationStats {

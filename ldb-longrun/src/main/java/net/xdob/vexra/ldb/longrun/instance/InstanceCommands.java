@@ -56,6 +56,18 @@ public final class InstanceCommands {
     out.println("config crash.enabled=" + config.crashEnabled());
     out.println("config fault.enabled=" + config.faultEnabled());
     out.println("config ldb.writeBufferSizeMb=" + config.ldbWriteBufferSizeMb());
+    out.println("config ldb.plugins=" + String.join(",", config.pluginNames()));
+    out.println("config ldb.plugin.discovery.enabled=" + config.pluginDiscoveryEnabled());
+    out.println("config ldb.plugin.capability.enforcement=" + config.pluginCapabilityEnforcement());
+    out.println("config ldb.plugin.callbackTimeoutMillis=" + config.pluginCallbackTimeoutMillis());
+    out.println("config ldb.plugin.autoDisableOnTimeout=" + config.pluginAutoDisableOnTimeout());
+    out.println("config ldb.plugin.autoDisableFailureThreshold=" + config.pluginAutoDisableFailureThreshold());
+    out.println("config ldb.plugin.async.enabled=" + config.pluginAsyncEnabled());
+    out.println("config ldb.plugin.async.queueCapacity=" + config.pluginAsyncQueueCapacity());
+    out.println("config ldb.plugin.async.closeTimeoutMillis=" + config.pluginAsyncCloseTimeoutMillis());
+    out.println("config ldb.plugin.maxTotalCallbackMillis=" + config.pluginMaxTotalCallbackMillis());
+    out.println("config ldb.plugin.external.enabled=" + config.pluginExternalEnabled());
+    out.println("config ldb.plugin.dir=" + (config.pluginDir() == null ? "" : config.pluginDir().getPath()));
   }
 
   public int watch(LongRunConfig config, String[] args, PrintStream out) throws Exception {

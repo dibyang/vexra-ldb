@@ -61,6 +61,7 @@ class LongRunConfigTest {
         "-h", "9",
         "-L", "30",
         "-M", "512",
+        "-P", "diagnostic,com.example.Plugin",
         "-p", "smoke"
     });
 
@@ -91,7 +92,55 @@ class LongRunConfigTest {
     assertEquals("9", values.get("fault.retainedCopies"));
     assertEquals("30", values.get("limits.maxDbSizeGb"));
     assertEquals("512", values.get("ldb.writeBufferSizeMb"));
+    assertEquals("diagnostic,com.example.Plugin", values.get("ldb.plugins"));
     assertEquals("smoke", values.get("profile"));
+  }
+
+  @Test
+  void parsesPluginConfig() throws Exception {
+    LongRunConfig config = LongRunConfig.load(new String[] {
+        "-c", "smoke",
+        "-P", "diagnostic,provider-a",
+        "--ldb.plugin.discovery.enabled=true",
+        "--ldb.plugin.diagnostic.enabled=false",
+        "--ldb.plugin.provider-a.sampleMillis=1000",
+        "--ldb.plugin.provider-a.order=-5",
+        "--ldb.plugin.provider-a.versionRange=[1.0.0,2.0.0)",
+        "--ldb.plugin.capability.enforcement=true",
+        "--ldb.plugin.callbackTimeoutMillis=7",
+        "--ldb.plugin.autoDisableOnTimeout=true",
+        "--ldb.plugin.autoDisableFailureThreshold=3",
+        "--ldb.groupCommit.enabled=true",
+        "--ldb.groupCommit.maxDelayNanos=123456",
+        "--ldb.groupCommit.maxBatchBytes=65536",
+        "--ldb.plugin.async.enabled=true",
+        "--ldb.plugin.async.queueCapacity=8",
+        "--ldb.plugin.async.closeTimeoutMillis=9",
+        "--ldb.plugin.maxTotalCallbackMillis=10",
+        "--ldb.plugin.external.enabled=true",
+        "--ldb.plugin.dir=plugins"
+    });
+
+    assertEquals("diagnostic", config.pluginNames().get(0));
+    assertEquals("provider-a", config.pluginNames().get(1));
+    assertEquals(false, config.pluginEnabled("diagnostic"));
+    assertEquals(true, config.pluginDiscoveryEnabled());
+    assertEquals("1000", config.pluginConfig("provider-a").get("sampleMillis"));
+    assertEquals(Integer.valueOf(-5), config.pluginOrder("provider-a"));
+    assertEquals("[1.0.0,2.0.0)", config.pluginVersionRange("provider-a"));
+    assertEquals(true, config.pluginCapabilityEnforcement());
+    assertEquals(7L, config.pluginCallbackTimeoutMillis());
+    assertEquals(true, config.pluginAutoDisableOnTimeout());
+    assertEquals(3, config.pluginAutoDisableFailureThreshold());
+    assertEquals(true, config.ldbGroupCommitEnabled());
+    assertEquals(123456L, config.ldbGroupCommitMaxDelayNanos());
+    assertEquals(65536L, config.ldbGroupCommitMaxBatchBytes());
+    assertEquals(true, config.pluginAsyncEnabled());
+    assertEquals(8, config.pluginAsyncQueueCapacity());
+    assertEquals(9L, config.pluginAsyncCloseTimeoutMillis());
+    assertEquals(10L, config.pluginMaxTotalCallbackMillis());
+    assertEquals(true, config.pluginExternalEnabled());
+    assertEquals("plugins", config.pluginDir().getPath());
   }
 
   @Test
@@ -132,6 +181,9 @@ class LongRunConfigTest {
     assertEquals(false, performance.syncWrites());
     assertEquals(false, performance.finalVerifyEnabled());
     assertEquals(512L, performance.ldbWriteBufferSizeMb());
+    assertEquals(false, performance.ldbGroupCommitEnabled());
+    assertEquals(200000L, performance.ldbGroupCommitMaxDelayNanos());
+    assertEquals(1048576L, performance.ldbGroupCommitMaxBatchBytes());
     assertEquals("performance-durable", durable.runName());
     assertEquals(true, durable.syncWrites());
     assertEquals(false, durable.finalVerifyEnabled());
