@@ -106,6 +106,18 @@
 | 插件边界 | `afterWrite` 失败不回滚已提交写入 |
 | 资源释放 | cursor、table、WAL、VersionSet、锁和插件都必须显式释放或在关闭路径释放 |
 
+## 外部开发者承诺（vexra-ldb 使用方与插件扩展开发者）
+
+以下约束已纳入对外承诺基线，作为发布与新增功能前的检查项：
+
+- 列族注册能力：列族声明、稳定性（id/名称）和 registry 一致性属于公开边界。
+- 存储行为：`open`、`write`、`batch`、`scan`、`checkpoint`、`restore` 等公开语义必须保持稳定。
+- `DbStore` 映射：`key-value`、`counter`、`batch`、`commit/recovery` 行为边界按现有承诺约束实现，不承诺额外事务级语义。
+- 插件约束：`beforeWrite` 失败不应发生部分提交，`afterWrite`/`afterCheckpoint` 视为提交后通知失败可重试。
+- 版本升级边界：公共 API、数据目录兼容及插件钩子兼容性以承诺文档中的最小验收矩阵为准。
+
+对应承诺清单与验收矩阵见 [vexra-ldb 外部承诺](vexra-ldb-external-commitment.md)。
+
 ## 接口设计
 
 ### 对外 API

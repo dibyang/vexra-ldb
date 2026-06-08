@@ -106,6 +106,18 @@ This document describes the design that is implemented today. It is the baseline
 | Plugin boundary | `afterWrite` failure does not roll back committed data |
 | Resource release | Cursors, tables, WAL, VersionSet, locks, and plugins must be explicitly released or closed by the close path |
 
+## External Developer Constraints (LDB Consumers and Plugin Extension Developers)
+
+The following constraints are part of the external commitment baseline and should be checked before releases and major changes:
+
+- Column family registration: declaration, identifier/name stability, and registry consistency are treated as public boundaries.
+- Storage behavior: public `open`, `write`, `batch`, `scan`, `checkpoint`, and `restore` semantics must remain stable.
+- `DbStore` mapping: `key-value`, `counter`, `batch`, and `commit/recovery` boundaries follow the committed contract; no additional transaction rollback semantics are promised.
+- Plugin behavior: `beforeWrite` failures must not cause partial commit; `afterWrite`/`afterCheckpoint` are post-commit notifications and may require idempotent retries.
+- Upgrade boundaries: public API compatibility, on-disk data compatibility, and plugin-hook compatibility follow the minimum acceptance matrix in the external commitment document.
+
+See [vexra-ldb External Commitment for LDB Users](vexra-ldb-external-commitment.en.md) for the full list and minimum acceptance matrix.
+
 ## Interface Design
 
 ### Public API
