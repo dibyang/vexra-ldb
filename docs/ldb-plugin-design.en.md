@@ -18,8 +18,8 @@ As LDB continues to support embedded persistence, diagnostics, backup, and upper
 
 ## Non-Goals
 
-- No dynamic plugin loading, classloader isolation, or third-party plugin marketplace.
-- No remote plugin calls, network callbacks, transaction plugins, or cross-process sandboxing.
+- No third-party plugin marketplace.
+- No remote plugin calls, network callbacks, transaction plugins, or cross-process security sandboxing.
 - Plugins are not a security boundary in this phase; they are still trusted internal extensions.
 - This phase does not change existing callback method signatures or default execution order.
 
@@ -63,10 +63,11 @@ As LDB continues to support embedded persistence, diagnostics, backup, and upper
 
 | Property | Meaning | Example fields |
 | --- | --- | --- |
-| `ldb.plugins` | Current plugin list | `0:com.example.AuditPlugin,1:com.example.MetricsPlugin` |
+| `ldb.plugins` | Current plugin list in resolved execution order | `0:AuditPlugin:order=0:capabilities=OBSERVE_WRITE` |
 | `ldb.pluginStats` | Aggregate plugin stats | `callbacks=10,failures=1,maxMicros=1200,lastFailure=afterWrite:AuditPlugin` |
 | `ldb.plugin.<index>.stats` | Per-plugin stats | `name=AuditPlugin,beforeWrite.count=3,afterWrite.failures=1,maxMicros=1200` |
 | `ldb.plugin.lastFailure` | Latest plugin failure summary | `phase=afterWrite,plugin=AuditPlugin,message=...` |
+| `ldb.plugin.executionPolicy` | Current lifecycle execution policy | `asyncEnabled=false,beforeWrite=syncFailFast` |
 
 ### Read-Only Context
 
@@ -102,13 +103,13 @@ Medium-term plan:
 
 ### Plugin Descriptor
 
-A later phase can add `LdbPluginDescriptor`:
+`LdbPluginDescriptor` exposes stable plugin metadata:
 
 | Field | Meaning |
 | --- | --- |
 | `name` | Stable plugin name |
 | `version` | Plugin version |
-| `order` | Execution order within a phase |
+| `order` | Execution order; lower values run first and equal values keep registration order |
 | `capabilities` | Capability declarations such as observe, mutate, checkpoint |
 | `failurePolicy` | Failure behavior such as fail-fast or record-and-continue |
 
@@ -234,7 +235,7 @@ Illegal states:
 | --- | --- |
 | `afterWrite` failure followed by reopen | Verify data was committed and recovered |
 | `beforeWrite` failure | Verify no WAL write, no sequence advancement, and no `afterWrite` |
-| Multi-plugin order | Verify registration order |
+| Multi-plugin order | Verify descriptor order and registration-order tie-breaks |
 | Plugin failure | Verify failed phase, following-plugin behavior, and stats |
 | Post-checkpoint failure | Verify checkpoint exists and report is present |
 | Close plugin failure | Verify other resources are still released and close failure is aggregated |
@@ -265,12 +266,22 @@ Illegal states:
 
 ## Implemented Status
 
-- Added `LdbPluginDescriptor` and `LdbPluginFailurePolicy` to expose plugin name, version, order, and failure policy.
+- Added `LdbPluginDescriptor`, `LdbPluginCapability`, and `LdbPluginFailurePolicy` to expose plugin name, version, order, capabilities, and failure policy.
 - Added `OptionsView`; `LdbPluginContext#getOptionsView()` returns an open-time configuration snapshot, while `getOptions()` remains compatible.
 - Added `WriteEvent` and `WriteBatchView`; new plugins can observe writes through read-only events, while old mutable batch callbacks remain available.
 - Added plugin observability properties: `ldb.plugins`, `ldb.pluginStats`, `ldb.plugin.<index>.stats`, and `ldb.plugin.lastFailure`.
+- Added resolved plugin ordering by `descriptor.order()`, with registration order preserved for equal order values.
+- Added provider discovery APIs (`LdbPluginProvider`, `LdbPluginLoader`) and longrun config-based loading with discovery disabled by default.
+- Added `ldb.plugin.executionPolicy` to expose the current synchronous policy and async candidates.
 - `afterWrite` and `afterCheckpoint` failures are explicitly reported as post-commit notification failures; data or checkpoint output is not rolled back.
 - `RECORD_AND_CONTINUE` applies only to post-commit notification phases. Correctness-sensitive phases such as `beforeWrite`, `beforeCheckpoint`, and `onOpen` remain fail-fast.
+
+## Related Documents
+
+Current plugin capabilities, developer guidance, and contracts are linked from the documentation index:
+
+- [LDB 插件化文档索引](ldb-plugin-docs-index.md)
+- [LDB Plugin Documentation Index](ldb-plugin-docs-index.en.md)
 
 ## Open Questions
 
