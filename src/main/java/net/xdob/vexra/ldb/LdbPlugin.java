@@ -22,6 +22,16 @@ public interface LdbPlugin extends Closeable {
   }
 
   /**
+   * 返回被包装的真实插件实例。
+   *
+   * <p>普通插件保持默认返回自身；排序、隔离、治理等包装器应覆盖该方法，
+   * 便于核心运行时判断真实插件是否实现了特定生命周期方法。
+   */
+  default LdbPlugin unwrap() {
+    return this;
+  }
+
+  /**
    * 在插件加入 {@link Options} 时调用，用于声明列族等打开数据库前必须完成的配置。
    */
   default void configure(Options options) throws DBException {

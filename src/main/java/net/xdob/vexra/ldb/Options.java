@@ -41,6 +41,14 @@ public class Options implements OptionsView {
   private boolean groupCommitEnabled;
   private long groupCommitMaxDelayNanos = TimeUnit.MICROSECONDS.toNanos(200);
   private long groupCommitMaxBatchBytes = 1 << 20;
+  private boolean pluginCapabilityEnforcement;
+  private long pluginCallbackTimeoutMillis;
+  private boolean pluginAutoDisableOnTimeout;
+  private int pluginAutoDisableFailureThreshold;
+  private boolean pluginAsyncEnabled;
+  private int pluginAsyncQueueCapacity = 1024;
+  private long pluginAsyncCloseTimeoutMillis = TimeUnit.SECONDS.toMillis(30);
+  private long pluginMaxTotalCallbackMillis;
 
   public boolean cacheBlocks() {
     return cacheBlocks;
@@ -219,6 +227,93 @@ public class Options implements OptionsView {
       throw new IllegalArgumentException("groupCommitMaxBatchBytes must be > 0");
     }
     this.groupCommitMaxBatchBytes = groupCommitMaxBatchBytes;
+    return this;
+  }
+
+  public boolean pluginCapabilityEnforcement() {
+    return pluginCapabilityEnforcement;
+  }
+
+  public Options pluginCapabilityEnforcement(boolean pluginCapabilityEnforcement) {
+    this.pluginCapabilityEnforcement = pluginCapabilityEnforcement;
+    return this;
+  }
+
+  public long pluginCallbackTimeoutMillis() {
+    return pluginCallbackTimeoutMillis;
+  }
+
+  public Options pluginCallbackTimeoutMillis(long pluginCallbackTimeoutMillis) {
+    if (pluginCallbackTimeoutMillis < 0) {
+      throw new IllegalArgumentException("pluginCallbackTimeoutMillis must be >= 0");
+    }
+    this.pluginCallbackTimeoutMillis = pluginCallbackTimeoutMillis;
+    return this;
+  }
+
+  public boolean pluginAutoDisableOnTimeout() {
+    return pluginAutoDisableOnTimeout;
+  }
+
+  public Options pluginAutoDisableOnTimeout(boolean pluginAutoDisableOnTimeout) {
+    this.pluginAutoDisableOnTimeout = pluginAutoDisableOnTimeout;
+    return this;
+  }
+
+  public int pluginAutoDisableFailureThreshold() {
+    return pluginAutoDisableFailureThreshold;
+  }
+
+  public Options pluginAutoDisableFailureThreshold(int pluginAutoDisableFailureThreshold) {
+    if (pluginAutoDisableFailureThreshold < 0) {
+      throw new IllegalArgumentException("pluginAutoDisableFailureThreshold must be >= 0");
+    }
+    this.pluginAutoDisableFailureThreshold = pluginAutoDisableFailureThreshold;
+    return this;
+  }
+
+  public boolean pluginAsyncEnabled() {
+    return pluginAsyncEnabled;
+  }
+
+  public Options pluginAsyncEnabled(boolean pluginAsyncEnabled) {
+    this.pluginAsyncEnabled = pluginAsyncEnabled;
+    return this;
+  }
+
+  public int pluginAsyncQueueCapacity() {
+    return pluginAsyncQueueCapacity;
+  }
+
+  public Options pluginAsyncQueueCapacity(int pluginAsyncQueueCapacity) {
+    if (pluginAsyncQueueCapacity <= 0) {
+      throw new IllegalArgumentException("pluginAsyncQueueCapacity must be > 0");
+    }
+    this.pluginAsyncQueueCapacity = pluginAsyncQueueCapacity;
+    return this;
+  }
+
+  public long pluginAsyncCloseTimeoutMillis() {
+    return pluginAsyncCloseTimeoutMillis;
+  }
+
+  public Options pluginAsyncCloseTimeoutMillis(long pluginAsyncCloseTimeoutMillis) {
+    if (pluginAsyncCloseTimeoutMillis <= 0) {
+      throw new IllegalArgumentException("pluginAsyncCloseTimeoutMillis must be > 0");
+    }
+    this.pluginAsyncCloseTimeoutMillis = pluginAsyncCloseTimeoutMillis;
+    return this;
+  }
+
+  public long pluginMaxTotalCallbackMillis() {
+    return pluginMaxTotalCallbackMillis;
+  }
+
+  public Options pluginMaxTotalCallbackMillis(long pluginMaxTotalCallbackMillis) {
+    if (pluginMaxTotalCallbackMillis < 0) {
+      throw new IllegalArgumentException("pluginMaxTotalCallbackMillis must be >= 0");
+    }
+    this.pluginMaxTotalCallbackMillis = pluginMaxTotalCallbackMillis;
     return this;
   }
 

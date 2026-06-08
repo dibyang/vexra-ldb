@@ -238,6 +238,33 @@ class LdbCoreBehaviorTest {
    * 验证非法 addLong delta 会在写 WAL 前失败，避免 batch 内其它写入被部分持久化。
    */
   @Test
+  void shouldPreserveCounterAddLongBatchAcrossColumnFamiliesAndReopen() throws Exception {
+    File dbDir = new File(tempDir, "counter-compat-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true).addColumnFamily(META_CF))) {
+      db.put(bytes("counter"), bytes("plain-value"));
+      try (LdbWriteBatch batch = db.createWriteBatch()) {
+        batch.addLong(bytes("default-counter"), 1L);
+        batch.addLong(bytes("default-counter"), 4L);
+        batch.addLong(META_CF, bytes("meta-counter"), 10L);
+        batch.addLong(META_CF, bytes("meta-counter"), -3L);
+        db.write(batch, new WriteOptions().sync(true));
+      }
+
+      assertArrayEquals(bytes("plain-value"), db.get(bytes("counter")));
+      assertEquals(5L, Utils.decodeLong(db.get(bytes("default-counter"))).get().longValue());
+      assertEquals(7L, Utils.decodeLong(db.get(META_CF, bytes("meta-counter"))).get().longValue());
+    }
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false).addColumnFamily(META_CF))) {
+      assertArrayEquals(bytes("plain-value"), db.get(bytes("counter")));
+      assertEquals(5L, Utils.decodeLong(db.get(bytes("default-counter"))).get().longValue());
+      assertEquals(7L, Utils.decodeLong(db.get(META_CF, bytes("meta-counter"))).get().longValue());
+      assertNull(db.get(META_CF, bytes("counter")));
+    }
+  }
+
+  @Test
   void shouldRejectInvalidAddLongDeltaBeforePersistingBatch() throws Exception {
     File dbDir = new File(tempDir, "invalid-add-long-db");
 
