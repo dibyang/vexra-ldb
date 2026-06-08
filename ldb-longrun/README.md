@@ -233,6 +233,8 @@ work/<profile>/report/summary.properties
 建议发布前显式执行：
 
 - smoke：5 分钟 PASS。
+- plugin-sample：1 分钟 PASS，日志和报告包含 `PLUGIN list`、`PLUGIN stats` 和插件报告字段。
+- performance 和 performance-durable：各 3 分钟 PASS，归档 summary 吞吐指标和写入策略字段。
 - reopen：1 小时 PASS，且 `reopenChecks > 0`。
 - crash/recovery：30 分钟 PASS，且 `recoveryChecks > 0`。
 - fault injection：30 分钟，unexpected 结果为 0。

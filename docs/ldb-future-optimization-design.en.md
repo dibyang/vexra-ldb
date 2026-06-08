@@ -1,4 +1,4 @@
-﻿# LDB Future Performance and Reliability Evaluation
+# LDB Future Performance and Reliability Evaluation
 
 English | [中文](ldb-future-optimization-design.md)
 
@@ -14,7 +14,7 @@ LDB now has benchmark/soak entry points, compaction pressure regression tests, a
 
 ## Non-Goals
 
-- This document records the design boundaries for group commit, incremental backup, and range-delete follow-up work. The minimal group commit, minimal incremental backup, long compaction soak entry point, and benchmark report output have landed in `0.3.0-SNAPSHOT`.
+- This document records the design boundaries for group commit, incremental backup, and range-delete follow-up work. The minimal group commit, minimal incremental backup, long compaction soak entry point, and benchmark report output have landed in `0.4.0`.
 - It does not introduce RocksDB JNI, RocksJava, or external storage services.
 - It does not change the current compatibility behavior of `LDBFactory.createBackup/restoreBackup`, `LDB#checkpoint`, or `LdbWriteBatch.deleteRange`.
 

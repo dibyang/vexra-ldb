@@ -346,6 +346,8 @@ bin/longrun watch -c performance-durable
 Recommended explicit release runs:
 
 - smoke: 5 minutes PASS.
+- plugin-sample: 1 minute PASS with `PLUGIN list`, `PLUGIN stats`, and plugin report fields.
+- performance and performance-durable: 3 minutes PASS each, with summary throughput fields and write-strategy fields archived.
 - reopen: 1 hour PASS with `reopenChecks > 0`.
 - crash/recovery: 30 minutes PASS with `recoveryChecks > 0`.
 - fault injection: 30 minutes with zero unexpected results.

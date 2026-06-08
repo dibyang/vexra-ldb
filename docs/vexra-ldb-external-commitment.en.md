@@ -1,16 +1,16 @@
-﻿# vexra-ldb External Commitment for LDB consumers and Plugin Extension Developers
+# vexra-ldb External Commitment for LDB consumers and Plugin Extension Developers
 
 English | [中文](vexra-ldb-external-commitment.md)
 
 ## Background
 
-LDB consumers depend on `vexra-ldb` as an embedded persistence component. This document records `vexra-ldb` external commitments and usage boundaries for LDB consumers. It captures the existing or expected `vexra-ldb:0.3.0` behaviors that LDB consumers rely on, so future LDB upgrades, plugin changes, checkpoint/restore changes, and longrun validation have explicit boundaries.
+LDB consumers depend on `vexra-ldb` as an embedded persistence component. This document records `vexra-ldb` external commitments and usage boundaries for LDB consumers. It captures the `vexra-ldb:0.4.0` release commitments that LDB consumers rely on, including upgrade expectations from `0.3.0`, so future LDB upgrades, plugin changes, checkpoint/restore changes, and longrun validation have explicit boundaries.
 
 ## Goals
 
 - Capture LDB consumers' minimum dependencies on column families, checkpoint/restore, DbStore semantics, and version upgrades.
 - Separate public contracts that LDB consumers may rely on from LDB internal implementation details.
-- Define the minimum acceptance matrix for LDB consumers' dependency on `vexra-ldb:0.3.0`.
+- Define the minimum acceptance matrix for LDB consumers' dependency on `vexra-ldb:0.4.0`.
 
 ## Scope Boundary and Non-Goals
 
@@ -25,7 +25,7 @@ LDB consumers depend on `vexra-ldb` as an embedded persistence component. This d
 | --- | --- | --- |
 | Java API | Public APIs such as `LDB`, `Options`, `LdbWriteBatch`, `ReadOptions`, `WriteOptions`, and `LdbColumnFamily` | Internal classes under `net.xdob.vexra.ldb.impl` |
 | Storage behavior | Public semantics of open, write, get, scan, checkpoint, backup, restore, and repair | WAL/SST internal encoding and file numbers |
-| Compatibility | `0.3.0` public APIs and ability to open existing on-disk data | Fixed property field ordering and internal thread names |
+| Compatibility | `0.4.0` public APIs and ability to open existing `0.3.0` on-disk data | Fixed property field ordering and internal thread names |
 | Plugins | Trusted internal plugin hook lifecycle and failure semantics | Third-party plugin security sandboxing |
 
 ## Column-Family Registration
@@ -126,7 +126,7 @@ LDB consumers should not rely on:
 - Property string field ordering.
 - Internal thread-pool names, log messages, or exact warning text.
 
-## Minimum Acceptance Matrix for `vexra-ldb:0.3.0`
+## Minimum Acceptance Matrix for `vexra-ldb:0.4.0`
 
 | ID | Area | Acceptance item | Minimum pass criteria |
 | --- | --- | --- | --- |
@@ -196,7 +196,7 @@ The following table records the implementation status of each public commitment 
 | DbStore batch atomicity and failure behavior | Implemented | Cross-key and cross-column-family batches are committed as one write; `beforeWrite` rejection, invalid `addLong`, and other pre-write failures do not write WAL, advance sequence, or apply MemTable changes. |
 | commit / rollback boundaries | Implemented | LDB explicitly commits only successful writes; discarding an uncommitted batch is the rollback boundary, and successfully returned writes do not provide transactional rollback. |
 | LDB upgrade and config compatibility boundaries | Implemented | Public APIs, existing data opening, config defaults, and plugin default methods remain compatible within this document's boundary; breaking changes must be documented in release notes and acceptance gates. |
-| Minimum acceptance matrix for `vexra-ldb:0.3.0` | Implemented | smoke/crash/performance and core semantics have executable baseline checks. |
+| Minimum acceptance matrix for `vexra-ldb:0.4.0` | Implemented | smoke/crash/performance, plugin, upgrade, and core semantics have executable baseline checks. |
 | Plugin lifecycle constraints | Implemented | `configure`, `beforeWrite`, `afterWrite`, `beforeCheckpoint`, `afterCheckpoint`, and `close` ordering, failure policies, sync/async boundaries, and stats properties are part of the public constraint set. |
 
 ## Resolved Decisions

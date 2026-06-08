@@ -9,7 +9,14 @@
 1. 确认工作区干净。
 2. 更新 `CHANGELOG.md`，把 `Unreleased` 内容归档到目标版本。
 3. 确认 README、设计文档和 API 文档与代码一致。
-4. 运行完整测试：
+4. 确认外部承诺和升级门禁：
+
+- `docs/vexra-ldb-external-commitment.md`
+- `docs/ldb-plugin-docs-index.md`
+- `docs/ldb-plugin-roadmap.md`
+- `ldb-longrun/README.md`
+
+5. 运行完整测试：
 
 ```bash
 ./gradlew clean test
@@ -21,11 +28,23 @@ Windows PowerShell:
 .\gradlew.bat clean test
 ```
 
-5. 生成本地发布产物：
+6. 生成本地发布产物：
 
 ```bash
 ./gradlew clean publishToMavenLocal
 ```
+
+## 0.4.0 发布前验证记录
+
+- 目标版本：`0.4.0`。
+- 当前开发基线：`gradle.properties` 保持 `version=0.4.0-SNAPSHOT`；正式发布流程由 Gradle release 插件切换为 `0.4.0`。
+- 变更记录：`CHANGELOG.md` 已将本轮发布内容归档到 `0.4.0`。
+- 主要发布主题：插件 classloader 隔离、插件兼容性 testkit、capability enforcement 强化、插件运行资源治理、longrun 插件集成、运行时列族、group commit、增量备份、repair plan 和观测/报告增强。
+- 插件聚焦验证：已在 Windows PowerShell 执行 `.\gradlew.bat test --tests "*LdbPluginTest" --tests "*LongRunPluginResolverTest" --tests "*LongRunConfigTest" --tests "*SmokeRunnerTest" --tests "*ReportAnalyzerTest"`，结果通过。
+- 正式发布前仍需执行完整门禁：`.\gradlew.bat clean test`。
+- 正式发布前仍需执行本地发布门禁：`.\gradlew.bat clean publishToMavenLocal`。
+- 升级兼容门禁：发布前验证可打开 `vexra-ldb:0.3.0` 创建的数据目录，或在 release note 中明确迁移错误和处理方式。
+- longrun 发布门禁：至少执行文档化的 smoke/performance/plugin profile，并按 `ldb-longrun/README.md` 归档报告。
 
 ## 0.2.0 发布前验证记录
 

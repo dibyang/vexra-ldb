@@ -94,12 +94,15 @@ The command-line entry point is `net.xdob.vexra.ldb.tool.LdbTool`. Current comma
 ldb check <db>
 ldb properties <db> [property...]
 ldb repair <db>
+ldb repair-plan <db>
 ldb backup <db> <backupRoot>
+ldb incremental-backup <db> <backupRoot>
+ldb check-backup <backupDir>
 ldb restore <backupDir> <targetDir>
 ldb checkpoint <db> <targetDir>
 ```
 
-Commands primarily output JSON so scripts and tests can parse them. `check` and `properties` are read-only diagnostics commands. `repair`, `backup`, `restore`, and `checkpoint` create file-system side effects, so callers should confirm target directories and backup strategy before running them.
+Commands primarily output JSON so scripts and tests can parse them. `check`, `properties`, `repair-plan`, and `check-backup` are read-only diagnostics commands. `repair`, `backup`, `incremental-backup`, `restore`, and `checkpoint` create file-system side effects, so callers should confirm target directories and backup strategy before running them.
 
 ## Common Diagnostic Properties
 
@@ -113,8 +116,11 @@ Commands primarily output JSON so scripts and tests can parse them. `check` and 
 - `ldb.totalBytes`
 - `ldb.compactionStats`
 - `ldb.writeStallStats`
+- `ldb.groupCommitStats`
 - `ldb.plugins`
 - `ldb.pluginStats`
+- `ldb.plugin.executionPolicy`
+- `ldb.plugin.asyncStats`
 - `ldb.snapshotCursorStats`
 - `ldb.api.compatibility`
 - `ldb.api.supportedFeatures`
@@ -124,7 +130,8 @@ Commands primarily output JSON so scripts and tests can parse them. `check` and 
 
 - The `deleteRange` API exists, but complete range tombstone read/write semantics remain a focused design topic. See `docs/ldb-range-delete-design.md`.
 - The current implementation still uses a global WAL; cross-column-family batches rely on global sequence ordering for recovery.
-- Runtime create/drop column family, MergeOperator, PrefixExtractor, and full RocksDB CLI compatibility are not current goals.
+- Runtime column-family list/create/empty-drop is supported; non-empty drop, column-family rename, MergeOperator, PrefixExtractor, transactions, TTL, custom Env, and full RocksDB CLI compatibility remain explicit non-goals or ecosystem gaps.
+- Plugins are trusted in-process extensions. External longrun plugin directories use a managed classloader for dependency isolation, but this is not a cross-process security sandbox.
 - Changes involving disk format, recovery semantics, state machines, or tool side effects must update design documents first and include compatibility and rollback notes.
 
 ## Documents
@@ -140,6 +147,8 @@ Commands primarily output JSON so scripts and tests can parse them. `check` and 
 - `docs/ldb-range-delete-design.md`: range delete design.
 - `docs/ldb-api-compatibility-design.md`: API compatibility and migration design.
 - `docs/ldb-plugin-design.md`: plugin capability enhancement design.
+- `docs/ldb-plugin-docs-index.md`: plugin documentation entry point.
+- `docs/vexra-ldb-external-commitment.md`: external commitments and release acceptance boundaries.
 - `docs/ldb-future-optimization-design.md`: future performance and reliability evaluation.
 
 ## License

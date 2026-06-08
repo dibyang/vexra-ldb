@@ -1,4 +1,4 @@
-﻿# LDB 后续性能与可靠性专项评估
+# LDB 后续性能与可靠性专项评估
 
 [English](ldb-future-optimization-design.en.md) | 中文
 
@@ -14,7 +14,7 @@
 
 ## 非目标
 
-- 本文档记录 group commit、增量备份和 range delete 后续工作的设计边界；其中 group commit 最小实现、增量备份最小实现、compaction 长压测入口和 benchmark 报告输出已在 `0.3.0-SNAPSHOT` 落地。
+- 本文档记录 group commit、增量备份和 range delete 后续工作的设计边界；其中 group commit 最小实现、增量备份最小实现、compaction 长压测入口和 benchmark 报告输出已在 `0.4.0` 落地。
 - 不引入 RocksDB JNI、RocksJava 或外部存储服务。
 - 不改变现有 `LDBFactory.createBackup/restoreBackup`、`LDB#checkpoint` 和 `LdbWriteBatch.deleteRange` 的当前兼容行为。
 

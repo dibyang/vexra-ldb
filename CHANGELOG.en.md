@@ -6,28 +6,37 @@ This document records important changes for `vexra-ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.4.0] - 2026-06-08
+
 ### Added
 
 - Added a disabled-by-default minimal group commit implementation with `Options.groupCommitEnabled`, `groupCommitMaxDelayNanos`, `groupCommitMaxBatchBytes`, and `ldb.groupCommitStats`.
-- Added longrun reporting for write-strategy comparability: `workloadSyncWrites`, group commit settings, and plugin async settings are now persisted in `state/run.properties` and copied into `report/summary.properties`.
+- Added longrun reporting for write-strategy comparability: `workloadSyncWrites`, group commit settings, plugin async settings, and plugin callback budget settings are persisted in `state/run.properties` and copied into `report/summary.properties`.
 - Added `LDBFactory.createIncrementalBackup` and `checkBackup`, with `BACKUP-MANIFEST.json` recording copied and reused files while preferentially reusing SST files from the previous backup.
-- Added a long compaction soak regression and benchmark properties report output so release preparation can retain local performance evidence.
+- Added `LDBFactory.planRepair` and `ldb repair-plan <db>` dry-run entry points that output a repair plan without modifying the database directory.
 - Added operation latency histogram properties, `ldb.blockCacheStats`, and `incremental-backup`/`check-backup` tool commands.
 - Added minimal runtime column-family `list/create/drop-empty` support and a `COLUMN-FAMILIES` registry that backup, checkpoint, check, and repair carry and validate.
-- Added Chinese and English column-family lifecycle design documents plus a corruption matrix for corrupt registry, missing registry, bad CURRENT, bad backup registry, and runtime-CF WAL-only repair.
-- Added `LDBFactory.planRepair` and `ldb repair-plan <db>` dry-run entry points that output a repair plan without modifying the database directory.
+- Added Chinese and English column-family lifecycle design documents plus corruption matrices for registry, CURRENT, backup registry, and runtime-CF WAL-only repair scenarios.
 - Added `LdbPluginCompatibility` as a lightweight provider/plugin compatibility testkit.
 - Added `ldb.plugin.maxTotalCallbackMillis` to govern cumulative plugin callback cost per plugin.
 - Added `LdbPlugin.unwrap()` as a default wrapper cooperation point for managed plugin wrappers.
+- Added longrun plugin loading by config, provider discovery, version-range checks, external plugin directory discovery, diagnostic plugin, and the `sample-audit` example plugin/profile.
 
 ### Changed
 
-- Updated the Chinese and English performance/reliability, project design, and API compatibility documents to mark the completed P1 scope and remaining limits.
+- External longrun plugin providers now use a managed child-first independent classloader that is released when plugins close, while the LDB API package remains parent-loaded.
+- Plugin capability enforcement now also guards metadata reads, write-batch creation through plugin context, and checkpoint hooks.
 - `Options.cacheBlocks(false)` now truly disables BlockCache while keeping an observable disabled state.
 - `ldb.api.supportedFeatures` now marks runtime column-family list/create/drop-empty support, while `ldb.api.unsupportedFeatures` keeps non-empty drop and rename explicit.
 - Added `ldb.api.ecosystemGaps` to explain blocking reasons for MergeOperator, PrefixExtractor, transactions, TTL, custom Env, non-empty column-family drop/rename, and related ecosystem gaps.
-- External longrun plugin providers now use a managed independent classloader that is released when plugins close.
-- Plugin capability enforcement now also guards metadata reads, write-batch creation through plugin context, and checkpoint hooks.
+- Updated the Chinese and English performance/reliability, project design, API compatibility, plugin, and external-commitment documents for the 0.4.0 capability set.
+
+### Verification
+
+- Focused plugin release verification passed with `./gradlew.bat test --tests "*LdbPluginTest" --tests "*LongRunPluginResolverTest" --tests "*LongRunConfigTest" --tests "*SmokeRunnerTest" --tests "*ReportAnalyzerTest"`.
+- Full release verification remains required before publishing: `./gradlew.bat clean test` and `./gradlew.bat clean publishToMavenLocal`.
 
 ## [0.2.0] - 2026-06-01
 

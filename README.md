@@ -94,12 +94,15 @@ try (LDB db = LDBFactory.factory.open(new File("data/cf.ldb"), options)) {
 ldb check <db>
 ldb properties <db> [property...]
 ldb repair <db>
+ldb repair-plan <db>
 ldb backup <db> <backupRoot>
+ldb incremental-backup <db> <backupRoot>
+ldb check-backup <backupDir>
 ldb restore <backupDir> <targetDir>
 ldb checkpoint <db> <targetDir>
 ```
 
-命令输出以 JSON 为主，便于脚本和测试解析。`check`、`properties` 是只读诊断命令；`repair`、`backup`、`restore`、`checkpoint` 会产生文件副作用，使用前应确认目标目录和备份策略。
+命令输出以 JSON 为主，便于脚本和测试解析。`check`、`properties`、`repair-plan`、`check-backup` 是只读诊断命令；`repair`、`backup`、`incremental-backup`、`restore`、`checkpoint` 会产生文件副作用，使用前应确认目标目录和备份策略。
 
 ## 常用诊断属性
 
@@ -113,8 +116,11 @@ ldb checkpoint <db> <targetDir>
 - `ldb.totalBytes`
 - `ldb.compactionStats`
 - `ldb.writeStallStats`
+- `ldb.groupCommitStats`
 - `ldb.plugins`
 - `ldb.pluginStats`
+- `ldb.plugin.executionPolicy`
+- `ldb.plugin.asyncStats`
 - `ldb.snapshotCursorStats`
 - `ldb.api.compatibility`
 - `ldb.api.supportedFeatures`
@@ -124,7 +130,8 @@ ldb checkpoint <db> <targetDir>
 
 - `deleteRange` 接口存在，但 range tombstone 的完整读写语义仍是独立设计主题，详见 `docs/ldb-range-delete-design.md`。
 - 当前仍采用全局 WAL，跨列族 batch 依赖全局 sequence 保持恢复顺序。
-- 运行时 create/drop column family、MergeOperator、PrefixExtractor、完整 RocksDB CLI 兼容不是当前实现目标。
+- 运行时列族 list/create/empty-drop 已支持；非空 drop、列族 rename、MergeOperator、PrefixExtractor、transactions、TTL、custom Env 和完整 RocksDB CLI 兼容仍是明确非目标或生态差距。
+- 插件是可信进程内扩展。longrun 外部插件目录使用托管 classloader 做依赖隔离，但这不是跨进程安全沙箱。
 - 涉及磁盘格式、恢复语义、状态机或工具副作用的改动，需要先更新设计文档并补充兼容性和回滚说明。
 
 ## 文档
@@ -140,6 +147,8 @@ ldb checkpoint <db> <targetDir>
 - `docs/ldb-range-delete-design.md`：range delete 设计。
 - `docs/ldb-api-compatibility-design.md`：API 兼容与迁移设计。
 - `docs/ldb-plugin-design.md`：插件能力增强设计。
+- `docs/ldb-plugin-docs-index.md`：插件化文档入口。
+- `docs/vexra-ldb-external-commitment.md`：对外承诺和发布验收边界。
 - `docs/ldb-future-optimization-design.md`：后续性能与可靠性专项评估。
 
 ## License

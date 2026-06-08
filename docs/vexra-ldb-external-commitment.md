@@ -4,13 +4,13 @@
 
 ## 背景
 
-使用方当前依赖 `vexra-ldb` 作为嵌入式持久化组件。该文档用于记录使用方对 `vexra-ldb:0.3.0` 的对外可见承诺与边界，用于明确 LDB 升级、插件化、checkpoint/restore 和 longrun 验收边界。
+使用方当前依赖 `vexra-ldb` 作为嵌入式持久化组件。该文档用于记录使用方对 `vexra-ldb:0.4.0` 的对外可见承诺与边界，并保留从 `0.3.0` 升级的验收要求，用于明确 LDB 升级、插件化、checkpoint/restore 和 longrun 验收边界。
 
 ## 目标
 
 - 固化使用方对 column family、checkpoint/restore、DbStore 语义和版本升级的最低依赖。
 - 明确哪些行为属于使用方可依赖的公开契约，哪些属于 LDB 内部实现细节。
-- 给出使用方依赖 `vexra-ldb:0.3.0` 的最低验收矩阵。
+- 给出使用方依赖 `vexra-ldb:0.4.0` 的最低验收矩阵。
 
 ## 非目标
 
@@ -25,7 +25,7 @@
 | --- | --- | --- |
 | Java API | `LDB`、`Options`、`LdbWriteBatch`、`ReadOptions`、`WriteOptions`、`LdbColumnFamily` 等公开 API | `net.xdob.vexra.ldb.impl` 内部类 |
 | 存储行为 | open、write、get、scan、checkpoint、backup、restore、repair 的公开语义 | WAL/SST 内部编码和文件编号 |
-| 兼容性 | `0.3.0` 公开 API 和已有磁盘数据可打开 | 未公开 property 字段顺序和内部线程名 |
+| 兼容性 | `0.4.0` 公开 API 和已有 `0.3.0` 磁盘数据可打开 | 未公开 property 字段顺序和内部线程名 |
 | 插件 | 可信内部插件 hook 的生命周期和失败语义 | 第三方插件安全沙箱 |
 
 ## Column family 注册能力
@@ -126,7 +126,7 @@
 - property 字符串字段顺序。
 - 内部线程池名称、日志文案和 warning 精确文本。
 
-## `vexra-ldb:0.3.0` 最低验收矩阵
+## `vexra-ldb:0.4.0` 最低验收矩阵
 
 | 编号 | 领域 | 验收项 | 最低通过标准 |
 | --- | --- | --- | --- |
@@ -196,7 +196,7 @@
 | DbStore batch 原子性与失败行为 | 已落实 | 跨 key、跨列族 batch 按一次 write 提交；beforeWrite 拒绝、非法 addLong 等写前失败不写 WAL、不推进 sequence、不应用 MemTable。 |
 | commit / rollback 语义边界 | 已落实 | LDB 明确只承诺 write 成功后的提交语义；未提交 batch 由调用方丢弃即 rollback，已成功 write 不提供事务级回滚。 |
 | 版本升级与配置兼容边界 | 已落实 | 公开 API、磁盘数据打开、配置默认值和插件 default 方法按本文边界保持兼容；破坏性变化必须进入 release note 和验收矩阵。 |
-| `vexra-ldb:0.3.0` 最低验收矩阵 | 已落实 | smoke/crash/performance 与基础语义链路已有可复现实测。 |
+| `vexra-ldb:0.4.0` 最低验收矩阵 | 已落实 | smoke/crash/performance、插件、升级和基础语义链路已有可复现实测。 |
 | 长期插件生命周期约束 | 已落实 | 插件 configure、beforeWrite、afterWrite、beforeCheckpoint、afterCheckpoint、close 的顺序、失败策略、同步/异步边界和统计属性已纳入公开约束。 |
 
 ## 已处理决议
