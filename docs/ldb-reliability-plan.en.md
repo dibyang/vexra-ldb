@@ -292,6 +292,21 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
     - 17.4 increment: add `checkpoint <db> <targetDir>`, opening the source DB normally and calling the instance-level `checkpoint`; on success it prints `CHECKPOINT-REPORT.json`. Non-empty target directories or checkpoint verification failures return internal-error exit code `4`.
     - 17.5 increment: add `incremental-backup <db> <backupRoot>` and `check-backup <backupDir>`, covering complete-directory incremental backup publishing and read-only backup validation.
 
+13. Phase 18: Production release gates and operational hardening.
+    - Design and implement a formal `releaseGate` that aggregates regular tests, old-version upgrade fixtures, backup object-store validation, a lightweight longrun profile, and report archiving.
+    - Fix `0.4.0` and later historical-version fixtures, verifying that the new version can open, read, check, and backup/restore them, or emits a clear migration error when incompatible.
+    - Complete the backup object-store corruption matrix covering missing objects, wrong reference counts, orphan objects, corrupt manifests, and restore rollback.
+    - Complete column-family tombstone long-lifecycle stress covering drop/rename across reopen, compaction, backup, repair, snapshot cursor, and physical-GC proof.
+    - Define the production-gate longrun profile and benchmark archival rules, making `summary.json`, `operations.csv`, `failures.json`, and property snapshots release evidence.
+    - Add operations runbooks covering production startup, backup, restore, upgrade, check, repair, pre-release gates, and incident-handling order.
+    - 18.1 increment: old-version upgrade compatibility fixtures.
+    - 18.2 increment: production-grade `releaseGate` aggregate task.
+    - 18.3 increment: backup object-store corruption matrix.
+    - 18.4 increment: column-family tombstone long stress and physical-GC proof.
+    - 18.5 increment: production-gate longrun profile.
+    - 18.6 increment: operations manual and incident runbook.
+    - Design baseline: `docs/ldb-production-readiness-plan.md` and its English copy.
+
 ### Near-Term Priority
 
-The new 8.5, 10.5, and 12.5 increments now have minimal closed loops. The next priority should move to stricter release gates: old-version upgrade samples, long-running compaction/backup soak, object-store corruption injection, and column-family tombstone physical-GC stress tests. `range delete`, MergeOperator, PrefixExtractor, and similar work still affect disk format or read/write semantics and must continue through separate focused design reviews.
+The new 8.5, 10.5, 12.5, and 17.x increments now have minimal closed loops. The next priority moves into Phase 18: finish old-version upgrade fixtures and `releaseGate` first, then proceed with backup object-store corruption injection, column-family tombstone long stress, the production-gate longrun profile, and operations runbooks. `range delete`, MergeOperator, PrefixExtractor, and similar work still affect disk format or read/write semantics and must continue through separate focused design reviews.

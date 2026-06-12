@@ -391,3 +391,4 @@ sequenceDiagram
 | 3.1 | 补齐非空列族 drop/rename/tombstone、Backup Engine 引用计数、长期压测报告框架设计 | `ldb-column-family-tombstone-design.*`、`ldb-backup-engine-design.*`、`ldb-longrun-benchmark-design.*` 均已落档 |
 | 4 | 增强工具命令和 JSON 报告稳定性 | 工具测试覆盖退出码和输出 |
 | 5 | 增加长时间 soak、故障注入和兼容性测试 | 覆盖恢复、compaction、snapshot 和备份恢复 |
+| 6 | 生产级发布门禁与运维硬化 | `ldb-production-readiness-plan.*` 落档，后续以 `releaseGate`、旧版本样本、损坏注入、longrun 和 Runbook 验收 |

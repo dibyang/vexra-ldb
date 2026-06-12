@@ -11,6 +11,7 @@
 - 新增非空列族 drop/rename/tombstone 中英文设计文档，明确列族逻辑删除、稳定 cfId、MANIFEST/注册表历史、回滚和兼容边界。
 - 新增 Backup Engine 共享对象仓库与引用计数中英文设计文档，规划对象复用、备份链 GC、dry-run 清理和发布状态机。
 - 新增长期压测与 benchmark 报告框架中英文设计文档，规划 workload 矩阵、机器可读报告、发布阈值和失败保留策略。
+- 新增生产级就绪计划中英文文档，规划旧版本升级样本、`releaseGate`、备份对象仓库损坏注入、列族 tombstone 长压测、production-gate longrun 和运维 Runbook。
 - 实现运行时列族非空 drop tombstone 与 rename 最小闭环，`ldb.api.supportedFeatures` 已标记对应能力。
 - 增强增量备份对象仓库，新增 `objects/`、`OBJECT-REFS.json` 和 `planPurgeBackups` dry-run 清理计划。
 - 增强 longrun benchmark 报告框架，新增 `summary.json`、`operations.csv`、`failures.json`、`properties-before.json`、`properties-after.json` 和显式 Gradle 任务入口。

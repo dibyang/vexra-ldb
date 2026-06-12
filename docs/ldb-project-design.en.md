@@ -391,3 +391,4 @@ Future changes should add coverage for:
 | 3.1 | Add designs for non-empty column-family drop/rename/tombstones, Backup Engine reference counts, and long-run benchmark reports | `ldb-column-family-tombstone-design.*`, `ldb-backup-engine-design.*`, and `ldb-longrun-benchmark-design.*` are documented |
 | 4 | Improve tool commands and JSON report stability | Tool tests cover exit codes and output |
 | 5 | Add longer soak, fault-injection, and compatibility tests | Recovery, compaction, snapshot, backup, and restore paths are covered |
+| 6 | Production release gates and operational hardening | `ldb-production-readiness-plan.*` is documented; follow-up acceptance uses `releaseGate`, old-version fixtures, corruption injection, longrun, and runbooks |

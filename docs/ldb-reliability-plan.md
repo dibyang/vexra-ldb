@@ -292,6 +292,21 @@
     - 17.4 增量：新增 `checkpoint <db> <targetDir>` 命令，正常打开源库并调用实例级 `checkpoint`，成功后输出 `CHECKPOINT-REPORT.json`；目标目录非空或 checkpoint 校验失败返回内部错误退出码 `4`。
     - 17.5 增量：新增 `incremental-backup <db> <backupRoot>` 和 `check-backup <backupDir>` 命令，覆盖完整目录形式的增量备份发布和只读备份校验。
 
+13. 第十八阶段：生产级发布门禁与运维硬化。
+    - 设计并实现面向正式发布的统一 `releaseGate`，聚合常规测试、旧版本升级样本、备份对象仓库校验、轻量 longrun profile 和报告归档。
+    - 固化 `0.4.0` 及后续历史版本样本库，验证新版本可以打开、读取、check、backup/restore，或在不兼容时给出清晰迁移错误。
+    - 补齐备份对象仓库损坏注入矩阵，覆盖缺失对象、错误引用计数、孤儿对象、损坏 manifest 和 restore 回滚。
+    - 补齐列族 tombstone 长生命周期压测，覆盖 drop/rename 后跨 reopen、compaction、backup、repair、snapshot cursor 与物理 GC 证明。
+    - 固化 production-gate longrun profile 和 benchmark 报告归档规则，把 `summary.json`、`operations.csv`、`failures.json` 和属性快照纳入发布证据。
+    - 补齐运维 Runbook，覆盖生产启动、备份、恢复、升级、check、repair、发布前门禁和故障处置顺序。
+    - 18.1 增量：旧版本升级兼容样本库。
+    - 18.2 增量：生产级 `releaseGate` 聚合任务。
+    - 18.3 增量：备份对象仓库损坏注入矩阵。
+    - 18.4 增量：列族 tombstone 长压测与物理 GC 证明。
+    - 18.5 增量：production-gate longrun profile。
+    - 18.6 增量：运维手册与故障处置 Runbook。
+    - 设计基线见 `docs/ldb-production-readiness-plan.md` 及英文副本。
+
 ### 近期优先级
 
-新增 8.5、10.5、12.5 已完成最小闭环。下一优先级建议转向更严格的 release gate：旧版本数据升级样本、长时间 compaction/backup soak、对象仓库损坏注入、列族 tombstone 物理 GC 压测。`range delete`、MergeOperator、PrefixExtractor 等仍会触及格式或读写语义，必须继续单独设计评审后推进。
+新增 8.5、10.5、12.5、17.x 已完成最小闭环。下一优先级进入第十八阶段：先完成旧版本升级样本和 `releaseGate`，再推进备份对象仓库损坏注入、列族 tombstone 长压测、production-gate longrun profile 和运维 Runbook。`range delete`、MergeOperator、PrefixExtractor 等仍会触及格式或读写语义，必须继续单独设计评审后推进。

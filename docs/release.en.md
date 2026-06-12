@@ -12,6 +12,7 @@ This document describes the release preparation and Maven publication flow for `
 4. Confirm external commitments and upgrade gates:
 
 - `docs/vexra-ldb-external-commitment.md`
+- `docs/ldb-production-readiness-plan.md`
 - `docs/ldb-plugin-docs-index.md`
 - `docs/ldb-plugin-roadmap.md`
 - `ldb-longrun/README.md`
@@ -45,6 +46,7 @@ Windows PowerShell:
 - Local publication gate still required before publishing: `.\gradlew.bat clean publishToMavenLocal`.
 - Upgrade compatibility gate: validate opening data created by `vexra-ldb:0.4.0` or document a clear migration error in the release note before publication.
 - Longrun release gate: run at least the documented smoke/performance/plugin profiles and keep report archives according to `ldb-longrun/README.md`.
+- Production release gate: complete 18.1-18.6 in `docs/ldb-production-readiness-plan.md`, then run `releaseGate`, old-database upgrade checks, backup corruption injection, column-family tombstone long stress, and the production-gate longrun profile before publishing a formal release.
 
 ## 0.2.0 Pre-Release Verification Record
 
