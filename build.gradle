@@ -10,6 +10,7 @@ buildscript {
 }
 
 import net.researchgate.release.GitAdapter
+import groovy.json.JsonOutput
 
 plugins {
   id 'java'
@@ -117,6 +118,76 @@ test {
   useJUnitPlatform()
 }
 
+def releaseGateReportDir = layout.buildDirectory.dir('reports/ldb-release-gate')
+
+tasks.register('releaseGateUnitTest', Test) {
+  group = 'verification'
+  description = 'Runs the regular unit test gate for formal release verification.'
+  useJUnitPlatform()
+  exclude '**/LdbUpgradeCompatibilityTest.class'
+  reports.junitXml.required = true
+  reports.html.required = true
+  ignoreFailures = true
+}
+
+tasks.register('upgradeCompatibilityTest', Test) {
+  group = 'verification'
+  description = 'Runs old-version upgrade compatibility fixtures as a hard release gate.'
+  useJUnitPlatform()
+  include '**/LdbUpgradeCompatibilityTest.class'
+  systemProperty 'ldb.upgrade.fixture.required', 'true'
+  reports.junitXml.required = true
+  reports.html.required = true
+  ignoreFailures = true
+}
+
+tasks.register('releaseGate') {
+  group = 'verification'
+  description = 'Runs production release gates and writes RELEASE-GATE-REPORT.json/md.'
+  dependsOn tasks.named('releaseGateUnitTest')
+  dependsOn tasks.named('upgradeCompatibilityTest')
+  dependsOn ':ldb-longrun:benchmarkReport'
+
+  doLast {
+    File reportDir = releaseGateReportDir.get().asFile
+    if (!reportDir.exists() && !reportDir.mkdirs()) {
+      throw new GradleException("Failed to create release gate report dir: ${reportDir}")
+    }
+    List<Map<String, Object>> gates = []
+    gates.add(collectJUnitGate('unitTest',
+        'gradlew :releaseGateUnitTest',
+        file("$buildDir/test-results/releaseGateUnitTest"),
+        file("$buildDir/reports/tests/releaseGateUnitTest")))
+    gates.add(collectJUnitGate('upgradeCompatibility',
+        'gradlew :upgradeCompatibilityTest',
+        file("$buildDir/test-results/upgradeCompatibilityTest"),
+        file("$buildDir/reports/tests/upgradeCompatibilityTest")))
+    gates.add(collectFileGate('longrunBenchmark',
+        'gradlew :ldb-longrun:benchmarkReport',
+        file("$rootDir/ldb-longrun/build/reports/ldb-longrun/benchmark-work/report/summary.json")))
+
+    boolean ok = gates.every { it.result == 'PASSED' }
+    Map<String, Object> report = [
+        version: project.version.toString(),
+        commit: gitCommitId(),
+        javaVersion: System.getProperty('java.version'),
+        startedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+        finishedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+        gates: gates,
+        artifacts: gates.collect { it.artifact }.findAll { it },
+        failures: gates.findAll { it.result != 'PASSED' }.collect { "${it.name}: ${it.failure}" },
+        result: ok ? 'PASSED' : 'FAILED'
+    ]
+    File json = new File(reportDir, 'RELEASE-GATE-REPORT.json')
+    json.text = JsonOutput.prettyPrint(JsonOutput.toJson(report)) + System.lineSeparator()
+    File markdown = new File(reportDir, 'RELEASE-GATE-REPORT.md')
+    markdown.text = releaseGateMarkdown(report)
+    if (!ok) {
+      throw new GradleException("Release gate failed; see ${json}")
+    }
+  }
+}
+
 //对于典型的 Java 项目，您可以添加一个javadocJar以及一个 sourceJar任务
 tasks.register('javadocJar', Jar) {
   archiveClassifier = 'javadoc'
@@ -221,4 +292,87 @@ publishing {
 // 将构建的包签名
 signing {
   sign publishing.publications.maven
+}
+
+private Map<String, Object> collectJUnitGate(String name, String command, File xmlDir, File htmlDir) {
+  int tests = 0
+  int failures = 0
+  int errors = 0
+  int skipped = 0
+  if (!xmlDir.isDirectory()) {
+    return [
+        name: name,
+        command: command,
+        result: 'FAILED',
+        tests: tests,
+        failures: failures,
+        errors: errors,
+        skipped: skipped,
+        artifact: htmlDir.absolutePath,
+        failure: "missing JUnit XML directory: ${xmlDir.absolutePath}"
+    ]
+  }
+  xmlDir.eachFileMatch(~/TEST-.*\.xml/) { File file ->
+    def suite = new XmlSlurper().parse(file)
+    tests += suite.@tests.toString().toInteger()
+    failures += suite.@failures.toString().toInteger()
+    errors += suite.@errors.toString().toInteger()
+    skipped += suite.@skipped.toString().toInteger()
+  }
+  boolean ok = tests > 0 && failures == 0 && errors == 0
+  return [
+      name: name,
+      command: command,
+      result: ok ? 'PASSED' : 'FAILED',
+      tests: tests,
+      failures: failures,
+      errors: errors,
+      skipped: skipped,
+      artifact: htmlDir.absolutePath,
+      failure: ok ? '' : "tests=${tests}, failures=${failures}, errors=${errors}, skipped=${skipped}"
+  ]
+}
+
+private Map<String, Object> collectFileGate(String name, String command, File requiredFile) {
+  boolean ok = requiredFile.isFile()
+  return [
+      name: name,
+      command: command,
+      result: ok ? 'PASSED' : 'FAILED',
+      artifact: requiredFile.absolutePath,
+      failure: ok ? '' : "missing required artifact: ${requiredFile.absolutePath}"
+  ]
+}
+
+private String gitCommitId() {
+  try {
+    ByteArrayOutputStream output = new ByteArrayOutputStream()
+    exec {
+      commandLine 'git', 'rev-parse', '--short', 'HEAD'
+      standardOutput = output
+      errorOutput = new ByteArrayOutputStream()
+      ignoreExitValue = true
+    }
+    String value = output.toString('UTF-8').trim()
+    return value.isEmpty() ? 'unknown' : value
+  } catch (Throwable ignored) {
+    return 'unknown'
+  }
+}
+
+private String releaseGateMarkdown(Map<String, Object> report) {
+  StringBuilder builder = new StringBuilder()
+  builder.append('# LDB Release Gate Report').append(System.lineSeparator()).append(System.lineSeparator())
+  builder.append("- result: `${report.result}`").append(System.lineSeparator())
+  builder.append("- version: `${report.version}`").append(System.lineSeparator())
+  builder.append("- commit: `${report.commit}`").append(System.lineSeparator())
+  builder.append("- javaVersion: `${report.javaVersion}`").append(System.lineSeparator()).append(System.lineSeparator())
+  builder.append('| Gate | Result | Artifact | Failure |').append(System.lineSeparator())
+  builder.append('| --- | --- | --- | --- |').append(System.lineSeparator())
+  report.gates.each { gate ->
+    builder.append("| `${gate.name}` | `${gate.result}` | `${gate.artifact ?: ''}` | `${gate.failure ?: ''}` |")
+        .append(System.lineSeparator())
+  }
+  builder.append(System.lineSeparator())
+  return builder.toString()
 }
