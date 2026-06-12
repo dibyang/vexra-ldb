@@ -1,0 +1,152 @@
+# LDB Operations Runbook
+
+English | [中文](operations.md)
+
+This document is for production-readiness validation and day-to-day operations of `vexra-ldb`. Exercise commands with file-system side effects on a copy, checkpoint, or backup first. In real incidents, preserve evidence before running repair.
+
+## Basic Principles
+
+- Stop further writes before checkpoint, backup, check, or repair.
+- `check`, `properties`, `check-backup`, and `repair-plan` are read-only diagnostics.
+- `repair`, `backup`, `incremental-backup`, `restore`, and `checkpoint` create file-system side effects. Confirm directories, permissions, and free disk space first.
+- Archive `BACKUP-REPORT.json`, `RESTORE-REPORT.json`, `BACKUP-MANIFEST.json`, `OBJECT-REFS.json`, and longrun/release-gate reports.
+- Do not delete failed samples when old-version upgrades, column-family tombstones, object-store corruption, or longrun failures are involved.
+
+## Pre-Release Gates
+
+Run at least:
+
+```powershell
+.\gradlew.bat releaseGate
+.\gradlew.bat clean publishToMavenLocal
+```
+
+`releaseGate` aggregates:
+
+- Regular unit tests.
+- The `0.4.0` old-version upgrade compatibility fixture.
+- The production-gate longrun profile.
+- `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.json` and a Markdown summary.
+
+Formal release candidates should also run a longer production-gate or soak:
+
+```powershell
+.\gradlew.bat :ldb-longrun:productionGateLongRun "-Pldb.longrun.durationMinutes=30"
+.\gradlew.bat :ldb-longrun:releaseSoakTest "-Pldb.longrun.durationMinutes=1440"
+```
+
+## Upgrade Flow
+
+1. Stop writes on the old version and create a backup or checkpoint.
+2. Run `check` with the new version on a copy.
+3. Open the copy with the new version and verify key data, column families, snapshot cursor, and business read paths.
+4. Run a backup/restore loop on the copy.
+5. Switch the real database only after validation passes. On failure, preserve the old database copy, `RELEASE-GATE-REPORT.json`, and check reports.
+
+The hard old-version compatibility gate is covered by `LdbUpgradeCompatibilityTest`. If `vexra-ldb-0.4.0.jar` is missing locally, install the formal 0.4.0 artifact into the local Maven cache first.
+
+## Backup
+
+Full backup:
+
+```text
+ldb backup <db> <backupRoot>
+```
+
+Incremental backup:
+
+```text
+ldb incremental-backup <db> <backupRoot>
+```
+
+Always validate after backup:
+
+```text
+ldb check-backup <backupDir>
+```
+
+Checkpoint:
+
+```text
+ldb checkpoint <db> <targetDir>
+```
+
+Notes:
+
+- Place `backupRoot` on a separate disk or mount when possible.
+- Incremental backups maintain `objects/` and `OBJECT-REFS.json`; run `planPurgeBackups` or the matching dry-run process before cleanup.
+- If the object store has missing objects, wrong reference counts, orphan objects, or a corrupt manifest, `check-backup` must fail and restore must not continue.
+
+## Restore
+
+Restore to an empty directory:
+
+```text
+ldb restore <backupDir> <targetDir>
+```
+
+Validate after restore:
+
+```text
+ldb check <targetDir>
+ldb properties <targetDir>
+```
+
+On restore failure:
+
+- Do not manually patch a partial target directory.
+- Preserve `RESTORE-REPORT.json`, the backup directory, and target-directory state.
+- If the target directory was not created, restore failed fast during validation. Fix the backup source first.
+
+## Check And Repair
+
+Read-only diagnostics:
+
+```text
+ldb check <db>
+ldb properties <db> [property...]
+ldb repair-plan <db>
+```
+
+Repair:
+
+```text
+ldb repair <db>
+```
+
+Recommended flow:
+
+1. Stop writes and preserve a snapshot of the original directory.
+2. Run `check` and `repair-plan`.
+3. Copy the original database to an isolated directory.
+4. Run `repair` on the isolated directory.
+5. Open the repaired directory and verify critical business data.
+6. Replace the real database or switch through business migration only after validation passes.
+
+## Column-Family Tombstones
+
+- Dropped cfIds must not be reused, even after physical data cleanup.
+- Dropped records in `COLUMN-FAMILIES` are part of recovery history and must not be edited out manually.
+- backup, restore, check, and repair must preserve and understand dropped records so historical MANIFEST/WAL entries are not misclassified as unknown column families.
+- If `Unknown column family id` appears, first verify whether `COLUMN-FAMILIES` is missing or edited.
+
+## Incident Order
+
+| Scenario | First action | Do not |
+| --- | --- | --- |
+| Open fails | Stop writes, copy the directory, run `check` | Repeatedly repair the original directory |
+| Backup validation fails | Preserve backup root, run `check-backup`, inspect `OBJECT-REFS.json` | Delete `objects/` or hand-edit ref counts |
+| Restore fails | Preserve `RESTORE-REPORT.json`, retry with an empty directory | Overwrite an existing target directory |
+| longrun fails | Archive workDir, `report/`, and logs | Delete the failed workDir before diagnosis |
+| Old-version upgrade fails | Preserve old DB copy and release-gate report | Write to the old DB with the new version |
+
+## Evidence To Archive
+
+- `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.json`
+- `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.md`
+- `ldb-longrun/build/reports/ldb-longrun/*/report/`
+- `BACKUP-REPORT.json`
+- `RESTORE-REPORT.json`
+- `BACKUP-MANIFEST.json`
+- `OBJECT-REFS.json`
+- `REPAIR-REPORT.json` or `repair-plan` output

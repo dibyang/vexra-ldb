@@ -12,6 +12,7 @@ This document records important changes for `vexra-ldb`. It follows the spirit o
 - Added Chinese and English Backup Engine design documents for shared object storage, reference counts, backup-chain GC, dry-run cleanup, and publication state management.
 - Added Chinese and English long-run stress and benchmark report design documents covering workload matrices, machine-readable reports, release thresholds, and failure preservation.
 - Added Chinese and English production readiness plan documents covering old-version upgrade fixtures, `releaseGate`, backup object-store corruption injection, column-family tombstone long stress, production-gate longrun, and operations runbooks.
+- Added Chinese and English operations runbooks covering release gates, upgrades, backup, restore, check/repair, column-family tombstones, and incident-handling order.
 - Implemented the minimal runtime non-empty column-family drop tombstone and rename loop, with the matching features exposed through `ldb.api.supportedFeatures`.
 - Enhanced incremental backup object storage with `objects/`, `OBJECT-REFS.json`, and `planPurgeBackups` dry-run cleanup planning.
 - Enhanced the longrun benchmark report framework with `summary.json`, `operations.csv`, `failures.json`, `properties-before.json`, `properties-after.json`, and explicit Gradle task entries.

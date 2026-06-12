@@ -141,6 +141,7 @@ ldb checkpoint <db> <targetDir>
 - `CODE_OF_CONDUCT.md`：社区行为准则，提供英文副本和中英切换。
 - `CHANGELOG.md`：版本变更记录，提供英文副本和中英切换。
 - `docs/release.md`：发布流程说明，提供英文副本和中英切换。
+- `docs/operations.md`：生产前验证、备份恢复、升级、check/repair 和故障处置 Runbook。
 - `docs/ldb-project-design.md`：项目整体设计文档。
 - `docs/ldb-project-design.en.md`：整体设计文档英文副本。
 - `docs/ldb-reliability-plan.md`：可靠性增强计划。

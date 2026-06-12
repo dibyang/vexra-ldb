@@ -13,6 +13,7 @@ This document describes the release preparation and Maven publication flow for `
 
 - `docs/vexra-ldb-external-commitment.md`
 - `docs/ldb-production-readiness-plan.md`
+- `docs/operations.md`
 - `docs/ldb-plugin-docs-index.md`
 - `docs/ldb-plugin-roadmap.md`
 - `ldb-longrun/README.md`
