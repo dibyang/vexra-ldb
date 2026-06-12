@@ -94,6 +94,18 @@ class ReportAnalyzerTest {
     assertEquals("7000", summary.get("ldbPluginMaxTotalCallbackMillis"));
     assertTrue(new File(workDir, "report/summary.md").isFile());
     assertTrue(new File(workDir, "report/summary.properties").isFile());
+    assertTrue(new File(workDir, "report/summary.json").isFile());
+    assertTrue(new File(workDir, "report/operations.csv").isFile());
+    assertTrue(new File(workDir, "report/failures.json").isFile());
+    assertTrue(new File(workDir, "report/properties-before.json").isFile());
+    assertTrue(new File(workDir, "report/properties-after.json").isFile());
+    String summaryJson = new String(Files.readAllBytes(new File(workDir, "report/summary.json").toPath()),
+        StandardCharsets.UTF_8);
+    assertTrue(summaryJson.contains("\"status\": \"PASS\""), summaryJson);
+    assertTrue(summaryJson.contains("\"operations\": \"40\""), summaryJson);
+    String propertiesBefore = new String(Files.readAllBytes(new File(workDir, "report/properties-before.json").toPath()),
+        StandardCharsets.UTF_8);
+    assertTrue(propertiesBefore.contains("\"workloadSyncWrites\": \"false\""), propertiesBefore);
   }
 
   @Test

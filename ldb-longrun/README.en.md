@@ -319,6 +319,11 @@ Normal completion generates:
 ```text
 work/<profile>/report/summary.md
 work/<profile>/report/summary.properties
+work/<profile>/report/summary.json
+work/<profile>/report/operations.csv
+work/<profile>/report/failures.json
+work/<profile>/report/properties-before.json
+work/<profile>/report/properties-after.json
 ```
 
 Manual re-analysis:
@@ -328,6 +333,14 @@ bin/longrun report --workDir work/smoke
 ```
 
 Core metrics include Operations, Commits, Reopen Checks, Recovery Checks, Avg/Min/Max Ops/s, P05/P50/P95 Ops/s, Throughput Drop Ratio, Final Size Bytes, Size Amplification, Reclamation Events, Fault Injection Events, Suspicious Log Lines, Failures, and Warnings.
+
+You can also run the short report and pre-release long-run entries through explicit Gradle tasks:
+
+```powershell
+.\gradlew.bat :ldb-longrun:benchmarkReport "-Pldb.longrun.duration=1m"
+.\gradlew.bat :ldb-longrun:longRunTest "-Pldb.longrun.durationMinutes=30"
+.\gradlew.bat :ldb-longrun:releaseSoakTest "-Pldb.longrun.durationMinutes=1440"
+```
 
 Run both performance profiles when comparing throughput:
 

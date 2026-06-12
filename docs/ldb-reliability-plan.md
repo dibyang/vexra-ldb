@@ -185,8 +185,8 @@
    - 不在本阶段引入列族级 WAL；如需优化 WAL 回收粒度，进入第十四阶段统一设计。
    - 8.3 增量：新增 `docs/ldb-column-family-lifecycle-design.md` 及英文副本，落地 `COLUMN-FAMILIES` 注册表和运行时 `list/create/drop-empty` 最小实现；backup、checkpoint、check 和 repair 已识别 runtime CF 注册表。
    - 8.4 增量：补充损坏注入矩阵，覆盖坏注册表、缺失注册表导致 runtime CF WAL 无法解释、CURRENT 指向缺失 MANIFEST、坏备份注册表拒绝 restore，以及 runtime CF WAL-only repair。
-   - 8.5 增量：新增 `docs/ldb-column-family-tombstone-design.md` 及英文副本，规划非空 drop、rename、稳定 cfId、逻辑 tombstone、MANIFEST/注册表历史、GC 边界和兼容回滚。
-   - 非空 drop、rename 和列族迁移 tombstone 已进入专项设计，后续实现前仍需先完成兼容性评审和测试矩阵。
+   - 8.5 增量：新增 `docs/ldb-column-family-tombstone-design.md` 及英文副本，并完成非空 drop tombstone 与 rename 最小实现；注册表保留 dropped 记录，列族 id 不复用，API 自描述标记对应能力。
+   - 列族迁移 tombstone 和更激进的物理 GC 仍需后续单独设计。
    - 测试：多列族 compact、未知列族失败、列族目录/元数据恢复。
 
 4. 第九阶段：Range Delete 设计与落地。
@@ -205,7 +205,7 @@
    - 10.2 修复：命中读压测暴露 MemTable 在无 range tombstone 时仍执行全表 tombstone 扫描，导致纯 MemTable 读随条目数线性退化；已改为单独维护 range tombstone 索引，普通 point get 直接走 skip-list seek。
    - 10.3 增量：补轻量反复 reopen/scan soak 回归，并把 write stall 语义接入观测面：Level-0 soft trigger 记录 slowdown delay，immutable MemTable 或 Level-0 stop trigger 记录 wait，暴露次数、累计耗时和触发阈值。
    - 10.4 增量：补充 operation latency histogram 和 `ldb.blockCacheStats`，暴露 BlockCache enabled/maxEntries/size/hits/misses/puts/evictions，并让 `Options.cacheBlocks(false)` 真正关闭缓存。
-   - 10.5 增量：新增 `docs/ldb-longrun-benchmark-design.md` 及英文副本，规划长期压测 workload 矩阵、`summary.json`/Markdown/CSV 报告、发布阈值、失败保留和低磁盘/高并发/crash-reopen 场景。
+   - 10.5 增量：新增 `docs/ldb-longrun-benchmark-design.md` 及英文副本，并完成 longrun 机器可读报告最小实现：`summary.json`、`operations.csv`、`failures.json`、`properties-before.json`、`properties-after.json`；新增 `benchmarkReport`、`longRunTest`、`releaseSoakTest` 显式 Gradle 任务。
 
 6. 第十一阶段：全库 verify/check。
    - 新增离线 verify/check 能力，扫描 MANIFEST、SST 和 WAL，输出文件级、block 级和序列号级校验报告。
@@ -224,7 +224,7 @@
    - 12.2 增量：新增 `LDBFactory.purgeOldBackups(root, keepLast)`，只清理已发布的 `backup-000001` 风格目录，保留最新 N 个版本并输出清理报告；共享文件引用计数仍留给后续增量。
    - 12.3 增量：新增 `LDBFactory.createIncrementalBackup/checkBackup`，发布完整可恢复目录，写入 `BACKUP-MANIFEST.json`，并优先通过硬链接复用上一备份中的同名同长度 SST 文件；共享对象仓库和引用计数清理仍为后续增强。
    - 12.4 增量：将增量备份和备份校验暴露到 `LdbTool incremental-backup` 与 `LdbTool check-backup`，复用 `BackupReport`/`CheckReport` JSON 输出和退出码语义。
-   - 12.5 增量：新增 `docs/ldb-backup-engine-design.md` 及英文副本，规划共享对象仓库、备份 manifest、引用计数缓存、发布状态机、dry-run 清理和对象级校验。
+   - 12.5 增量：新增 `docs/ldb-backup-engine-design.md` 及英文副本，并完成共享对象仓库与引用计数最小实现：备份根目录维护 `objects/` 和 `OBJECT-REFS.json`，`planPurgeBackups` 支持 dry-run 清理影响审计。
 
 8. 第十三阶段：Compaction 策略增强。
    - 增加可配置触发阈值、限速、取消和按列族评分能力，保留默认行为兼容现有调用方。
@@ -294,4 +294,4 @@
 
 ### 近期优先级
 
-优先顺序为：非空列族 drop/rename/tombstone 设计评审 -> Backup Engine 引用计数设计评审 -> 长期压测/benchmark 报告框架设计评审 -> 对应实现拆分。已落档的三份专项设计分别是 `docs/ldb-column-family-tombstone-design.md`、`docs/ldb-backup-engine-design.md` 和 `docs/ldb-longrun-benchmark-design.md`；后续代码实现应按这些文档先补测试矩阵，再推进最小实现。`range delete`、MergeOperator、PrefixExtractor 等仍会触及格式或读写语义，必须继续单独设计评审后推进。
+新增 8.5、10.5、12.5 已完成最小闭环。下一优先级建议转向更严格的 release gate：旧版本数据升级样本、长时间 compaction/backup soak、对象仓库损坏注入、列族 tombstone 物理 GC 压测。`range delete`、MergeOperator、PrefixExtractor 等仍会触及格式或读写语义，必须继续单独设计评审后推进。

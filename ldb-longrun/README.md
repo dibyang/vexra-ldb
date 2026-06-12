@@ -206,6 +206,11 @@ crash/recovery 模式主日志输出 `CRASH PROGRESS`，表示父进程按 `cras
 ```text
 work/<profile>/report/summary.md
 work/<profile>/report/summary.properties
+work/<profile>/report/summary.json
+work/<profile>/report/operations.csv
+work/<profile>/report/failures.json
+work/<profile>/report/properties-before.json
+work/<profile>/report/properties-after.json
 ```
 
 也可以手动重新分析：
@@ -215,6 +220,14 @@ work/<profile>/report/summary.properties
 ```
 
 核心指标包括 Operations、Commits、Reopen Checks、Recovery Checks、Avg/Min/Max Ops/s、P05/P50/P95 Ops/s、Throughput Drop Ratio、Final Size Bytes、Size Amplification、Reclamation Events、Fault Injection Events、Suspicious Log Lines、Failures 和 Warnings。
+
+也可以通过 Gradle 显式任务运行短报告或发布前长跑入口：
+
+```powershell
+.\gradlew.bat :ldb-longrun:benchmarkReport "-Pldb.longrun.duration=1m"
+.\gradlew.bat :ldb-longrun:longRunTest "-Pldb.longrun.durationMinutes=30"
+.\gradlew.bat :ldb-longrun:releaseSoakTest "-Pldb.longrun.durationMinutes=1440"
+```
 
 性能测试建议先区分两个口径：
 

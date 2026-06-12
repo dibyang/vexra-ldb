@@ -197,6 +197,25 @@ public final class ReportAnalyzer {
       }
     }
     try (PrintWriter out = new PrintWriter(new OutputStreamWriter(
+        new FileOutputStream(new File(reportDir, "summary.json")), StandardCharsets.UTF_8))) {
+      out.println("{");
+      int index = 0;
+      for (Map.Entry<String, String> entry : summary.values().entrySet()) {
+        if (index++ > 0) {
+          out.println(",");
+        }
+        out.print("  \"" + json(entry.getKey()) + "\": \"" + json(entry.getValue()) + "\"");
+      }
+      out.println();
+      out.println("}");
+    }
+    writeListJson(new File(reportDir, "failures.json"), "failures", failures, "warnings", warnings);
+    copyIfExists(new File(workDir, "metrics/ops.csv"), new File(reportDir, "operations.csv"));
+    writePropertiesJson(new File(reportDir, "properties-before.json"), new File(workDir, "state/run.properties"));
+    writePropertiesJson(new File(reportDir, "properties-after.json"),
+        new File(workDir, "state/resource.properties"),
+        new File(workDir, "state/plugin.properties"));
+    try (PrintWriter out = new PrintWriter(new OutputStreamWriter(
         new FileOutputStream(new File(reportDir, "summary.md")), StandardCharsets.UTF_8))) {
       out.println("# Longrun Summary");
       out.println();
@@ -218,6 +237,78 @@ public final class ReportAnalyzer {
         }
       }
     }
+  }
+
+  private static void writeListJson(File file, String firstName, List<String> first,
+                                    String secondName, List<String> second) throws IOException {
+    try (PrintWriter out = new PrintWriter(new OutputStreamWriter(
+        new FileOutputStream(file), StandardCharsets.UTF_8))) {
+      out.println("{");
+      out.print("  \"" + json(firstName) + "\": ");
+      writeJsonArray(out, first);
+      out.println(",");
+      out.print("  \"" + json(secondName) + "\": ");
+      writeJsonArray(out, second);
+      out.println();
+      out.println("}");
+    }
+  }
+
+  private static void writeJsonArray(PrintWriter out, List<String> values) {
+    out.print("[");
+    for (int i = 0; i < values.size(); i++) {
+      if (i > 0) {
+        out.print(", ");
+      }
+      out.print("\"" + json(values.get(i)) + "\"");
+    }
+    out.print("]");
+  }
+
+  private static void copyIfExists(File source, File target) throws IOException {
+    if (!source.isFile()) {
+      return;
+    }
+    java.nio.file.Files.copy(source.toPath(), target.toPath(),
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+  }
+
+  private static void writePropertiesJson(File target, File... sources) throws IOException {
+    java.util.Properties properties = new java.util.Properties();
+    for (File source : sources) {
+      if (!source.isFile()) {
+        continue;
+      }
+      try (java.io.FileInputStream in = new java.io.FileInputStream(source)) {
+        properties.load(in);
+      }
+    }
+    try (PrintWriter out = new PrintWriter(new OutputStreamWriter(
+        new FileOutputStream(target), StandardCharsets.UTF_8))) {
+      out.println("{");
+      List<String> names = new ArrayList<>(properties.stringPropertyNames());
+      Collections.sort(names);
+      for (int i = 0; i < names.size(); i++) {
+        String name = names.get(i);
+        out.print("  \"" + json(name) + "\": \"" + json(properties.getProperty(name)) + "\"");
+        if (i + 1 < names.size()) {
+          out.println(",");
+        } else {
+          out.println();
+        }
+      }
+      out.println("}");
+    }
+  }
+
+  private static String json(String value) {
+    if (value == null) {
+      return "";
+    }
+    return value.replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r");
   }
 
   private static String title(String key) {

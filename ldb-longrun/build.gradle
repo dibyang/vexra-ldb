@@ -81,6 +81,54 @@ test {
   useJUnitPlatform()
 }
 
+tasks.register('benchmarkReport', JavaExec) {
+  group = 'verification'
+  description = 'Runs a short longrun benchmark profile and writes machine-readable reports.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.LongRunMain'
+  def duration = providers.gradleProperty('ldb.longrun.durationMinutes')
+      .map { "${it}m" }
+      .orElse(providers.gradleProperty('ldb.longrun.duration').orElse('10s'))
+  def outputDir = providers.gradleProperty('ldb.longrun.outputDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-longrun/benchmark-work').map { it.asFile.path })
+  def seed = providers.gradleProperty('ldb.longrun.seed').orElse('20260613')
+  args 'run', '--config', 'performance', '--run.duration', duration.get(),
+      '--run.workDir', outputDir.get(), '--run.seed', seed.get()
+}
+
+tasks.register('longRunTest', JavaExec) {
+  group = 'verification'
+  description = 'Runs the explicit local long-run smoke profile; not part of default test.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.LongRunMain'
+  def duration = providers.gradleProperty('ldb.longrun.durationMinutes')
+      .map { "${it}m" }
+      .orElse(providers.gradleProperty('ldb.longrun.duration').orElse('30s'))
+  def outputDir = providers.gradleProperty('ldb.longrun.outputDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-longrun/longrun-work').map { it.asFile.path })
+  def seed = providers.gradleProperty('ldb.longrun.seed').orElse('20260613')
+  args 'run', '--config', 'smoke', '--run.duration', duration.get(),
+      '--run.workDir', outputDir.get(), '--run.seed', seed.get()
+}
+
+tasks.register('releaseSoakTest', JavaExec) {
+  group = 'verification'
+  description = 'Runs the explicit release soak profile; pass -Pldb.longrun.durationMinutes for formal gates.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.LongRunMain'
+  def duration = providers.gradleProperty('ldb.longrun.durationMinutes')
+      .map { "${it}m" }
+      .orElse(providers.gradleProperty('ldb.longrun.duration').orElse('5m'))
+  def outputDir = providers.gradleProperty('ldb.longrun.outputDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-longrun/release-soak-work').map { it.asFile.path })
+  def seed = providers.gradleProperty('ldb.longrun.seed').orElse('20260613')
+  args 'run', '--config', 'soak', '--run.duration', duration.get(),
+      '--run.workDir', outputDir.get(), '--run.seed', seed.get()
+}
+
 distributions {
   main {
     distributionBaseName = 'ldb-longrun'
