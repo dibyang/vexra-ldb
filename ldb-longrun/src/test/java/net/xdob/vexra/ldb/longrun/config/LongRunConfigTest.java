@@ -169,6 +169,20 @@ class LongRunConfigTest {
   }
 
   @Test
+  void loadsProductionGateProfile() throws Exception {
+    LongRunConfig config = LongRunConfig.load(new String[] {
+        "-c", "production-gate",
+        "--run.duration=1s"
+    });
+
+    assertEquals("production-gate", config.runName());
+    assertEquals(true, config.finalVerifyEnabled());
+    assertEquals(true, config.syncWrites());
+    assertEquals(true, config.ldbGroupCommitEnabled());
+    assertEquals(1000L, config.durationMillis());
+  }
+
+  @Test
   void loadsPerformanceProfilesWithDifferentDurabilityMode() throws Exception {
     LongRunConfig performance = LongRunConfig.load(new String[] {
         "-c", "performance"

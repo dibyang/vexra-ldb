@@ -251,6 +251,7 @@ Default profiles are shipped under `config/`:
 - `performance-read.properties`: 3-minute read-heavy small-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for read-path throughput.
 - `performance-large-value.properties`: 3-minute mixed large-value performance stress run with `workload.syncWrites=false` and `check.finalVerify=false` for large-value bandwidth and IO pressure.
 - `performance-durable.properties`: 3-minute durable performance stress run with `workload.syncWrites=true` and `check.finalVerify=false` for durable write/fsync cost.
+- `production-gate.properties`: release-gate profile with sync writes, group commit, final verification, and periodic reopen; the Gradle `productionGateLongRun` task can shorten or extend it.
 - `nightly.properties`: 12-hour nightly run by default.
 - `soak.properties`: 7-day soak by default, override with `--run.duration=30d` when needed.
 - `reopen.properties`: periodic close/open with `reopenChecks`.
@@ -339,6 +340,7 @@ You can also run the short report and pre-release long-run entries through expli
 ```powershell
 .\gradlew.bat :ldb-longrun:benchmarkReport "-Pldb.longrun.duration=1m"
 .\gradlew.bat :ldb-longrun:longRunTest "-Pldb.longrun.durationMinutes=30"
+.\gradlew.bat :ldb-longrun:productionGateLongRun "-Pldb.longrun.durationMinutes=30"
 .\gradlew.bat :ldb-longrun:releaseSoakTest "-Pldb.longrun.durationMinutes=1440"
 ```
 
@@ -361,6 +363,7 @@ Recommended explicit release runs:
 - smoke: 5 minutes PASS.
 - plugin-sample: 1 minute PASS with `PLUGIN list`, `PLUGIN stats`, and plugin report fields.
 - performance and performance-durable: 3 minutes PASS each, with summary throughput fields and write-strategy fields archived.
+- production-gate: at least 30 minutes PASS, with `summary.json`, `operations.csv`, `failures.json`, and before/after property snapshots archived. The root `releaseGate` runs a short production-gate profile by default.
 - reopen: 1 hour PASS with `reopenChecks > 0`.
 - crash/recovery: 30 minutes PASS with `recoveryChecks > 0`.
 - fault injection: 30 minutes with zero unexpected results.

@@ -146,7 +146,7 @@ tasks.register('releaseGate') {
   description = 'Runs production release gates and writes RELEASE-GATE-REPORT.json/md.'
   dependsOn tasks.named('releaseGateUnitTest')
   dependsOn tasks.named('upgradeCompatibilityTest')
-  dependsOn ':ldb-longrun:benchmarkReport'
+  dependsOn ':ldb-longrun:productionGateLongRun'
 
   doLast {
     File reportDir = releaseGateReportDir.get().asFile
@@ -162,9 +162,9 @@ tasks.register('releaseGate') {
         'gradlew :upgradeCompatibilityTest',
         file("$buildDir/test-results/upgradeCompatibilityTest"),
         file("$buildDir/reports/tests/upgradeCompatibilityTest")))
-    gates.add(collectFileGate('longrunBenchmark',
-        'gradlew :ldb-longrun:benchmarkReport',
-        file("$rootDir/ldb-longrun/build/reports/ldb-longrun/benchmark-work/report/summary.json")))
+    gates.add(collectFileGate('productionGateLongRun',
+        'gradlew :ldb-longrun:productionGateLongRun',
+        file("$rootDir/ldb-longrun/build/reports/ldb-longrun/production-gate-work/report/summary.json")))
 
     boolean ok = gates.every { it.result == 'PASSED' }
     Map<String, Object> report = [

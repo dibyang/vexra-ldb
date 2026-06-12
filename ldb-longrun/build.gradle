@@ -129,6 +129,22 @@ tasks.register('releaseSoakTest', JavaExec) {
       '--run.workDir', outputDir.get(), '--run.seed', seed.get()
 }
 
+tasks.register('productionGateLongRun', JavaExec) {
+  group = 'verification'
+  description = 'Runs the production-gate longrun profile and writes release-gate reports.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.LongRunMain'
+  def duration = providers.gradleProperty('ldb.longrun.durationMinutes')
+      .map { "${it}m" }
+      .orElse(providers.gradleProperty('ldb.longrun.duration').orElse('30s'))
+  def outputDir = providers.gradleProperty('ldb.longrun.outputDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-longrun/production-gate-work').map { it.asFile.path })
+  def seed = providers.gradleProperty('ldb.longrun.seed').orElse('20260613')
+  args 'run', '--config', 'production-gate', '--run.duration', duration.get(),
+      '--run.workDir', outputDir.get(), '--run.seed', seed.get()
+}
+
 distributions {
   main {
     distributionBaseName = 'ldb-longrun'

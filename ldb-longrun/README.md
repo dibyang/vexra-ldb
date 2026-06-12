@@ -123,6 +123,8 @@ bash ./install-completion.bash
 
 ## Profiles
 
+`production-gate.properties` 是发布门禁 profile，默认同步写、开启 group commit、启用最终一致性校验和定期 reopen；根项目 `releaseGate` 默认执行短时 production-gate，正式发布可通过 `-Pldb.longrun.durationMinutes=30` 或更长时间覆盖。
+
 默认 profile 位于发行包 `config/`：
 
 - `smoke.properties`：默认 5 分钟快速验证。
@@ -226,6 +228,7 @@ work/<profile>/report/properties-after.json
 ```powershell
 .\gradlew.bat :ldb-longrun:benchmarkReport "-Pldb.longrun.duration=1m"
 .\gradlew.bat :ldb-longrun:longRunTest "-Pldb.longrun.durationMinutes=30"
+.\gradlew.bat :ldb-longrun:productionGateLongRun "-Pldb.longrun.durationMinutes=30"
 .\gradlew.bat :ldb-longrun:releaseSoakTest "-Pldb.longrun.durationMinutes=1440"
 ```
 
