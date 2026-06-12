@@ -334,7 +334,7 @@ sequenceDiagram
 | Gradle | Use Gradle Wrapper and `java-library` |
 | Disk format | Keep LevelDB-style WAL, MANIFEST, SST, and CURRENT |
 | API | Preserve existing signatures; extend primarily through Options, properties, or tool commands |
-| Column families | Static registration before open; runtime lifecycle is not supported today |
+| Column families | Supports static registration before open plus runtime list/create/empty-drop; non-empty drop, rename, and tombstone migration continue through focused designs |
 | RocksDB | Provide partial behavior mapping and diagnostics, not full compatibility |
 | Read-only instance | Does not hold write lock or write the directory; suitable for diagnostics and properties command |
 
@@ -388,5 +388,6 @@ Future changes should add coverage for:
 | 1 | Add overall README and project design documents | Documents match current code behavior and boundaries |
 | 2 | Align completed work in the reliability plan | Tests and property names match documentation |
 | 3 | Complete focused designs for range delete, column-family lifecycle, and WAL lifecycle | Each focused design has Chinese and English copies |
+| 3.1 | Add designs for non-empty column-family drop/rename/tombstones, Backup Engine reference counts, and long-run benchmark reports | `ldb-column-family-tombstone-design.*`, `ldb-backup-engine-design.*`, and `ldb-longrun-benchmark-design.*` are documented |
 | 4 | Improve tool commands and JSON report stability | Tool tests cover exit codes and output |
 | 5 | Add longer soak, fault-injection, and compatibility tests | Recovery, compaction, snapshot, backup, and restore paths are covered |

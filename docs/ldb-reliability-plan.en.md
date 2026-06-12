@@ -185,7 +185,8 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - Do not introduce per-CF WAL in this phase; if finer WAL recycling is needed, design it together with Phase 14.
    - 8.3 Increment: added `docs/ldb-column-family-lifecycle-design.md` and the English copy, implemented the `COLUMN-FAMILIES` registry plus minimal runtime `list/create/drop-empty`; backup, checkpoint, check, and repair now recognize runtime-CF metadata.
    - 8.4 Increment: added a corruption-injection matrix covering corrupt registry, missing registry causing runtime-CF WAL resolution failure, CURRENT pointing to a missing MANIFEST, corrupt backup registry rejecting restore, and runtime-CF WAL-only repair.
-   - Non-empty drop, rename, and column-family migration tombstones require a later focused design.
+   - 8.5 Increment: added `docs/ldb-column-family-tombstone-design.md` and its English copy, planning non-empty drop, rename, stable cfId identity, logical tombstones, MANIFEST/registry history, GC boundaries, compatibility, and rollback.
+   - Non-empty drop, rename, and column-family migration tombstones are now covered by the focused design; implementation still requires compatibility review and a test matrix first.
    - Tests: multi-CF compaction, unknown-CF failure, and CF directory/metadata recovery.
 
 4. Phase 9: Design and implement range delete.
@@ -204,6 +205,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - 10.2 fix: hit-read stress testing showed that MemTable still scanned all entries for range tombstones even when no range tombstone existed, causing pure MemTable reads to degrade linearly; range tombstones now use a separate index so normal point reads go through skip-list seek only.
    - 10.3 increment: add a lightweight repeated-reopen/scan soak regression test and expose write-stall semantics: Level-0 soft triggers record slowdown delays, immutable MemTables or Level-0 stop triggers record waits, with counts, accumulated latency, and trigger thresholds available through properties.
    - 10.4 increment: add operation latency histograms and `ldb.blockCacheStats`, exposing BlockCache enabled/maxEntries/size/hits/misses/puts/evictions, and make `Options.cacheBlocks(false)` truly disable the cache.
+   - 10.5 increment: added `docs/ldb-longrun-benchmark-design.md` and its English copy, planning the long-run workload matrix, `summary.json`/Markdown/CSV reports, release thresholds, failure preservation, and low-disk/high-concurrency/crash-reopen scenarios.
 
 6. Phase 11: Add whole-DB verify/check.
    - Add offline verify/check support that scans MANIFEST, SST, and WAL files and emits file-level, block-level, and sequence-level reports.
@@ -222,6 +224,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - 12.2 increment: add `LDBFactory.purgeOldBackups(root, keepLast)`, only deleting published `backup-000001` style directories, retaining the newest N versions, and returning a cleanup report; shared-file reference counting remains in a later increment.
    - 12.3 increment: add `LDBFactory.createIncrementalBackup/checkBackup`, publish a complete restorable directory, write `BACKUP-MANIFEST.json`, and preferentially hard-link same-name same-length SST files from the previous backup; shared object storage and reference-count cleanup remain future enhancements.
    - 12.4 increment: expose incremental backup and backup validation through `LdbTool incremental-backup` and `LdbTool check-backup`, reusing `BackupReport`/`CheckReport` JSON output and exit-code semantics.
+   - 12.5 increment: added `docs/ldb-backup-engine-design.md` and its English copy, planning shared object storage, backup manifests, reference-count cache, publication states, dry-run cleanup, and object-level verification.
 
 8. Phase 13: Enhance compaction policy.
    - Add configurable trigger thresholds, rate limiting, cancellation, and per-CF scoring while preserving existing defaults.
@@ -291,4 +294,4 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
 
 ### Near-Term Priority
 
-The recommended order is `repair 6.2-6.4` -> `readOnly` -> per-CF compaction/diagnostics -> range-delete design -> stress testing and observability -> verify/check -> backup -> compaction/WAL/snapshot/API ecosystem. Basic `repair`, `readOnly`, and verify/check work does not require changing the existing disk format, making it suitable for near-term reliability improvements. `range delete`, runtime column-family lifecycle, MergeOperator, and similar changes affect disk format or read/write semantics and must go through separate design review before implementation.
+The recommended order is: review the non-empty column-family drop/rename/tombstone design -> review the Backup Engine reference-count design -> review the long-run benchmark report framework -> split the corresponding implementations. The three focused designs are now documented as `docs/ldb-column-family-tombstone-design.md`, `docs/ldb-backup-engine-design.md`, and `docs/ldb-longrun-benchmark-design.md`; follow-up code should add the test matrix first and then proceed with minimal implementations. `range delete`, MergeOperator, PrefixExtractor, and similar work still affect disk format or read/write semantics and must continue through separate focused design reviews.

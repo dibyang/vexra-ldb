@@ -148,6 +148,9 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `docs/ldb-api-compatibility-design.md`: API compatibility and migration design.
 - `docs/ldb-plugin-design.md`: plugin capability enhancement design.
 - `docs/ldb-plugin-docs-index.md`: plugin documentation entry point.
+- `docs/ldb-column-family-tombstone-design.md`: non-empty column-family drop/rename/tombstone design.
+- `docs/ldb-backup-engine-design.md`: shared object store and reference-counted backup engine design.
+- `docs/ldb-longrun-benchmark-design.md`: long-run stress and benchmark report framework design.
 - `docs/vexra-ldb-external-commitment.md`: external commitments and release acceptance boundaries.
 - `docs/ldb-future-optimization-design.md`: future performance and reliability evaluation.
 

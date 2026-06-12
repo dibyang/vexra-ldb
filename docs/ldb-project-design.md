@@ -334,7 +334,7 @@ sequenceDiagram
 | Gradle | 使用 Gradle Wrapper 和 `java-library` |
 | 磁盘格式 | 延续 LevelDB 风格 WAL、MANIFEST、SST、CURRENT |
 | API | 对外接口保留现有签名，新增能力优先通过 Options、property 或工具命令扩展 |
-| 列族 | 打开前静态注册，运行时生命周期不是当前能力 |
+| 列族 | 支持打开前静态注册和运行时 list/create/empty-drop；非空 drop、rename 和 tombstone 迁移仍按专项设计推进 |
 | RocksDB | 提供部分行为映射和诊断说明，不承诺完整兼容 |
 | 只读实例 | 不持有写锁，不写目录，适合诊断和 properties 命令 |
 
@@ -388,5 +388,6 @@ sequenceDiagram
 | 1 | 补齐整体 README 和项目设计文档 | 文档反映当前代码能力和边界 |
 | 2 | 对齐可靠性计划中已完成能力 | 测试和属性名称与文档一致 |
 | 3 | 完善 range delete、列族生命周期、WAL 生命周期专项设计 | 每个专项有中文和英文副本 |
+| 3.1 | 补齐非空列族 drop/rename/tombstone、Backup Engine 引用计数、长期压测报告框架设计 | `ldb-column-family-tombstone-design.*`、`ldb-backup-engine-design.*`、`ldb-longrun-benchmark-design.*` 均已落档 |
 | 4 | 增强工具命令和 JSON 报告稳定性 | 工具测试覆盖退出码和输出 |
 | 5 | 增加长时间 soak、故障注入和兼容性测试 | 覆盖恢复、compaction、snapshot 和备份恢复 |

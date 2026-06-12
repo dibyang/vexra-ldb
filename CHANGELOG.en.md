@@ -6,7 +6,15 @@ This document records important changes for `vexra-ldb`. It follows the spirit o
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- Added Chinese and English non-empty column-family drop/rename/tombstone design documents covering logical deletion, stable cfId identity, MANIFEST/registry history, rollback, and compatibility boundaries.
+- Added Chinese and English Backup Engine design documents for shared object storage, reference counts, backup-chain GC, dry-run cleanup, and publication state management.
+- Added Chinese and English long-run stress and benchmark report design documents covering workload matrices, machine-readable reports, release thresholds, and failure preservation.
+
+### Changed
+
+- Updated the release guide's current development baseline to `0.5.0-SNAPSHOT` and the next formal target version to `0.5.0`.
 
 ## [0.4.0] - 2026-06-08
 

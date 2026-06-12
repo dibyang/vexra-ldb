@@ -34,16 +34,16 @@ Windows PowerShell:
 ./gradlew clean publishToMavenLocal
 ```
 
-## 0.4.0 Pre-Release Verification Record
+## 0.5.0 Pre-Release Verification Record
 
-- Target version: `0.4.0`.
-- Current development baseline: `gradle.properties` remains `version=0.4.0-SNAPSHOT`; the Gradle release plugin will switch to `0.4.0` during the release flow.
-- Changelog: `CHANGELOG.md` has moved this release's changes into `0.4.0`.
+- Target version: `0.5.0`.
+- Current development baseline: `gradle.properties` remains `version=0.5.0-SNAPSHOT`; the Gradle release plugin will switch to `0.5.0` during the release flow.
+- Changelog: `CHANGELOG.md` still keeps the current changes under `Unreleased`; move them into `0.5.0` before the formal release.
 - Main release themes: plugin classloader isolation, plugin compatibility testkit, capability enforcement hardening, plugin runtime governance, longrun plugin integration, runtime column-family support, group commit, incremental backup, repair plan, and observability/reporting updates.
 - Focused plugin verification: `.\gradlew.bat test --tests "*LdbPluginTest" --tests "*LongRunPluginResolverTest" --tests "*LongRunConfigTest" --tests "*SmokeRunnerTest" --tests "*ReportAnalyzerTest"` passed on Windows PowerShell.
 - Full pre-release gate still required before publishing: `.\gradlew.bat clean test`.
 - Local publication gate still required before publishing: `.\gradlew.bat clean publishToMavenLocal`.
-- Upgrade compatibility gate: validate opening data created by `vexra-ldb:0.3.0` or document a clear migration error in the release note before publication.
+- Upgrade compatibility gate: validate opening data created by `vexra-ldb:0.4.0` or document a clear migration error in the release note before publication.
 - Longrun release gate: run at least the documented smoke/performance/plugin profiles and keep report archives according to `ldb-longrun/README.md`.
 
 ## 0.2.0 Pre-Release Verification Record
