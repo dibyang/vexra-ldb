@@ -417,7 +417,7 @@ public class LDBFactory
 
     private void loadColumnFamilyRegistry() {
       try {
-        columnFamilies = ColumnFamilyRegistry.load(databaseDir, options);
+        columnFamilies = loadColumnFamiliesIncludingDropped(databaseDir, options);
       } catch (Throwable e) {
         report.addFailure(new File(databaseDir, ColumnFamilyRegistry.FILE_NAME), rootMessage(e));
         columnFamilies = options.getColumnFamilies();
@@ -566,6 +566,15 @@ public class LDBFactory
     }
     String message = current.getMessage();
     return current.getClass().getName() + (message == null ? "" : ": " + message);
+  }
+
+  private static List<LdbColumnFamily> loadColumnFamiliesIncludingDropped(File databaseDir, Options options)
+      throws IOException {
+    List<LdbColumnFamily> result = new ArrayList<>();
+    for (ColumnFamilyRegistry.Record record : ColumnFamilyRegistry.loadRecords(databaseDir, options)) {
+      result.add(record.getColumnFamily());
+    }
+    return result;
   }
 
   /**
