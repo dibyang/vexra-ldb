@@ -150,7 +150,17 @@ public class LDBFactory
    * 该方法只识别 `backup-000001` 形式的目录，不删除临时目录或其他文件；keepLast 必须大于等于 0。
    */
   public BackupCleanupReport purgeOldBackups(File backupRoot, int keepLast) throws IOException {
-    return BackupEngine.purgeOldBackups(backupRoot, keepLast);
+    return BackupEngine.purgeOldBackups(backupRoot, keepLast, false);
+  }
+
+  /**
+   * 生成旧备份清理计划但不删除任何文件。
+   *
+   * 该 dry-run 入口会同时计算可删除的备份目录和共享对象仓库中将失去引用的对象，
+   * 方便发布或运维脚本在真正清理前审计影响范围。
+   */
+  public BackupCleanupReport planPurgeBackups(File backupRoot, int keepLast) throws IOException {
+    return BackupEngine.purgeOldBackups(backupRoot, keepLast, true);
   }
 
   @Override
@@ -731,6 +741,8 @@ public class LDBFactory
     private boolean ok = true;
     private final List<String> retainedBackups = new ArrayList<>();
     private final List<String> deletedBackups = new ArrayList<>();
+    private final List<String> plannedDeletedObjects = new ArrayList<>();
+    private final List<String> deletedObjects = new ArrayList<>();
     private final List<String> failures = new ArrayList<>();
 
     private void setBackupRoot(File backupRoot) {
@@ -747,6 +759,14 @@ public class LDBFactory
 
     private void addDeletedBackup(String backup) {
       deletedBackups.add(backup);
+    }
+
+    private void addPlannedDeletedObject(String object) {
+      plannedDeletedObjects.add(object);
+    }
+
+    private void addDeletedObject(String object) {
+      deletedObjects.add(object);
     }
 
     private void addFailure(String failure) {
@@ -789,6 +809,14 @@ public class LDBFactory
       return Collections.unmodifiableList(deletedBackups);
     }
 
+    public List<String> getPlannedDeletedObjects() {
+      return Collections.unmodifiableList(plannedDeletedObjects);
+    }
+
+    public List<String> getDeletedObjects() {
+      return Collections.unmodifiableList(deletedObjects);
+    }
+
     /**
      * 返回清理失败原因。
      */
@@ -804,6 +832,8 @@ public class LDBFactory
           + ", ok=" + ok
           + ", retainedBackups=" + retainedBackups
           + ", deletedBackups=" + deletedBackups
+          + ", plannedDeletedObjects=" + plannedDeletedObjects
+          + ", deletedObjects=" + deletedObjects
           + ", failures=" + failures
           + '}';
     }
@@ -813,6 +843,8 @@ public class LDBFactory
     private static final String BACKUP_REPORT_FILE = "BACKUP-REPORT.json";
     private static final String RESTORE_REPORT_FILE = "RESTORE-REPORT.json";
     private static final String BACKUP_MANIFEST_FILE = "BACKUP-MANIFEST.json";
+    private static final String OBJECT_REFS_FILE = "OBJECT-REFS.json";
+    private static final String OBJECTS_DIR = "objects";
 
     private final File sourceDir;
     private final File targetRoot;
@@ -824,7 +856,7 @@ public class LDBFactory
       this.options = options == null ? new Options() : options;
     }
 
-    private static BackupCleanupReport purgeOldBackups(File backupRoot, int keepLast) throws IOException {
+    private static BackupCleanupReport purgeOldBackups(File backupRoot, int keepLast, boolean dryRun) throws IOException {
       if (keepLast < 0) {
         throw new IllegalArgumentException("keepLast must be >= 0");
       }
@@ -847,17 +879,34 @@ public class LDBFactory
       });
 
       int firstRetained = Math.max(0, backups.size() - keepLast);
+      Set<String> retainedObjectIds = new TreeSet<>();
+      Set<String> deletedObjectIds = new TreeSet<>();
       for (int i = 0; i < backups.size(); i++) {
         File backup = backups.get(i);
         if (i < firstRetained) {
+          deletedObjectIds.addAll(collectObjectIds(backup));
+          report.addDeletedBackup(backup.getName());
+          if (dryRun) {
+            continue;
+          }
           try {
             deleteRecursively(backup);
-            report.addDeletedBackup(backup.getName());
           } catch (IOException e) {
             report.addFailure(backup.getName() + ": " + rootMessage(e));
           }
         } else {
           report.addRetainedBackup(backup.getName());
+          retainedObjectIds.addAll(collectObjectIds(backup));
+        }
+      }
+      deletedObjectIds.removeAll(retainedObjectIds);
+      for (String objectId : deletedObjectIds) {
+        report.addPlannedDeletedObject(objectId);
+      }
+      if (!dryRun) {
+        ObjectStoreRebuild rebuild = rebuildObjectStore(backupRoot, true);
+        for (String objectId : rebuild.deletedObjects) {
+          report.addDeletedObject(objectId);
         }
       }
       return report;
@@ -901,6 +950,7 @@ public class LDBFactory
         }
         writeReport(new File(tempDir, BACKUP_REPORT_FILE), report);
         publishDirectory(tempDir, backupDir);
+        rebuildObjectStore(targetRoot, true);
         return report;
       } catch (IOException e) {
         report.addFailure(rootMessage(e));
@@ -1059,6 +1109,126 @@ public class LDBFactory
         output.flush();
         output.getFD().sync();
       }
+    }
+
+    private static Set<String> collectObjectIds(File backupDir) {
+      Set<String> result = new TreeSet<>();
+      for (File file : Filename.listFiles(backupDir)) {
+        if (isBackupMetadata(file) || !file.isFile()) {
+          continue;
+        }
+        FileInfo info = Filename.parseFileName(file);
+        if (info == null && !ColumnFamilyRegistry.FILE_NAME.equals(file.getName())) {
+          continue;
+        }
+        try {
+          result.add(objectId(file));
+        } catch (IOException ignored) {
+        }
+      }
+      return result;
+    }
+
+    private static ObjectStoreRebuild rebuildObjectStore(File backupRoot, boolean prune) throws IOException {
+      ObjectStoreRebuild rebuild = new ObjectStoreRebuild();
+      File objectsDir = new File(backupRoot, OBJECTS_DIR);
+      if (!objectsDir.exists() && !objectsDir.mkdirs()) {
+        throw new IOException("Unable to create backup object store: " + objectsDir);
+      }
+
+      Map<String, Set<String>> refs = new TreeMap<>();
+      for (File backup : listPublishedBackups(backupRoot)) {
+        for (File file : Filename.listFiles(backup)) {
+          if (isBackupMetadata(file) || !file.isFile()) {
+            continue;
+          }
+          FileInfo info = Filename.parseFileName(file);
+          if (info == null && !ColumnFamilyRegistry.FILE_NAME.equals(file.getName())) {
+            continue;
+          }
+          String objectId = objectId(file);
+          Set<String> backups = refs.get(objectId);
+          if (backups == null) {
+            backups = new TreeSet<>();
+            refs.put(objectId, backups);
+          }
+          backups.add(backup.getName());
+          File objectFile = new File(objectsDir, objectId);
+          if (!objectFile.isFile()) {
+            java.nio.file.Files.copy(
+                file.toPath(),
+                objectFile.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
+          }
+        }
+      }
+
+      if (prune) {
+        File[] existing = objectsDir.listFiles();
+        if (existing != null) {
+          for (File file : existing) {
+            if (file.isFile() && !refs.containsKey(file.getName())) {
+              if (!file.delete() && file.exists()) {
+                throw new IOException("Unable to delete unreferenced backup object: " + file);
+              }
+              rebuild.deletedObjects.add(file.getName());
+            }
+          }
+        }
+      }
+
+      writeObjectRefs(new File(backupRoot, OBJECT_REFS_FILE), refs);
+      return rebuild;
+    }
+
+    private static boolean isBackupMetadata(File file) {
+      String name = file.getName();
+      return BACKUP_REPORT_FILE.equals(name)
+          || RESTORE_REPORT_FILE.equals(name)
+          || BACKUP_MANIFEST_FILE.equals(name)
+          || OBJECT_REFS_FILE.equals(name);
+    }
+
+    private static String objectId(File file) throws IOException {
+      java.util.zip.CRC32 crc32 = new java.util.zip.CRC32();
+      byte[] buffer = new byte[8192];
+      try (InputStream input = new FileInputStream(file)) {
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+          crc32.update(buffer, 0, read);
+        }
+      }
+      return file.getName() + "-" + file.length() + "-" + Long.toHexString(crc32.getValue());
+    }
+
+    private static void writeObjectRefs(File file, Map<String, Set<String>> refs) throws IOException {
+      try (FileOutputStream output = new FileOutputStream(file)) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("{\n");
+        builder.append("  \"formatVersion\": 1,\n");
+        builder.append("  \"objects\": [\n");
+        int index = 0;
+        for (Entry<String, Set<String>> entry : refs.entrySet()) {
+          if (index++ > 0) {
+            builder.append(",\n");
+          }
+          builder.append("    {\"objectId\": \"").append(CheckReport.escape(entry.getKey()))
+              .append("\", \"refCount\": ").append(entry.getValue().size())
+              .append(", \"backups\": ");
+          CheckReport.appendJsonList(builder, new ArrayList<String>(entry.getValue()));
+          builder.append('}');
+        }
+        builder.append("\n  ]\n");
+        builder.append("}\n");
+        output.write(builder.toString().getBytes(UTF_8));
+        output.flush();
+        output.getFD().sync();
+      }
+    }
+
+    private static final class ObjectStoreRebuild {
+      private final List<String> deletedObjects = new ArrayList<>();
     }
 
     private static void appendManifestField(StringBuilder builder, String name, Object value, boolean comma) {
