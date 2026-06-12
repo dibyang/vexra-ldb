@@ -53,6 +53,7 @@ public class LDbImpl implements LDB {
 
   private final Set<Long> pendingOutputs = new HashSet<>();
   private final ConcurrentHashMap<Integer, ColumnFamilyState> cfs = new ConcurrentHashMap<>();
+  private final LinkedHashMap<Integer, ColumnFamilyRegistry.Record> columnFamilyRecords = new LinkedHashMap<>();
 
   private final InternalKeyComparator internalKeyComparator;
 
@@ -163,7 +164,12 @@ public class LDbImpl implements LDB {
         dbLock = new DbLock(new File(databaseDir, Filename.lockFileName()));
       }
 
-      List<LdbColumnFamily> openedColumnFamilies = ColumnFamilyRegistry.load(databaseDir, options);
+      List<ColumnFamilyRegistry.Record> openedRecords = ColumnFamilyRegistry.loadRecords(databaseDir, options);
+      columnFamilyRecords.clear();
+      for (ColumnFamilyRegistry.Record record : openedRecords) {
+        columnFamilyRecords.put(record.getColumnFamily().getId(), record);
+      }
+      List<LdbColumnFamily> openedColumnFamilies = listColumnFamiliesLocked();
       checkArgument(!openedColumnFamilies.isEmpty(), "No column families configured");
 
       for (LdbColumnFamily cf : openedColumnFamilies) {
@@ -194,7 +200,7 @@ public class LDbImpl implements LDB {
       versions.setLastSequence(lastSequence);
 
       if (!options.readOnly()) {
-        ColumnFamilyRegistry.store(databaseDir, listColumnFamiliesLocked());
+        ColumnFamilyRegistry.storeRecords(databaseDir, columnFamilyRecords.values());
         forceDirectory(databaseDir);
         // 再创建新 WAL，并把 logNumber + lastSequence 一起写进 MANIFEST
         long logFileNumber = versions.getNextFileNumber();
@@ -1793,11 +1799,11 @@ public class LDbImpl implements LDB {
           + "snapshotCursor,reverseSnapshotCursor,properties,plugins,ldbToolCheck,ldbToolProperties,"
           + "ldbToolIncrementalBackup,ldbToolCheckBackup,"
           + "ldbToolRepair,ldbToolBackup,ldbToolRestore,ldbToolCheckpoint,"
-          + "runtimeColumnFamilyList,runtimeColumnFamilyCreate,runtimeColumnFamilyDropEmpty";
+          + "runtimeColumnFamilyList,runtimeColumnFamilyCreate,runtimeColumnFamilyDropEmpty,"
+          + "runtimeColumnFamilyDropNonEmpty,runtimeColumnFamilyRename";
     }
     if ("ldb.api.unsupportedFeatures".equals(name)) {
-      return "mergeOperator,prefixExtractor,rocksdbToolCommands,transactions,customEnv,ttl,"
-          + "runtimeColumnFamilyDropNonEmpty,runtimeColumnFamilyRename,secondaryIndex";
+      return "mergeOperator,prefixExtractor,rocksdbToolCommands,transactions,customEnv,ttl,secondaryIndex";
     }
     if ("ldb.api.ecosystemGaps".equals(name)) {
       return "mergeOperator=requiresDeterministicOperatorAndDiskMetadata"
@@ -1805,8 +1811,8 @@ public class LDbImpl implements LDB {
           + ",transactions=requiresIsolationAndCommitProtocol"
           + ",ttl=requiresExpirationMetadataAndCompactionPolicy"
           + ",customEnv=requiresFilesystemAbstraction"
-          + ",runtimeColumnFamilyDropNonEmpty=requiresManifestTombstoneAndRecoveryRules"
-          + ",runtimeColumnFamilyRename=requiresPersistentCfIdentityMigration"
+          + ",runtimeColumnFamilyDropNonEmpty=implementedWithRegistryTombstoneAndBestEffortSstGc"
+          + ",runtimeColumnFamilyRename=implementedWithStableCfIdRegistryUpdate"
           + ",rocksdbToolCommands=requiresCommandCompatibilityLayer"
           + ",secondaryIndex=requiresIndexFormatAndConsistencyModel";
     }
@@ -3888,8 +3894,16 @@ public class LDbImpl implements LDB {
 
   private List<LdbColumnFamily> listColumnFamiliesLocked() {
     List<LdbColumnFamily> result = new ArrayList<>();
-    for (ColumnFamilyState state : cfs.values()) {
-      result.add(state.getColumnFamily());
+    if (!columnFamilyRecords.isEmpty()) {
+      for (ColumnFamilyRegistry.Record record : columnFamilyRecords.values()) {
+        if (record.isActive()) {
+          result.add(record.getColumnFamily());
+        }
+      }
+    } else {
+      for (ColumnFamilyState state : cfs.values()) {
+        result.add(state.getColumnFamily());
+      }
     }
     Collections.sort(result, new Comparator<LdbColumnFamily>() {
       @Override
@@ -3911,6 +3925,9 @@ public class LDbImpl implements LDB {
       if (cfs.containsKey(cfId)) {
         throw new DBException("Column family id already exists: " + cfId);
       }
+      if (columnFamilyRecords.containsKey(cfId)) {
+        throw new DBException("Column family id was used by a lifecycle record and cannot be reused: " + cfId);
+      }
       for (ColumnFamilyState state : cfs.values()) {
         if (state.getColumnFamily().getName().equals(name)) {
           throw new DBException("Column family name already exists: " + name);
@@ -3919,17 +3936,61 @@ public class LDbImpl implements LDB {
 
       ColumnFamilyState state = new ColumnFamilyState(cf, databaseDir, options, internalKeyComparator);
       cfs.put(cfId, state);
+      columnFamilyRecords.put(cfId, new ColumnFamilyRegistry.Record(cf, true));
       try {
-        ColumnFamilyRegistry.store(databaseDir, listColumnFamiliesLocked());
+        ColumnFamilyRegistry.storeRecords(databaseDir, columnFamilyRecords.values());
         forceDirectory(databaseDir);
       } catch (IOException e) {
         cfs.remove(cfId);
+        columnFamilyRecords.remove(cfId);
         state.close();
         throw new DBException("Failed to persist column family registry: " + name, e);
       }
       return cf;
     } catch (IOException e) {
       throw new DBException("Failed to create column family: " + name, e);
+    } finally {
+      mutex.unlock();
+    }
+  }
+
+  @Override
+  public LdbColumnFamily renameColumnFamily(LdbColumnFamily cf, String newName) throws DBException {
+    requireNonNull(cf, "cf is null");
+    requireNonNull(newName, "newName is null");
+    checkWritable("renameColumnFamily");
+    checkBackgroundException();
+    String trimmed = newName.trim();
+    if (trimmed.isEmpty()) {
+      throw new DBException("Column family name is empty");
+    }
+    flushMemTable();
+
+    mutex.lock();
+    try {
+      ColumnFamilyState oldState = getColumnFamilyState(cf);
+      for (ColumnFamilyState state : cfs.values()) {
+        if (state.getColumnFamily().getId() != cf.getId() && state.getColumnFamily().getName().equals(trimmed)) {
+          throw new DBException("Column family name already exists: " + trimmed);
+        }
+      }
+      LdbColumnFamily renamed = new PersistentColumnFamily(cf.getId(), trimmed);
+      ColumnFamilyState newState = new ColumnFamilyState(renamed, databaseDir, options, internalKeyComparator);
+      cfs.put(cf.getId(), newState);
+      columnFamilyRecords.put(cf.getId(), new ColumnFamilyRegistry.Record(renamed, true));
+      try {
+        ColumnFamilyRegistry.storeRecords(databaseDir, columnFamilyRecords.values());
+        forceDirectory(databaseDir);
+      } catch (IOException e) {
+        cfs.put(cf.getId(), oldState);
+        columnFamilyRecords.put(cf.getId(), new ColumnFamilyRegistry.Record(oldState.getColumnFamily(), true));
+        newState.close();
+        throw new DBException("Failed to persist column family registry after rename: " + cf.getName(), e);
+      }
+      oldState.close();
+      return renamed;
+    } catch (IOException e) {
+      throw new DBException("Failed to rename column family: " + cf.getName(), e);
     } finally {
       mutex.unlock();
     }
@@ -3943,24 +4004,40 @@ public class LDbImpl implements LDB {
     if (cf.getId() == LdbColumnFamily.DEFAULT.getId()) {
       throw new DBException("Default column family cannot be dropped");
     }
+    flushMemTable();
 
     mutex.lock();
     try {
       ColumnFamilyState state = getColumnFamilyState(cf);
-      if (!isColumnFamilyEmpty(state)) {
-        throw new DBException("Only empty column families can be dropped in the minimal lifecycle implementation: "
-            + cf.getName());
+      ColumnFamilyRegistry.Record previousRecord = columnFamilyRecords.get(cf.getId());
+      if (previousRecord == null) {
+        previousRecord = new ColumnFamilyRegistry.Record(state.getColumnFamily(), true);
+      }
+      columnFamilyRecords.put(cf.getId(), previousRecord.dropped());
+      try {
+        ColumnFamilyRegistry.storeRecords(databaseDir, columnFamilyRecords.values());
+        forceDirectory(databaseDir);
+      } catch (IOException e) {
+        throw new DBException("Failed to persist column family registry after drop: " + cf.getName(), e);
+      }
+
+      VersionEdit edit = new VersionEdit();
+      for (int level = 0; level < NUM_LEVELS; level++) {
+        for (FileMetaData file : versions.getCurrent().getFiles(cf.getId(), level)) {
+          edit.deleteFile(cf.getId(), level, file.getNumber());
+        }
+      }
+      if (!edit.getDeletedFiles().isEmpty()) {
+        try {
+          versions.logAndApply(edit);
+        } catch (IOException e) {
+          LOG.warn("Column family {} was tombstoned but SST GC edit failed", cf.getName(), e);
+        }
       }
 
       cfs.remove(cf.getId());
-      try {
-        ColumnFamilyRegistry.store(databaseDir, listColumnFamiliesLocked());
-        forceDirectory(databaseDir);
-      } catch (IOException e) {
-        cfs.put(cf.getId(), state);
-        throw new DBException("Failed to persist column family registry after drop: " + cf.getName(), e);
-      }
       state.close();
+      deleteObsoleteFiles();
     } finally {
       mutex.unlock();
     }

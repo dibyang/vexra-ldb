@@ -59,7 +59,7 @@ class LdbColumnFamilyLifecycleTest {
   }
 
   @Test
-  void shouldRejectDefaultAndNonEmptyDrop() throws Exception {
+  void shouldRejectDefaultAndTombstoneNonEmptyDrop() throws Exception {
     File dbDir = new File(tempDir, "reject-drop-cf-db");
 
     try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true))) {
@@ -67,8 +67,40 @@ class LdbColumnFamilyLifecycleTest {
       db.put(cf, bytes("k"), bytes("v"));
 
       assertThrows(DBException.class, () -> db.dropColumnFamily(LdbColumnFamily.DEFAULT));
-      assertThrows(DBException.class, () -> db.dropColumnFamily(cf));
-      assertArrayEquals(bytes("v"), db.get(cf, bytes("k")));
+      db.dropColumnFamily(cf);
+      assertThrows(IllegalArgumentException.class, () -> db.getColumnFamily(23));
+      assertFalse(containsColumnFamily(db.listColumnFamilies(), 23, "non-empty-runtime"));
+      assertTrue(db.getProperty("ldb.api.supportedFeatures").contains("runtimeColumnFamilyDropNonEmpty"));
+    }
+
+    try (LDB reopened = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
+      assertThrows(IllegalArgumentException.class, () -> reopened.getColumnFamily(23));
+      assertFalse(containsColumnFamily(reopened.listColumnFamilies(), 23, "non-empty-runtime"));
+      assertThrows(DBException.class, () -> reopened.createColumnFamily(23, "reused-id"));
+    }
+  }
+
+  @Test
+  void shouldRenameRuntimeColumnFamilyAndKeepStableId() throws Exception {
+    File dbDir = new File(tempDir, "rename-cf-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true))) {
+      LdbColumnFamily cf = db.createColumnFamily(25, "before-rename");
+      db.put(cf, bytes("k"), bytes("v"), new WriteOptions().sync(true));
+
+      LdbColumnFamily renamed = db.renameColumnFamily(cf, "after-rename");
+      assertEquals(25, renamed.getId());
+      assertEquals("after-rename", renamed.getName());
+      assertArrayEquals(bytes("v"), db.get(renamed, bytes("k")));
+      assertTrue(containsColumnFamily(db.listColumnFamilies(), 25, "after-rename"));
+      assertFalse(containsColumnFamily(db.listColumnFamilies(), 25, "before-rename"));
+      assertTrue(db.getProperty("ldb.api.supportedFeatures").contains("runtimeColumnFamilyRename"));
+    }
+
+    try (LDB reopened = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
+      LdbColumnFamily cf = reopened.getColumnFamily(25);
+      assertEquals("after-rename", cf.getName());
+      assertArrayEquals(bytes("v"), reopened.get(cf, bytes("k")));
     }
   }
 

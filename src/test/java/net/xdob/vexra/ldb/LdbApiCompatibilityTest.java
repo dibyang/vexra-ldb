@@ -108,14 +108,15 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.supportedFeatures", "runtimeColumnFamilyList");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "runtimeColumnFamilyCreate");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "runtimeColumnFamilyDropEmpty");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "runtimeColumnFamilyDropNonEmpty");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "runtimeColumnFamilyRename");
       assertPropertyContains(db, "ldb.api.unsupportedFeatures", "mergeOperator");
       assertPropertyContains(db, "ldb.api.unsupportedFeatures", "prefixExtractor");
       assertPropertyContains(db, "ldb.api.unsupportedFeatures", "rocksdbToolCommands");
-      assertPropertyContains(db, "ldb.api.unsupportedFeatures", "runtimeColumnFamilyDropNonEmpty");
       assertPropertyContains(db, "ldb.api.ecosystemGaps",
           "mergeOperator=requiresDeterministicOperatorAndDiskMetadata");
       assertPropertyContains(db, "ldb.api.ecosystemGaps",
-          "runtimeColumnFamilyDropNonEmpty=requiresManifestTombstoneAndRecoveryRules");
+          "runtimeColumnFamilyDropNonEmpty=implementedWithRegistryTombstoneAndBestEffortSstGc");
 
       assertPropertyContains(db, "ldb.operationStats", "get.count=");
       assertPropertyContains(db, "ldb.compactionStats", "runCount=");

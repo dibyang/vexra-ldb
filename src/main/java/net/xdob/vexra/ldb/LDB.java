@@ -136,6 +136,16 @@ public interface LDB
   LdbColumnFamily createColumnFamily(int cfId, String name) throws DBException;
 
   /**
+   * 运行时重命名一个已有列族，列族 id 保持不变。
+   *
+   * @param cf 目标列族
+   * @param newName 新列族名称，不能与其他活动列族冲突
+   * @return 重命名后的列族定义
+   * @throws DBException 数据库只读、列族未知、名称冲突或注册表落盘失败时抛出
+   */
+  LdbColumnFamily renameColumnFamily(LdbColumnFamily cf, String newName) throws DBException;
+
+  /**
    * 运行时删除一个空列族。
    *
    * @param cf 目标列族，默认列族和仍包含 MemTable/SST 数据的列族会被拒绝

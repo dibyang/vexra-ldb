@@ -23,19 +23,31 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  */
 final class ColumnFamilyRegistry {
   static final String FILE_NAME = "COLUMN-FAMILIES";
+  private static final String ACTIVE = "A";
+  private static final String DROPPED = "D";
 
   private ColumnFamilyRegistry() {
   }
 
   static List<LdbColumnFamily> load(File databaseDir, Options options) throws IOException {
-    LinkedHashMap<Integer, LdbColumnFamily> result = new LinkedHashMap<>();
+    List<LdbColumnFamily> result = new ArrayList<>();
+    for (Record record : loadRecords(databaseDir, options)) {
+      if (record.isActive()) {
+        result.add(record.getColumnFamily());
+      }
+    }
+    return sorted(result);
+  }
+
+  static List<Record> loadRecords(File databaseDir, Options options) throws IOException {
+    LinkedHashMap<Integer, Record> result = new LinkedHashMap<>();
     for (LdbColumnFamily cf : options.getColumnFamilies()) {
-      putOrValidate(result, cf);
+      putOrValidate(result, new Record(cf, true));
     }
 
     File registry = new File(databaseDir, FILE_NAME);
     if (!registry.isFile()) {
-      return sorted(result);
+      return sortedRecords(result);
     }
 
     String text = com.google.common.io.Files.toString(registry, UTF_8);
@@ -44,24 +56,29 @@ final class ColumnFamilyRegistry {
       if (line.trim().isEmpty() || line.startsWith("#")) {
         continue;
       }
-      int tab = line.indexOf('\t');
-      if (tab <= 0 || tab == line.length() - 1) {
-        throw new IOException("Invalid column family registry line: " + line);
-      }
-      int id = Integer.parseInt(line.substring(0, tab));
-      LdbColumnFamily cf = new PersistentColumnFamily(id, unescape(line.substring(tab + 1)));
-      putOrValidate(result, cf);
+      putOrValidate(result, parseRecord(line));
     }
-    return sorted(result);
+    return sortedRecords(result);
   }
 
   static void store(File databaseDir, Iterable<LdbColumnFamily> columnFamilies) throws IOException {
     List<LdbColumnFamily> sorted = sorted(columnFamilies);
+    List<Record> records = new ArrayList<>();
+    for (LdbColumnFamily cf : sorted) {
+      records.add(new Record(cf, true));
+    }
+    storeRecords(databaseDir, records);
+  }
+
+  static void storeRecords(File databaseDir, Iterable<Record> records) throws IOException {
+    List<Record> sorted = sortedRecords(records);
     File target = new File(databaseDir, FILE_NAME);
     File temp = new File(databaseDir, FILE_NAME + ".tmp");
     try (FileOutputStream output = new FileOutputStream(temp)) {
-      for (LdbColumnFamily cf : sorted) {
-        output.write((cf.getId() + "\t" + escape(cf.getName()) + "\n").getBytes(UTF_8));
+      for (Record record : sorted) {
+        LdbColumnFamily cf = record.getColumnFamily();
+        String state = record.isActive() ? ACTIVE : DROPPED;
+        output.write((state + "\t" + cf.getId() + "\t" + escape(cf.getName()) + "\n").getBytes(UTF_8));
       }
       output.flush();
       output.getFD().sync();
@@ -74,16 +91,31 @@ final class ColumnFamilyRegistry {
     }
   }
 
-  private static void putOrValidate(Map<Integer, LdbColumnFamily> result, LdbColumnFamily cf) {
-    LdbColumnFamily existing = result.get(cf.getId());
+  private static Record parseRecord(String line) throws IOException {
+    String[] parts = line.split("\t", -1);
+    if (parts.length == 2) {
+      int id = Integer.parseInt(parts[0]);
+      return new Record(new PersistentColumnFamily(id, unescape(parts[1])), true);
+    }
+    if (parts.length == 3 && (ACTIVE.equals(parts[0]) || DROPPED.equals(parts[0]))) {
+      int id = Integer.parseInt(parts[1]);
+      return new Record(new PersistentColumnFamily(id, unescape(parts[2])), ACTIVE.equals(parts[0]));
+    }
+    throw new IOException("Invalid column family registry line: " + line);
+  }
+
+  private static void putOrValidate(Map<Integer, Record> result, Record record) {
+    LdbColumnFamily cf = record.getColumnFamily();
+    Record existingRecord = result.get(cf.getId());
+    LdbColumnFamily existing = existingRecord == null ? null : existingRecord.getColumnFamily();
     if (existing != null) {
-      if (!existing.getName().equals(cf.getName())) {
+      if (existingRecord.isActive() != record.isActive() || !existing.getName().equals(cf.getName())) {
         throw new IllegalArgumentException("Column family id " + cf.getId()
-            + " has conflicting names: " + existing.getName() + " vs " + cf.getName());
+            + " has conflicting registry records");
       }
       return;
     }
-    result.put(cf.getId(), cf);
+    result.put(cf.getId(), record);
   }
 
   private static List<LdbColumnFamily> sorted(Iterable<LdbColumnFamily> columnFamilies) {
@@ -95,8 +127,18 @@ final class ColumnFamilyRegistry {
     return result;
   }
 
-  private static List<LdbColumnFamily> sorted(Map<Integer, LdbColumnFamily> columnFamilies) {
-    return sorted(columnFamilies.values());
+  private static List<Record> sortedRecords(Iterable<Record> records) {
+    List<Record> result = new ArrayList<>();
+    for (Record record : records) {
+      result.add(record);
+    }
+    Collections.sort(result, (left, right) -> Integer.compare(
+        left.getColumnFamily().getId(), right.getColumnFamily().getId()));
+    return result;
+  }
+
+  private static List<Record> sortedRecords(Map<Integer, Record> columnFamilies) {
+    return sortedRecords(columnFamilies.values());
   }
 
   private static String escape(String value) {
@@ -131,5 +173,27 @@ final class ColumnFamilyRegistry {
       builder.append('\\');
     }
     return builder.toString();
+  }
+
+  static final class Record {
+    private final LdbColumnFamily columnFamily;
+    private final boolean active;
+
+    Record(LdbColumnFamily columnFamily, boolean active) {
+      this.columnFamily = columnFamily;
+      this.active = active;
+    }
+
+    LdbColumnFamily getColumnFamily() {
+      return columnFamily;
+    }
+
+    boolean isActive() {
+      return active;
+    }
+
+    Record dropped() {
+      return new Record(columnFamily, false);
+    }
   }
 }
