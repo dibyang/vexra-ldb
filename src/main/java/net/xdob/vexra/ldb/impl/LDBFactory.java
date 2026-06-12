@@ -141,7 +141,9 @@ public class LDBFactory
    * 该入口复用 LDB 离线 check 逻辑，增量备份通过硬链接或复制发布为完整目录，因此无需 restore 即可校验。
    */
   public CheckReport checkBackup(File backupDir, Options options) {
-    return check(backupDir, options);
+    CheckReport report = check(backupDir, options);
+    BackupEngine.validateBackupMetadata(backupDir, report);
+    return report;
   }
 
   /**
@@ -965,7 +967,7 @@ public class LDBFactory
       report.setSourceDir(sourceDir);
       report.setTargetDir(targetRoot);
 
-      CheckReport backupCheck = factory.check(sourceDir, options);
+      CheckReport backupCheck = factory.checkBackup(sourceDir, options);
       if (!backupCheck.isOk()) {
         report.setCheckReport(backupCheck);
         return report;
@@ -1127,6 +1129,128 @@ public class LDBFactory
         }
       }
       return result;
+    }
+
+    private static void validateBackupMetadata(File backupDir, CheckReport report) {
+      if (!backupDir.isDirectory()) {
+        return;
+      }
+      validateBackupManifest(backupDir, report);
+      File backupRoot = backupDir.getParentFile();
+      if (backupRoot == null) {
+        return;
+      }
+      File objectsDir = new File(backupRoot, OBJECTS_DIR);
+      File refsFile = new File(backupRoot, OBJECT_REFS_FILE);
+      if (!objectsDir.exists() && !refsFile.exists()) {
+        return;
+      }
+      if (!objectsDir.isDirectory()) {
+        report.addFailure("Backup object store is missing or not a directory: " + objectsDir);
+        return;
+      }
+      if (!refsFile.isFile()) {
+        report.addFailure("Backup object refs file is missing: " + refsFile);
+        return;
+      }
+      Map<String, Set<String>> expectedRefs;
+      try {
+        expectedRefs = collectObjectRefs(backupRoot);
+      } catch (IOException e) {
+        report.addFailure("Unable to rebuild backup object refs: " + rootMessage(e));
+        return;
+      }
+      String refsText;
+      try {
+        refsText = readText(refsFile);
+      } catch (IOException e) {
+        report.addFailure(refsFile, rootMessage(e));
+        return;
+      }
+      if (!refsText.contains("\"formatVersion\"") || !refsText.contains("\"objects\"")) {
+        report.addFailure(refsFile, "Malformed backup object refs");
+      }
+      for (Entry<String, Set<String>> entry : expectedRefs.entrySet()) {
+        String objectId = entry.getKey();
+        File objectFile = new File(objectsDir, objectId);
+        if (!objectFile.isFile()) {
+          report.addFailure("Missing backup object: " + objectId);
+        }
+        String objectEntry = findObjectRefEntry(refsText, objectId);
+        if (objectEntry == null) {
+          report.addFailure(refsFile, "Missing object ref: " + objectId);
+        } else if (!objectEntry.contains("\"refCount\": " + entry.getValue().size())) {
+          report.addFailure(refsFile, "Wrong refCount for object: " + objectId);
+        }
+      }
+      File[] objectFiles = objectsDir.listFiles();
+      if (objectFiles != null) {
+        for (File objectFile : objectFiles) {
+          if (objectFile.isFile() && !expectedRefs.containsKey(objectFile.getName())) {
+            report.addFailure("Orphan backup object: " + objectFile.getName());
+          }
+        }
+      }
+    }
+
+    private static String findObjectRefEntry(String refsText, String objectId) {
+      java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+          "\\{[^}]*\"objectId\"\\s*:\\s*\"" + java.util.regex.Pattern.quote(objectId) + "\"[^}]*\\}");
+      java.util.regex.Matcher matcher = pattern.matcher(refsText);
+      return matcher.find() ? matcher.group() : null;
+    }
+
+    private static void validateBackupManifest(File backupDir, CheckReport report) {
+      File manifest = new File(backupDir, BACKUP_MANIFEST_FILE);
+      if (!manifest.isFile()) {
+        report.addFailure("Missing backup manifest: " + manifest);
+        return;
+      }
+      try {
+        String text = readText(manifest);
+        if (!text.contains("\"formatVersion\"")
+            || !text.contains("\"backupId\": \"" + CheckReport.escape(backupDir.getName()) + "\"")
+            || !text.contains("\"published\": true")) {
+          report.addFailure(manifest, "Malformed backup manifest");
+        }
+      } catch (IOException e) {
+        report.addFailure(manifest, rootMessage(e));
+      }
+    }
+
+    private static Map<String, Set<String>> collectObjectRefs(File backupRoot) throws IOException {
+      Map<String, Set<String>> refs = new TreeMap<>();
+      for (File backup : listPublishedBackups(backupRoot)) {
+        for (File file : Filename.listFiles(backup)) {
+          if (isBackupMetadata(file) || !file.isFile()) {
+            continue;
+          }
+          FileInfo info = Filename.parseFileName(file);
+          if (info == null && !ColumnFamilyRegistry.FILE_NAME.equals(file.getName())) {
+            continue;
+          }
+          String objectId = objectId(file);
+          Set<String> backups = refs.get(objectId);
+          if (backups == null) {
+            backups = new TreeSet<>();
+            refs.put(objectId, backups);
+          }
+          backups.add(backup.getName());
+        }
+      }
+      return refs;
+    }
+
+    private static String readText(File file) throws IOException {
+      ByteArrayOutputStream output = new ByteArrayOutputStream();
+      byte[] buffer = new byte[8192];
+      try (InputStream input = new FileInputStream(file)) {
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+          output.write(buffer, 0, read);
+        }
+      }
+      return output.toString(UTF_8.name());
     }
 
     private static ObjectStoreRebuild rebuildObjectStore(File backupRoot, boolean prune) throws IOException {
