@@ -115,6 +115,7 @@ ldb checkpoint <db> <targetDir>
 - `ldb.fileBytes`
 - `ldb.totalBytes`
 - `ldb.compactionStats`
+- `ldb.checkpointStats`
 - `ldb.writeStallStats`
 - `ldb.groupCommitStats`
 - `ldb.plugins`

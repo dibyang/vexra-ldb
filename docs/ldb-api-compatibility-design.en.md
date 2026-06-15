@@ -155,7 +155,7 @@ The repository now has a minimal `net.xdob.vexra.ldb.tool.LdbTool` CLI entry poi
 | `ldb check <db>` | `LDBFactory.check` | No | No writer lock | Structured check report and health-reflecting exit code |
 | `ldb repair-plan <db>` | `LDBFactory.planRepair` | No | No writer lock | dry-run `RepairReport` JSON; no report file is written |
 | `ldb repair <db>` | `LDBFactory.repair` | Yes | Exclusive writer lock | `REPAIR-REPORT.json`, quarantined files, rebuilt MANIFEST/CURRENT info |
-| `ldb checkpoint <db> <target>` | `LDB.checkpoint` | Opens source normally, writes target | Target must be absent or empty | `CHECKPOINT-REPORT.json` |
+| `ldb checkpoint <db> <target>` | `LDB.checkpoint` | Opens source normally, writes target through a temporary directory | Target must be absent or empty; published only after success | `CHECKPOINT-REPORT.json` with copy/link statistics |
 | `ldb backup <db> <backup-root>` | `LDBFactory.createBackup` | Reads source, writes backup dir | Offline source check | `BackupReport` JSON and verification result |
 | `ldb restore <backup> <target>` | `LDBFactory.restoreBackup` | Writes target DB | Target must be creatable or empty | `BackupReport` JSON and verification result |
 | `ldb incremental-backup <db> <backup-root>` | `LDBFactory.createIncrementalBackup` | Reads source, writes backup dir | Offline source check | `BackupReport` JSON and verification result |
@@ -177,7 +177,7 @@ The repository now has a minimal `net.xdob.vexra.ldb.tool.LdbTool` CLI entry poi
 
 - `check` and `properties` must be read-only by default, create no new WALs, and avoid modifying MANIFEST.
 - `repair`, `compact`, and `restore` are write commands; help text and logs must clearly state their side effects. The currently exposed `repair` command prints `REPAIR-REPORT.json` after success.
-- `checkpoint` and `backup` should not change source DB semantics, but they write target directories; non-empty targets must fail. The currently exposed `backup`/`restore` commands reuse offline backup reports directly, and failed reports return exit code `2`; `checkpoint` prints the target directory's `CHECKPOINT-REPORT.json`.
+- `checkpoint` and `backup` should not change source DB semantics, but they write target directories; non-empty targets must fail. `checkpoint` builds through a temporary directory, publishes only after verification, cleans the temporary directory on failure, and preserves the failure cause. The currently exposed `backup`/`restore` commands reuse offline backup reports directly, and failed reports return exit code `2`; `checkpoint` prints the target directory's `CHECKPOINT-REPORT.json`.
 - All commands should support machine-readable output, preferably JSON; human text is only an additional view.
 - The minimal `check` and `properties` entry point is implemented; until more commands are added, `ldb.api.unsupportedFeatures` must still keep `rocksdbToolCommands`.
 

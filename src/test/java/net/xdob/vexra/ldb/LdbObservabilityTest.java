@@ -109,6 +109,7 @@ class LdbObservabilityTest {
         new Options()
             .createIfMissing(true)
             .writeBufferSize(512)
+            .checkpointCopyRateLimitBytesPerSecond(1024 * 1024)
             .slowOperationThresholdMicros(1))) {
       long start = System.nanoTime();
       for (int i = 0; i < 64; i++) {
@@ -154,6 +155,9 @@ class LdbObservabilityTest {
       assertOperationCount(db, "write", 64);
       assertOperationCount(db, "compact", 1);
       assertOperationCount(db, "checkpoint", 1);
+      assertEquals("1048576", db.getProperty("ldb.checkpoint.copyRateLimitBytesPerSecond"));
+      assertPropertyContains(db, "ldb.checkpointStats", "last=status=published");
+      assertPropertyContains(db, "ldb.checkpoint.last", "copiedFiles=");
       assertTrue(Long.parseLong(db.getProperty("ldb.operation.get.maxMicros")) > 0);
       assertTrue(Long.parseLong(db.getProperty("ldb.operation.write.maxMicros")) > 0);
       assertTrue(Long.parseLong(db.getProperty("ldb.operation.compact.maxMicros")) > 0);

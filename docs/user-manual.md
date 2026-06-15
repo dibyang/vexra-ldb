@@ -66,6 +66,7 @@ try (LDB db = LDBFactory.factory.open(new File("data/app.ldb"), options)) {
 | `forceLogOnClose` / `forceSstOnFlush` | 关闭或 flush 时强制落盘 | 对可靠性敏感时评估开启 |
 | `level0*Trigger` | L0 compaction、slowdown、stop write 阈值 | 高写入场景需配合监控调优 |
 | `compactionRateLimitBytesPerSecond` | compaction 限速 | 避免后台 IO 挤占业务 |
+| `checkpointCopyRateLimitBytesPerSecond` | checkpoint 复制限速 | 硬链接失败或跨文件系统复制时限制带宽 |
 | `groupCommitEnabled` | 同步写合并提交 | 同步写多时建议灰度开启 |
 
 插件相关配置见 [插件文档入口](ldb-plugin-docs-index.md)。
@@ -177,11 +178,13 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool restore backups/backup-000001 restored.ldb
 ```
 
-`checkpoint` 适合生成本地一致性副本：
+`checkpoint` 适合生成本地一致性副本。实现会在临时目录中构建，校验通过后再发布到目标目录；失败时会清理临时目录，成功报告会包含复制、硬链接、字节数和耗时统计。
 
 ```bash
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool checkpoint data/app.ldb checkpoints/app-001
 ```
+
+目标目录必须不存在或为空。大库或跨文件系统场景下，如果 SST 硬链接失败会退化为文件复制，可通过 `Options#checkpointCopyRateLimitBytesPerSecond(long)` 限制复制带宽。
 
 完整运维流程见 [运维 Runbook](operations.md)。
 

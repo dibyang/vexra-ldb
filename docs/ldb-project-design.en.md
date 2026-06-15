@@ -86,7 +86,7 @@ This document describes the design that is implemented today. It is the baseline
 
 ### Maintenance Flow
 
-- `checkpoint(targetDir)`: flushes first, suspends compaction, freezes the file set, copies or hard-links CURRENT, MANIFEST, `COLUMN-FAMILIES`, live SST, referenced WAL, and INFO_LOG files, and writes `CHECKPOINT-REPORT.json`.
+- `checkpoint(targetDir)`: flushes first, suspends compaction, freezes the file set, builds the copy in a unique temporary sibling directory, copies or hard-links CURRENT, MANIFEST, `COLUMN-FAMILIES`, live SST, referenced WAL, and INFO_LOG files, writes `CHECKPOINT-REPORT.json`, verifies the output, and then publishes it to `targetDir`; failures clean up the temporary directory so half-built outputs are not exposed as successful checkpoints.
 - `LDBFactory.check`: offline scan of CURRENT, MANIFEST, `COLUMN-FAMILIES`, SST, and WAL. It returns `CheckReport`, does not acquire the write lock, and does not modify the directory.
 - `LDBFactory.repair`: rebuilds MANIFEST/CURRENT from available SST/WAL files, quarantines corrupt files, and writes `REPAIR-REPORT.json`.
 - `createBackup/restoreBackup`: creates full backups and restores them through a temporary-directory publish flow, producing JSON reports.
@@ -315,7 +315,7 @@ sequenceDiagram
 
 - `close()` uses `shuttingDown` so repeated calls do not release resources twice.
 - `resumeCompactions()` logs a warning when called without a matching suspend and does not make the counter negative.
-- `checkpoint` requires a missing or empty target directory to avoid overwriting an old snapshot.
+- `checkpoint` requires a missing or empty target directory, builds through a temporary directory, and publishes only after success, avoiding old-snapshot overwrite and half-built output exposure.
 - `backup` builds in a temporary directory and publishes only after verification.
 - `repair` writes a report and quarantines corrupt files; callers should inspect existing reports and quarantine results before repeating it.
 
@@ -378,7 +378,7 @@ Future changes should add coverage for:
 | Compaction cleanup deletes SST files still referenced by snapshots | High | Active-version retention and snapshot tests |
 | Plugins introduce side effects in the write path | Medium | Clear before/after boundaries and preserved causes |
 | Read-only open writes the directory by mistake | High | Tests verifying no WAL/MANIFEST creation and no write lock |
-| repair/backup/checkpoint overwrites target directories | High | Empty-directory requirement, temporary-directory publishing, JSON reports |
+| repair/backup/checkpoint overwrites target directories | High | Empty-directory requirement, temporary-directory publishing, failure cleanup, JSON reports |
 | Range delete semantics remain incomplete | Medium | Keep focused design and explicit unsupported boundaries |
 
 ## Phased Plan

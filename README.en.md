@@ -115,6 +115,7 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `ldb.fileBytes`
 - `ldb.totalBytes`
 - `ldb.compactionStats`
+- `ldb.checkpointStats`
 - `ldb.writeStallStats`
 - `ldb.groupCommitStats`
 - `ldb.plugins`

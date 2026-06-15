@@ -60,6 +60,8 @@ public interface OptionsView {
 
   long compactionRateLimitBytesPerSecond();
 
+  long checkpointCopyRateLimitBytesPerSecond();
+
   long writeSlowdownDelayNanos();
 
   boolean groupCommitEnabled();

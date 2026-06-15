@@ -115,9 +115,38 @@ class LdbVerifyCheckTest {
     String reportJson = new String(java.nio.file.Files.readAllBytes(reportFile.toPath()), UTF_8);
     assertTrue(reportJson.contains("\"ok\": true"), reportJson);
     assertTrue(reportJson.contains("\"checkedFiles\""), reportJson);
+    assertTrue(reportJson.contains("\"checkpointTotalFiles\""), reportJson);
+    assertTrue(reportJson.contains("\"checkpointHardLinkedFiles\""), reportJson);
+    assertTrue(reportJson.contains("\"checkpointCopiedFiles\""), reportJson);
+    assertTrue(reportJson.contains("\"checkpointTotalBytes\""), reportJson);
+    assertTrue(reportJson.contains("\"checkpointCheckMicros\""), reportJson);
+    assertTrue(reportJson.contains("\"checkpointCopyRateLimitBytesPerSecond\""), reportJson);
+    assertFalse(hasCheckpointTempSibling(checkpointDir), "checkpoint temp directory leaked");
 
     LDBFactory.CheckReport report = LDBFactory.factory.check(checkpointDir, new Options().createIfMissing(false));
     assertTrue(report.isOk(), report.toString());
+  }
+
+  @Test
+  void shouldPublishCheckpointIntoExistingEmptyDirectory() throws Exception {
+    File dbDir = new File(tempDir, "checkpoint-existing-empty-source");
+    File checkpointDir = new File(tempDir, "checkpoint-existing-empty-target");
+    assertTrue(checkpointDir.mkdirs());
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options()
+        .createIfMissing(true)
+        .checkpointCopyRateLimitBytesPerSecond(1024 * 1024))) {
+      db.put(bytes("before"), bytes("checkpoint"));
+      db.checkpoint(checkpointDir.getAbsolutePath());
+      assertTrue(db.getProperty("ldb.checkpointStats").contains("copyRateLimitBytesPerSecond=1048576"));
+      assertTrue(db.getProperty("ldb.checkpoint.last").contains("files="));
+    }
+
+    assertTrue(new File(checkpointDir, "CHECKPOINT-REPORT.json").isFile());
+    assertFalse(hasCheckpointTempSibling(checkpointDir), "checkpoint temp directory leaked");
+    try (LDB checkpoint = LDBFactory.factory.open(checkpointDir, new Options().createIfMissing(false))) {
+      assertArrayEquals(bytes("checkpoint"), checkpoint.get(bytes("before")));
+    }
   }
 
   private static File firstFileEndingWith(File dir, String suffix) {
@@ -125,6 +154,13 @@ class LdbVerifyCheckTest {
     assertNotNull(files);
     assertTrue(files.length > 0, "No file ending with " + suffix);
     return files[0];
+  }
+
+  private static boolean hasCheckpointTempSibling(File checkpointDir) {
+    File parent = checkpointDir.getAbsoluteFile().getParentFile();
+    File[] siblings = parent == null ? null : parent.listFiles((ignored, name) ->
+        name.startsWith(checkpointDir.getName() + ".tmp-"));
+    return siblings != null && siblings.length > 0;
   }
 
   private static File firstFileStartingWith(File dir, String prefix) {

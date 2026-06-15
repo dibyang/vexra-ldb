@@ -66,6 +66,7 @@ Common options:
 | `forceLogOnClose` / `forceSstOnFlush` | Force storage sync during close or flush | Evaluate for reliability-sensitive deployments |
 | `level0*Trigger` | L0 compaction, slowdown, and stop-write thresholds | Tune with monitoring for write-heavy workloads |
 | `compactionRateLimitBytesPerSecond` | Compaction rate limit | Prevent background IO from starving foreground traffic |
+| `checkpointCopyRateLimitBytesPerSecond` | Checkpoint copy rate limit | Limit bandwidth when hard links fail or cross-file-system copies are required |
 | `groupCommitEnabled` | Merge sync writes | Consider a gray rollout when sync writes are frequent |
 
 Plugin options are covered by the [Plugin Documentation Index](ldb-plugin-docs-index.en.md).
@@ -177,11 +178,13 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool restore backups/backup-000001 restored.ldb
 ```
 
-`checkpoint` creates a local consistent copy:
+`checkpoint` creates a local consistent copy. The implementation builds in a temporary directory, publishes the target only after verification, cleans the temporary directory on failure, and records copy, hard-link, byte, and duration statistics in the success report.
 
 ```bash
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool checkpoint data/app.ldb checkpoints/app-001
 ```
+
+The target directory must be absent or empty. For large databases or cross-file-system targets, SST hard links may fall back to file copying; use `Options#checkpointCopyRateLimitBytesPerSecond(long)` to limit copy bandwidth.
 
 See the [Operations Runbook](operations.en.md) for full operational procedures.
 

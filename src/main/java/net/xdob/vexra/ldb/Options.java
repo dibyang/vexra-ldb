@@ -37,6 +37,7 @@ public class Options implements OptionsView {
   private int level0SlowdownWritesTrigger = DbConstants.L0_SLOWDOWN_WRITES_TRIGGER;
   private int level0StopWritesTrigger = DbConstants.L0_STOP_WRITES_TRIGGER;
   private long compactionRateLimitBytesPerSecond;
+  private long checkpointCopyRateLimitBytesPerSecond;
   private long writeSlowdownDelayNanos = TimeUnit.MILLISECONDS.toNanos(1);
   private boolean groupCommitEnabled;
   private long groupCommitMaxDelayNanos = TimeUnit.MICROSECONDS.toNanos(200);
@@ -156,6 +157,18 @@ public class Options implements OptionsView {
       throw new IllegalArgumentException("compactionRateLimitBytesPerSecond must be >= 0");
     }
     this.compactionRateLimitBytesPerSecond = compactionRateLimitBytesPerSecond;
+    return this;
+  }
+
+  public long checkpointCopyRateLimitBytesPerSecond() {
+    return checkpointCopyRateLimitBytesPerSecond;
+  }
+
+  public Options checkpointCopyRateLimitBytesPerSecond(long checkpointCopyRateLimitBytesPerSecond) {
+    if (checkpointCopyRateLimitBytesPerSecond < 0) {
+      throw new IllegalArgumentException("checkpointCopyRateLimitBytesPerSecond must be >= 0");
+    }
+    this.checkpointCopyRateLimitBytesPerSecond = checkpointCopyRateLimitBytesPerSecond;
     return this;
   }
 

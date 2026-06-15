@@ -86,7 +86,7 @@
 
 ### 维护流程
 
-- `checkpoint(targetDir)`：flush 后暂停 compaction，冻结文件集合，复制或硬链接 CURRENT、MANIFEST、`COLUMN-FAMILIES`、live SST、引用 WAL 和 INFO_LOG，写入 `CHECKPOINT-REPORT.json`。
+- `checkpoint(targetDir)`：flush 后暂停 compaction，冻结文件集合，在目标目录旁的唯一临时目录中复制或硬链接 CURRENT、MANIFEST、`COLUMN-FAMILIES`、live SST、引用 WAL 和 INFO_LOG，写入 `CHECKPOINT-REPORT.json` 并校验通过后再原子发布到 `targetDir`；失败时清理临时目录，避免把半成品暴露成成功快照。
 - `LDBFactory.check`：离线扫描 CURRENT、MANIFEST、`COLUMN-FAMILIES`、SST、WAL，返回 `CheckReport`，不获取写锁，不修改目录。
 - `LDBFactory.repair`：从可用 SST/WAL 重建 MANIFEST/CURRENT，隔离损坏文件，并写入 `REPAIR-REPORT.json`。
 - `createBackup/restoreBackup`：执行全量备份和恢复，使用临时目录发布，生成 JSON 报告。
@@ -307,7 +307,7 @@ sequenceDiagram
 | WAL record 损坏 | check/repair 记录损坏；恢复路径按当前 LogReader 策略处理完整 record |
 | SST 校验失败 | 在读取、check 或 verifyOnOpen 中抛出带 cause 的异常或报告 failure |
 | 后台 compaction 失败 | 记录 `backgroundException`，后续写入或手动压缩检查并失败 |
-| checkpoint 失败 | 恢复 compaction，抛出 `DBException`，保留错误 cause |
+| checkpoint 失败 | 恢复 compaction，清理临时目录，抛出 `DBException`，保留错误 cause |
 | close 超时 | 取消后台任务并记录关闭失败 |
 | 插件异常 | 打开和写前异常会阻止操作；写后异常不会回滚已提交写入 |
 
@@ -315,7 +315,7 @@ sequenceDiagram
 
 - `close()` 使用 `shuttingDown` 保证重复调用不会重复释放资源。
 - `resumeCompactions()` 在没有匹配 suspend 时记录警告，不让计数变为负数。
-- `checkpoint` 要求目标目录不存在或为空，避免覆盖旧快照。
+- `checkpoint` 要求目标目录不存在或为空，内部使用临时目录构建并在成功后发布，避免覆盖旧快照或暴露半成品。
 - `backup` 使用临时目录构建，通过校验后发布，避免半成品被当成可恢复版本。
 - `repair` 输出报告并隔离损坏文件，重复执行前应先确认目录中已有的报告和隔离结果。
 
@@ -378,7 +378,7 @@ sequenceDiagram
 | compaction 清理误删仍被 snapshot 引用的 SST | 高 | 依赖 active version 和 snapshot 测试 |
 | 插件在写入链路中引入副作用 | 中 | 明确 before/after 边界，失败时保留 cause |
 | 只读打开误写目录 | 高 | 测试验证不创建 WAL/MANIFEST，不获取写锁 |
-| repair/backup/checkpoint 误覆盖目标目录 | 高 | 要求空目录、临时目录发布、JSON 报告 |
+| repair/backup/checkpoint 误覆盖目标目录 | 高 | 要求空目录、临时目录发布、失败清理、JSON 报告 |
 | range delete 语义不完整 | 中 | 保持专项设计和显式边界，避免静默承诺完整能力 |
 
 ## 分阶段实施计划

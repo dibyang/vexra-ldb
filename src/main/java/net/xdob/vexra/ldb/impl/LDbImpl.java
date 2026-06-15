@@ -98,6 +98,7 @@ public class LDbImpl implements LDB {
   private final AtomicLong compactionThrottleDelayNanos = new AtomicLong();
   private final AtomicLong compactionCancelCount = new AtomicLong();
   private final AtomicLong compactionCleanupFileCount = new AtomicLong();
+  private volatile String lastCheckpointSummary = "none";
   private final AtomicLong snapshotCursorOpenCount = new AtomicLong();
   private final AtomicLong snapshotCursorCloseCount = new AtomicLong();
   private volatile String lastCompactionFailure = "";
@@ -832,6 +833,7 @@ public class LDbImpl implements LDB {
     private final int level0SlowdownWritesTrigger;
     private final int level0StopWritesTrigger;
     private final long compactionRateLimitBytesPerSecond;
+    private final long checkpointCopyRateLimitBytesPerSecond;
     private final long writeSlowdownDelayNanos;
     private final boolean groupCommitEnabled;
     private final long groupCommitMaxDelayNanos;
@@ -864,6 +866,7 @@ public class LDbImpl implements LDB {
       this.level0SlowdownWritesTrigger = options.level0SlowdownWritesTrigger();
       this.level0StopWritesTrigger = options.level0StopWritesTrigger();
       this.compactionRateLimitBytesPerSecond = options.compactionRateLimitBytesPerSecond();
+      this.checkpointCopyRateLimitBytesPerSecond = options.checkpointCopyRateLimitBytesPerSecond();
       this.writeSlowdownDelayNanos = options.writeSlowdownDelayNanos();
       this.groupCommitEnabled = options.groupCommitEnabled();
       this.groupCommitMaxDelayNanos = options.groupCommitMaxDelayNanos();
@@ -998,6 +1001,11 @@ public class LDbImpl implements LDB {
     @Override
     public long compactionRateLimitBytesPerSecond() {
       return compactionRateLimitBytesPerSecond;
+    }
+
+    @Override
+    public long checkpointCopyRateLimitBytesPerSecond() {
+      return checkpointCopyRateLimitBytesPerSecond;
     }
 
     @Override
@@ -1548,6 +1556,10 @@ public class LDbImpl implements LDB {
       if (operationProperty != null) {
         return operationProperty;
       }
+      String checkpointProperty = checkpointProperty(name);
+      if (checkpointProperty != null) {
+        return checkpointProperty;
+      }
       String writeStallProperty = writeStallProperty(name);
       if (writeStallProperty != null) {
         return writeStallProperty;
@@ -1841,6 +1853,7 @@ public class LDbImpl implements LDB {
           + ",groupCommitMaxDelayNanos=supported"
           + ",groupCommitMaxBatchBytes=supported"
           + ",compactionRateLimitBytesPerSecond=supported"
+          + ",checkpointCopyRateLimitBytesPerSecond=supported"
           + ",compactionSuspendTimeoutMillis=supported"
           + ",closeTimeoutMillis=supported"
           + ",slowOperationThresholdMicros=supported"
@@ -1884,6 +1897,7 @@ public class LDbImpl implements LDB {
         + ",groupCommitMaxDelayNanos=" + options.groupCommitMaxDelayNanos()
         + ",groupCommitMaxBatchBytes=" + options.groupCommitMaxBatchBytes()
         + ",compactionRateLimitBytesPerSecond=" + options.compactionRateLimitBytesPerSecond()
+        + ",checkpointCopyRateLimitBytesPerSecond=" + options.checkpointCopyRateLimitBytesPerSecond()
         + ",compactionSuspendTimeoutMillis=" + options.compactionSuspendTimeoutMillis()
         + ",closeTimeoutMillis=" + options.closeTimeoutMillis()
         + ",slowOperationThresholdMicros=" + options.slowOperationThresholdMicros()
@@ -1922,6 +1936,20 @@ public class LDbImpl implements LDB {
       return null;
     }
     return stats.property(remainder.substring(separator + 1));
+  }
+
+  private String checkpointProperty(String name) {
+    if ("ldb.checkpointStats".equals(name)) {
+      return "copyRateLimitBytesPerSecond=" + options.checkpointCopyRateLimitBytesPerSecond()
+          + ",last=" + lastCheckpointSummary;
+    }
+    if ("ldb.checkpoint.copyRateLimitBytesPerSecond".equals(name)) {
+      return Long.toString(options.checkpointCopyRateLimitBytesPerSecond());
+    }
+    if ("ldb.checkpoint.last".equals(name)) {
+      return lastCheckpointSummary;
+    }
+    return null;
   }
 
   private String snapshotCursorProperty(String name) {
@@ -4061,8 +4089,11 @@ public class LDbImpl implements LDB {
     requireNonNull(targetDir, "targetDir is null");
     checkWritable("checkpoint");
 
-    File target = new File(targetDir);
+    File target = new File(targetDir).getAbsoluteFile();
+    File temp = checkpointTempDir(target);
     boolean suspended = false;
+    boolean published = false;
+    CheckpointCopyStats copyStats = null;
     notifyBeforeCheckpoint(target);
 
     try {
@@ -4081,7 +4112,7 @@ public class LDbImpl implements LDB {
         checkBackgroundException();
 
         // checkpoint 目录必须不存在，或是空目录，避免混入旧文件
-        prepareEmptyDirectory(target);
+        prepareCheckpointTarget(target, temp);
 
         filesToCopy = collectCheckpointFilesLocked();
       } finally {
@@ -4089,15 +4120,30 @@ public class LDbImpl implements LDB {
       }
 
       // 4. 实际复制文件
+      copyStats = new CheckpointCopyStats(target, temp,
+          filesToCopy.size(), options.checkpointCopyRateLimitBytesPerSecond());
+      copyStats.status = "copying";
+      lastCheckpointSummary = copyStats.summary();
       for (File src : filesToCopy) {
-        File dst = new File(target, src.getName());
-        copyForCheckpoint(src, dst);
+        File dst = new File(temp, src.getName());
+        copyForCheckpoint(src, dst, copyStats);
+        lastCheckpointSummary = copyStats.summary();
       }
 
       // 5. 最后再 fsync 一下目录，降低宕机时目录项丢失风险
-      forceDirectory(target);
-      writeCheckpointReport(target);
-      forceDirectory(target);
+      forceDirectory(temp);
+      copyStats.status = "checking";
+      lastCheckpointSummary = copyStats.summary();
+      writeCheckpointReport(temp, copyStats);
+      forceDirectory(temp);
+      long publishStart = System.nanoTime();
+      copyStats.status = "publishing";
+      lastCheckpointSummary = copyStats.summary();
+      publishCheckpoint(target, temp);
+      copyStats.publishNanos = System.nanoTime() - publishStart;
+      copyStats.status = "published";
+      published = true;
+      lastCheckpointSummary = copyStats.summary();
       notifyAfterCheckpoint(target);
 
     } catch (InterruptedException e) {
@@ -4106,6 +4152,13 @@ public class LDbImpl implements LDB {
     } catch (IOException e) {
       throw new DBException("Failed to create checkpoint at " + targetDir, e);
     } finally {
+      if (!published && temp.exists() && !FileUtils.deleteRecursively(temp)) {
+        LOG.warn("Failed to clean incomplete checkpoint temp directory {}", temp);
+      }
+      if (!published && copyStats != null) {
+        copyStats.status = "failed";
+        lastCheckpointSummary = copyStats.summary();
+      }
       if (suspended) {
         resumeCompactions();
       }
@@ -4113,11 +4166,14 @@ public class LDbImpl implements LDB {
     }
   }
 
-  private void writeCheckpointReport(File target) throws IOException {
+  private void writeCheckpointReport(File target, CheckpointCopyStats copyStats) throws IOException {
+    long checkStart = System.nanoTime();
     LDBFactory.CheckReport report = LDBFactory.factory.check(target, options);
+    copyStats.checkNanos = System.nanoTime() - checkStart;
     File reportFile = new File(target, CHECKPOINT_REPORT_FILE);
     try (FileOutputStream output = new FileOutputStream(reportFile)) {
-      output.write(report.toJson().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      output.write(appendCheckpointReportFields(report.toJson(), copyStats)
+          .getBytes(java.nio.charset.StandardCharsets.UTF_8));
       output.flush();
       output.getFD().sync();
     }
@@ -4182,7 +4238,30 @@ public class LDbImpl implements LDB {
     return result;
   }
 
-  private void prepareEmptyDirectory(File dir) throws IOException {
+  private File checkpointTempDir(File target) {
+    File parent = target.getParentFile();
+    if (parent == null) {
+      parent = new File(".").getAbsoluteFile();
+    }
+    return new File(parent, target.getName() + ".tmp-"
+        + System.currentTimeMillis() + "-" + Thread.currentThread().getId());
+  }
+
+  private void prepareCheckpointTarget(File target, File temp) throws IOException {
+    File parent = target.getParentFile();
+    if (parent != null && !parent.exists() && !parent.mkdirs()) {
+      throw new IOException("Unable to create checkpoint parent directory: " + parent);
+    }
+    assertMissingOrEmptyDirectory(target);
+    if (temp.exists()) {
+      throw new IOException("Checkpoint temp directory already exists: " + temp);
+    }
+    if (!temp.mkdirs()) {
+      throw new IOException("Unable to create checkpoint temp directory: " + temp);
+    }
+  }
+
+  private void assertMissingOrEmptyDirectory(File dir) throws IOException {
     if (dir.exists()) {
       if (!dir.isDirectory()) {
         throw new IOException("Checkpoint target exists but is not a directory: " + dir);
@@ -4191,14 +4270,28 @@ public class LDbImpl implements LDB {
       if (children != null && children.length > 0) {
         throw new IOException("Checkpoint target directory is not empty: " + dir);
       }
-    } else {
-      if (!dir.mkdirs()) {
-        throw new IOException("Unable to create checkpoint directory: " + dir);
-      }
     }
   }
 
-  private void copyForCheckpoint(File src, File dst) throws IOException {
+  private void publishCheckpoint(File target, File temp) throws IOException {
+    if (target.exists() && !target.delete()) {
+      throw new IOException("Unable to remove empty checkpoint target before publish: " + target);
+    }
+    try {
+      java.nio.file.Files.move(temp.toPath(), target.toPath(),
+          java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+    } catch (IOException e) {
+      java.nio.file.Files.move(temp.toPath(), target.toPath());
+    }
+    File parent = target.getParentFile();
+    if (parent != null) {
+      forceDirectory(parent);
+    }
+  }
+
+  private void copyForCheckpoint(File src, File dst, CheckpointCopyStats stats)
+      throws IOException, InterruptedException {
+    stats.totalBytes += Math.max(0L, src.length());
     // SST/TABLE 尽量硬链接，速度快且接近 RocksDB checkpoint 的效果
     String name = src.getName().toLowerCase(Locale.ROOT);
     boolean maybeTableFile =
@@ -4207,6 +4300,8 @@ public class LDbImpl implements LDB {
     if (maybeTableFile) {
       try {
         java.nio.file.Files.createLink(dst.toPath(), src.toPath());
+        stats.hardLinkedFiles++;
+        stats.hardLinkedBytes += Math.max(0L, src.length());
         return;
       } catch (UnsupportedOperationException
                | IOException
@@ -4214,12 +4309,141 @@ public class LDbImpl implements LDB {
         // 硬链接失败就回退到普通复制
       }
     }
-    LOG.info("Unable to hard link {} to {}" ,src, dst);
-    java.nio.file.Files.copy(
-        src.toPath(),
-        dst.toPath(),
-        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-        java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
+    if (maybeTableFile) {
+      LOG.info("Unable to hard link {} to {}, falling back to copy", src, dst);
+    }
+    long copyStart = System.nanoTime();
+    copyFileForCheckpoint(src, dst, stats.copyRateLimitBytesPerSecond);
+    stats.copyNanos += System.nanoTime() - copyStart;
+    stats.copiedFiles++;
+    stats.copiedBytes += Math.max(0L, src.length());
+  }
+
+  private void copyFileForCheckpoint(File src, File dst, long rateLimitBytesPerSecond)
+      throws IOException, InterruptedException {
+    if (rateLimitBytesPerSecond <= 0) {
+      if (Thread.currentThread().isInterrupted()) {
+        throw new InterruptedException("Interrupted before copying checkpoint file " + src);
+      }
+      java.nio.file.Files.copy(
+          src.toPath(),
+          dst.toPath(),
+          java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+          java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
+      if (Thread.currentThread().isInterrupted()) {
+        throw new InterruptedException("Interrupted after copying checkpoint file " + src);
+      }
+      return;
+    }
+    byte[] buffer = new byte[64 * 1024];
+    long copied = 0;
+    long start = System.nanoTime();
+    try (InputStream input = new BufferedInputStream(new FileInputStream(src));
+         OutputStream output = new BufferedOutputStream(new FileOutputStream(dst))) {
+      int read;
+      while ((read = input.read(buffer)) >= 0) {
+        if (Thread.currentThread().isInterrupted()) {
+          throw new InterruptedException("Interrupted while copying checkpoint file " + src);
+        }
+        output.write(buffer, 0, read);
+        copied += read;
+        throttleCheckpointCopy(copied, start, rateLimitBytesPerSecond);
+      }
+      output.flush();
+    }
+    dst.setLastModified(src.lastModified());
+  }
+
+  private void throttleCheckpointCopy(long copiedBytes, long startNanos, long rateLimitBytesPerSecond)
+      throws InterruptedException {
+    double expectedNanos = copiedBytes * 1_000_000_000.0D / rateLimitBytesPerSecond;
+    long delayNanos = (long) expectedNanos - (System.nanoTime() - startNanos);
+    if (delayNanos <= 0) {
+      return;
+    }
+    long millis = TimeUnit.NANOSECONDS.toMillis(delayNanos);
+    int nanos = (int) (delayNanos - TimeUnit.MILLISECONDS.toNanos(millis));
+    Thread.sleep(millis, nanos);
+  }
+
+  private String appendCheckpointReportFields(String reportJson, CheckpointCopyStats stats) {
+    String trimmed = reportJson.trim();
+    if (!trimmed.endsWith("}")) {
+      return reportJson;
+    }
+    String prefix = trimmed.substring(0, trimmed.length() - 1);
+    String separator = prefix.trim().endsWith("{") ? "" : ",";
+    return prefix + separator
+        + "\n  \"checkpointTargetDir\": \"" + jsonEscape(stats.target.getAbsolutePath()) + "\","
+        + "\n  \"checkpointTempDir\": \"" + jsonEscape(stats.temp.getAbsolutePath()) + "\","
+        + "\n  \"checkpointTotalFiles\": " + stats.totalFiles + ","
+        + "\n  \"checkpointHardLinkedFiles\": " + stats.hardLinkedFiles + ","
+        + "\n  \"checkpointCopiedFiles\": " + stats.copiedFiles + ","
+        + "\n  \"checkpointTotalBytes\": " + stats.totalBytes + ","
+        + "\n  \"checkpointHardLinkedBytes\": " + stats.hardLinkedBytes + ","
+        + "\n  \"checkpointCopiedBytes\": " + stats.copiedBytes + ","
+        + "\n  \"checkpointCopyMicros\": " + TimeUnit.NANOSECONDS.toMicros(stats.copyNanos) + ","
+        + "\n  \"checkpointCheckMicros\": " + TimeUnit.NANOSECONDS.toMicros(stats.checkNanos) + ","
+        + "\n  \"checkpointCopyRateLimitBytesPerSecond\": " + stats.copyRateLimitBytesPerSecond
+        + "\n}";
+  }
+
+  private static String jsonEscape(String value) {
+    StringBuilder builder = new StringBuilder();
+    for (int i = 0; i < value.length(); i++) {
+      char c = value.charAt(i);
+      if (c == '"' || c == '\\') {
+        builder.append('\\').append(c);
+      } else if (c == '\n') {
+        builder.append("\\n");
+      } else if (c == '\r') {
+        builder.append("\\r");
+      } else if (c == '\t') {
+        builder.append("\\t");
+      } else {
+        builder.append(c);
+      }
+    }
+    return builder.toString();
+  }
+
+  private static final class CheckpointCopyStats {
+    private final File target;
+    private final File temp;
+    private final int totalFiles;
+    private final long copyRateLimitBytesPerSecond;
+    private int hardLinkedFiles;
+    private int copiedFiles;
+    private long totalBytes;
+    private long hardLinkedBytes;
+    private long copiedBytes;
+    private long copyNanos;
+    private long checkNanos;
+    private long publishNanos;
+    private String status = "pending";
+
+    private CheckpointCopyStats(File target, File temp, int totalFiles,
+                                long copyRateLimitBytesPerSecond) {
+      this.target = target;
+      this.temp = temp;
+      this.totalFiles = totalFiles;
+      this.copyRateLimitBytesPerSecond = copyRateLimitBytesPerSecond;
+    }
+
+    private String summary() {
+      return "status=" + status
+          + ",target=" + target.getAbsolutePath()
+          + ",files=" + totalFiles
+          + ",hardLinkedFiles=" + hardLinkedFiles
+          + ",copiedFiles=" + copiedFiles
+          + ",totalBytes=" + totalBytes
+          + ",hardLinkedBytes=" + hardLinkedBytes
+          + ",copiedBytes=" + copiedBytes
+          + ",copyMicros=" + TimeUnit.NANOSECONDS.toMicros(copyNanos)
+          + ",checkMicros=" + TimeUnit.NANOSECONDS.toMicros(checkNanos)
+          + ",publishMicros=" + TimeUnit.NANOSECONDS.toMicros(publishNanos)
+          + ",copyRateLimitBytesPerSecond=" + copyRateLimitBytesPerSecond;
+    }
   }
 
   private void forceDirectory(File dir) {
