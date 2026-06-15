@@ -141,6 +141,8 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `CODE_OF_CONDUCT.md`: community code of conduct, with English copy and language switch.
 - `CHANGELOG.md`: release changelog, with English copy and language switch.
 - `docs/release.md`: release process, with English copy and language switch.
+- `docs/quick-start.md`: quick start for first-time users, with English copy and language switch.
+- `docs/user-manual.md`: user manual for application integration, operations, and troubleshooting, with English copy and language switch.
 - `docs/operations.md`: runbook for production-readiness validation, backup/restore, upgrade, check/repair, and incident handling.
 - `docs/ldb-project-design.md`: overall project design in Chinese.
 - `docs/ldb-project-design.en.md`: English copy of the overall project design.
