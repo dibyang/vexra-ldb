@@ -70,6 +70,9 @@ class SmokeRunnerTest {
     assertTrue(output.contains("ldbCompactionRunCount="));
     assertTrue(output.contains("RESULT phase=workload"));
     assertTrue(output.contains("FINAL phase=verify enabled=true"));
+    assertTrue(output.contains("FINAL PROGRESS phase=verify"));
+    assertTrue(output.contains("verified="));
+    assertTrue(output.contains("total="));
     assertTrue(output.contains("SUMMARY status="));
     assertTrue(output.contains("warmupSamples="));
     assertTrue(output.contains("measuredSamples="));

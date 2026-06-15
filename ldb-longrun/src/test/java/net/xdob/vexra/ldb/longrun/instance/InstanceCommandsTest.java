@@ -52,6 +52,15 @@ class InstanceCommandsTest {
   }
 
   @Test
+  void formatsFinalVerifyProgressWithCounts() {
+    String line = "FINAL PROGRESS phase=verify progressPercent=50.00 verified=100 total=200 elapsedMillis=3000";
+
+    String formatted = InstanceCommands.formatProgressLineForConsole(line);
+
+    assertEquals("FINAL PROGRESS [##########----------]  50% verified=100 total=200 phase=verify", formatted);
+  }
+
+  @Test
   void keepsProgressLineWithoutPercentUnchanged() {
     String line = "PROGRESS operations=10";
 

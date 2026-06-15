@@ -188,6 +188,9 @@ crash/recovery 模式主日志输出 `CRASH PROGRESS`，表示父进程按 `cras
 ./bin/longrun start --config config/smoke.properties --run.instance=smoke-b --run.workDir=work/smoke-b
 ```
 
+最终 active key 校验期间会输出 `FINAL PROGRESS phase=verify progressPercent=... verified=... total=...`。
+`watch` 会把这些行渲染成紧凑进度条，避免发布门禁长时间停在 `FINAL phase=verify` 时被误判为卡住；完整字段仍会保留在 `logs/<instance>.out`。
+
 ## 故障注入
 
 `fault-injection.properties` 使用 copy-based 模式：

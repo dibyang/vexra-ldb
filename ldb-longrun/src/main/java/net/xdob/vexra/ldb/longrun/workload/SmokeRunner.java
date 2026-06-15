@@ -133,9 +133,11 @@ public final class SmokeRunner {
         ProgressSnapshot finalProgress = printProgress(out, startMillis, config.durationMillis(), state,
             reopenChecks, recoveryChecks, faultEvents, progressStats, db);
         printWorkloadResult(out, state, finalProgress);
-        out.println("FINAL phase=verify enabled=" + config.finalVerifyEnabled());
+        out.println("FINAL phase=verify enabled=" + config.finalVerifyEnabled()
+            + " activeKeys=" + state.active().size());
         if (config.finalVerifyEnabled()) {
-          verifier.verifyActive(db, state);
+          verifier.verifyActive(db, state, (verified, total, elapsedMillis) ->
+              printFinalVerifyProgress(out, verified, total, elapsedMillis));
           verifier.verifyLedger(db, state, ledger);
           metrics.event("verify", "PASS", "final verify succeeded");
         } else {
@@ -403,6 +405,23 @@ public final class SmokeRunner {
         + " removes=" + state.removes()
         + " commits=" + state.commits()
         + " activeKeys=" + state.active().size());
+  }
+
+  private static void printFinalVerifyProgress(PrintStream out, long verified,
+                                               long total, long elapsedMillis) {
+    out.println("FINAL PROGRESS phase=verify"
+        + " progressPercent=" + verifyProgressPercent(verified, total)
+        + " verified=" + verified
+        + " total=" + total
+        + " elapsedMillis=" + elapsedMillis);
+  }
+
+  private static String verifyProgressPercent(long verified, long total) {
+    if (total <= 0) {
+      return "100.00";
+    }
+    double percent = Math.max(0.0D, Math.min(100.0D, verified * 100.0D / total));
+    return String.format(java.util.Locale.ROOT, "%.2f", percent);
   }
 
   private static void printSummary(PrintStream out, ReportSummary summary) {

@@ -270,6 +270,8 @@ public final class InstanceCommands {
         .append(progressBar(percent, 20))
         .append(' ')
         .append(String.format(java.util.Locale.ROOT, "%3.0f%%", percent));
+    appendIfPresent(formatted, line, "verified", "verified");
+    appendIfPresent(formatted, line, "total", "total");
     appendIfPresent(formatted, line, "ops", "operations");
     appendRateIfPresent(formatted, line, "win", "windowOpsPerSecond");
     appendRateIfPresent(formatted, line, "avg", "avgOpsPerSecond");
