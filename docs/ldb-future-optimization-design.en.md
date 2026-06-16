@@ -4,17 +4,17 @@ English | [中文](ldb-future-optimization-design.md)
 
 ## Background
 
-LDB now has benchmark/soak entry points, compaction pressure regression tests, a narrower range tombstone read path, configurable write-stall slowdown delay, and a recovery-loop test covering checkpoint, backup/restore, and repair. The next high-value areas are write aggregation, incremental backup, and full range-delete semantics. Each area can affect WAL, SST, MANIFEST, recovery, compaction, or operational reports, so the boundaries must be fixed before implementation.
+LDB now has benchmark/soak entry points, compaction pressure regression tests, range tombstone read/write paths, configurable write-stall slowdown delay, a minimal group commit implementation, object-store incremental backup, and recovery-loop tests covering checkpoint, backup/restore, and repair. The original write aggregation, incremental backup, and full range-delete work now has a baseline; the next high-value work is production evidence: checkpoint/backup cross-filesystem and low-disk matrices, WAL lifecycle, long group-commit baselines, and external observability.
 
 ## Goals
 
-- Define the implementation landing points for group commit, incremental backup, and range delete.
+- Record the landed group commit, incremental backup, and range delete baselines, and narrow the remaining work to production evidence and operational hardening.
 - Separate changes that can ship without a disk-format change from changes that require explicit format review.
 - Protect existing callers: default behavior remains compatible, and new behavior must be observable, disableable, and recoverable.
 
 ## Non-Goals
 
-- This document records the design boundaries for group commit, incremental backup, and range-delete follow-up work. The minimal group commit, minimal incremental backup, long compaction soak entry point, and benchmark report output have landed in `0.4.0`.
+- This document records the design boundaries for group commit, incremental backup, and range delete. Group commit, object-store incremental backup, range delete, long compaction soak entry points, and benchmark report output are now part of the current baseline.
 - It does not introduce RocksDB JNI, RocksJava, or external storage services.
 - It does not change the current compatibility behavior of `LDBFactory.createBackup/restoreBackup`, `LDB#checkpoint`, or `LdbWriteBatch.deleteRange`.
 
@@ -22,9 +22,9 @@ LDB now has benchmark/soak entry points, compaction pressure regression tests, a
 
 | Area | Current capability | Main gap |
 | --- | --- | --- |
-| Write path | A single writer appends WAL and then applies MemTable; write-stall counters, configurable slowdown delay, and a disabled-by-default minimal group commit now exist | Group commit still writes one WAL record per request; it does not yet encode multiple requests into one WAL record or provide a long-run throughput/tail-latency baseline |
-| Backup | Offline full backup/restore, temporary-directory publish, `BACKUP-REPORT.json`, `RESTORE-REPORT.json`, old-version purge, `BACKUP-MANIFEST.json`, and independently restorable incremental backup directories | Incremental backup currently reuses only same-name same-length SST files, falling back to copy when hard links fail; there is no shared object store, reference count, or incremental-chain cleanup yet |
-| Range Delete | API, WAL/SST/MemTable/read/compaction have baseline semantics; the read path avoids unnecessary full tombstone scans | Still needs format-version boundaries, old-version compatibility rules, longer snapshot/compaction/repair matrices, and downgrade rules |
+| Write path | A single writer appends WAL and then applies MemTable; write-stall counters, configurable slowdown delay, and a disabled-by-default minimal group commit now exist | Group commit still writes one WAL record per request and lacks a long-run throughput/tail-latency baseline |
+| Backup | Offline full backup/restore, temporary-directory publish, `BACKUP-REPORT.json`, `RESTORE-REPORT.json`, object store, `OBJECT-REFS.json`, dry-run cleanup, and independently restorable incremental backup directories | Still needs long backup chains, cross-filesystem, low-disk, and permission fault matrices |
+| Range Delete | API, WAL/SST/MemTable/read/compaction have baseline semantics; the read path avoids unnecessary full tombstone scans | Still needs more aggressive tombstone/point-key cleanup strategy, long mixed-workload reports, and archived old-version fail-fast evidence |
 
 ## Core Constraints
 
@@ -180,15 +180,15 @@ Each transition must keep snapshot-sequence visibility explainable. A new tombst
 
 1. Ship observability and stress tests before enabling behavior.
 2. Gray-release group commit with a small wait window, watching p99 write latency, sync count, and throughput.
-3. Incremental backup now supports complete directories plus manifest plus SST hard-link reuse; shared object storage and reference-count cleanup remain future work.
-4. For range delete, add format compatibility tests and repair/check reports before enabling new-format writes.
+3. Incremental backup now supports an object store, reference counts, and dry-run cleanup; future rollout depends on long-chain, low-disk, and cross-filesystem reports.
+4. Range delete now has baseline semantics; future rollout depends on old-version fail-fast evidence, long snapshot/compaction matrices, and conservative cleanup rules.
 
 ## Test Plan
 
 | Area | Required tests |
 | --- | --- |
 | Group commit | Covered now: concurrent writes, sync/non-sync mixes, reopen recovery, and stats properties; later: WAL failure injection, MemTable apply failure, and longer tail-latency reporting |
-| Incremental backup | Covered now: first incremental backup, consecutive incremental backups, SST reuse, restore then reopen, and checkBackup; later: missing parent, damaged shared file, and reference cleanup |
+| Incremental backup | Covered now: first incremental backup, consecutive incremental backups, object reuse, restore then reopen, checkBackup, damaged objects, and reference cleanup; later: long backup chains, cross-filesystem behavior, and low-disk matrices |
 | Range delete | Cross-MemTable/SST/level deletion, old snapshot views, crash recovery, repair/check/backup, old-format compatibility, compaction merge |
 
 ## Risks
@@ -208,7 +208,9 @@ Each transition must keep snapshot-sequence visibility explainable. A new tombst
 | 1 | Group commit switch and stats, disabled by default | Done: single-writer behavior is unchanged and the new property is observable |
 | 2 | Minimal group commit implementation | Done: concurrent write, sync, reopen, and stats tests pass |
 | 3 | Incremental backup manifest and checkBackup | Done: full backup remains compatible and manifest validation is explainable |
-| 4 | Minimal shared-SST incremental backup | Done: consecutive incremental backups, SST reuse, restore, and checkBackup pass; reference-count cleanup remains future work |
-| 5 | Range delete format compatibility review and test matrix | New/old format boundaries, repair/check/backup docs and tests are ready |
-| 6 | Full range delete compaction and recovery hardening | Snapshot, compaction, crash, and repair matrices pass |
+| 4 | Object-store and reference-count incremental backup | Done: consecutive incremental backups, object reuse, restore, checkBackup, and dry-run cleanup pass |
+| 5 | Range delete format compatibility review and test matrix | Done: new/old format boundaries, repair/check/backup docs and tests are ready |
+| 6 | Full range delete compaction and recovery hardening | Done: snapshot, compaction, crash, and repair matrices pass; cleanup remains conservative |
+| 7 | Checkpoint/backup cross-filesystem and low-disk production evidence | Future: hard-link fallback, copy throttling, permission failures, and long-chain reports stay stable |
+| 8 | WAL lifecycle and long group-commit baselines | Future: archive/retention policy, tail latency, and sync-count reports stay stable |
 

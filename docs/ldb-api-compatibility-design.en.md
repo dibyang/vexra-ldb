@@ -16,7 +16,7 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 ## Non-Goals
 
 - Do not implement a RocksDB JNI or RocksJava compatibility layer.
-- Do not introduce MergeOperator, PrefixExtractor, transactions, TTL, secondary indexes, or non-empty column-family drop/rename in this phase.
+- Do not introduce MergeOperator, PrefixExtractor, transactions, TTL, secondary indexes, custom Env, or full RocksDB CLI compatibility in this phase.
 - Do not change WAL, SST, MANIFEST, or CURRENT disk formats.
 - Do not promise compatibility with all RocksDB property names or return formats.
 
@@ -25,11 +25,11 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 | Capability | Current LDB behavior | Migration note |
 | --- | --- | --- |
 | Basic read/write | `put`, `delete`, `get`, and `write` are supported | Failures surface as `DBException` or argument errors |
-| Column families | Declared before open through `Options.addColumnFamily`, with minimal runtime `list/create/drop-empty` support | Non-empty drop, rename, and column-family migration tombstones are still unsupported |
+| Column families | Declared before open through `Options.addColumnFamily`, with runtime `list/create/drop`, non-empty drop tombstones, and rename support | Dropped-CF physical GC, migration policy, and large-scale multi-CF operations remain hardening items |
 | Range delete | `LdbWriteBatch.deleteRange` is supported | Check old-version readability before using data with range tombstones |
 | Read-only open | `Options.readOnly(true)` is supported | Read-only instances do not create new WALs and reject writes/compaction/checkpoint |
 | Statistics | Exposed through `LDB.getProperty` | No native RocksDB statistics object |
-| Checkpoint/Backup | Checkpoint, full backup, and incremental-backup Java APIs are supported | Checkpoint target directory must be empty; incremental backup currently publishes a complete restorable directory |
+| Checkpoint/Backup | Checkpoint, full backup, incremental backup, object store, and cleanup dry-run Java APIs are supported | Checkpoint target directories must be empty; cross-filesystem copies, low-disk cases, and long backup chains still need production evidence |
 | Group Commit | Can be explicitly enabled through `Options.groupCommitEnabled` | Disabled by default; WAL records are still encoded per request |
 | Repair/Verify | Factory repair/check APIs are supported | Repair writes a structured report |
 
@@ -179,11 +179,11 @@ The repository now has a minimal `net.xdob.vexra.ldb.tool.LdbTool` CLI entry poi
 - `repair`, `compact`, and `restore` are write commands; help text and logs must clearly state their side effects. The currently exposed `repair` command prints `REPAIR-REPORT.json` after success.
 - `checkpoint` and `backup` should not change source DB semantics, but they write target directories; non-empty targets must fail. `checkpoint` builds through a temporary directory, publishes only after verification, cleans the temporary directory on failure, and preserves the failure cause. The currently exposed `backup`/`restore` commands reuse offline backup reports directly, and failed reports return exit code `2`; `checkpoint` prints the target directory's `CHECKPOINT-REPORT.json`.
 - All commands should support machine-readable output, preferably JSON; human text is only an additional view.
-- The minimal `check` and `properties` entry point is implemented; until more commands are added, `ldb.api.unsupportedFeatures` must still keep `rocksdbToolCommands`.
+- LDB tool commands now have minimal entries for `check`, `properties`, `repair`, `backup`, `restore`, `checkpoint`, `incremental-backup`, and `check-backup`; `rocksdbToolCommands` in `ldb.api.unsupportedFeatures` means the native RocksDB tool command set is not compatible.
 
 ### Implementation Prerequisites
 
-1. Add a dedicated CLI entry class and command parser tests; do not reuse temporary test `main` classes.
+1. When adding or extending CLI commands, add command parser tests and do not reuse temporary test `main` classes.
 2. Cover lock conflicts, missing paths, non-empty targets, and permission failures for all write commands.
 3. Cover `ldb.api.*`, statistics properties, and unknown properties in the `properties` command.
 4. Command output fields must stay compatible with repair/check/backup reports instead of inventing parallel meanings.

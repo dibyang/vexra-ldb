@@ -134,7 +134,7 @@ Runtime creation:
 ```java
 LdbColumnFamily events = db.createColumnFamily(101, "events");
 System.out.println(db.listColumnFamilies());
-db.dropColumnFamily(events); // only empty column families can be dropped directly
+db.dropColumnFamily(events); // non-default families are logically dropped; cfIds are not reused
 ```
 
 ## Snapshot Iteration

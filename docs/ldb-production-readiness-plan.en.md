@@ -173,9 +173,22 @@ Illegal transition: `IMPLEMENTING` must not move directly to `RELEASE_ALLOWED` w
 
 | Phase | Title | Deliverables | Acceptance |
 | --- | --- | --- | --- |
-| 18.1 | Old-version upgrade compatibility fixtures | `0.4.0` fixtures, compatibility tests, fixture README | New version opens and validates fixtures, or emits a clear migration error |
-| 18.2 | Production-grade `releaseGate` aggregate task | Gradle task, `RELEASE-GATE-REPORT.json`, Markdown summary | Any failed gate fails the aggregate task and preserves reports |
-| 18.3 | Backup object-store corruption matrix | Tests for missing objects, bad refs, orphan objects, corrupt manifest, and restore rollback | `checkBackup`/restore fail fast on corrupt input and do not pollute targets |
-| 18.4 | Column-family tombstone long stress and physical-GC proof | Long-lifecycle drop/rename/reopen/compact/backup/repair tests | Tombstones do not break old snapshots, and cfIds are not reused after cleanup |
-| 18.5 | production-gate longrun profile | Release-gate profile and benchmark report archival rules | Reports are reviewable, and failures preserve workload plus property snapshots |
-| 18.6 | Operations manual and incident runbook | `docs/operations.md` and English copy | Covers backup, restore, upgrade, check, repair, and pre-release gates |
+| 18.1 | Old-version upgrade compatibility fixtures | `0.4.0` fixtures, compatibility tests, fixture README | Done: new version opens and validates fixtures, or emits a clear migration error |
+| 18.2 | Production-grade `releaseGate` aggregate task | Gradle task, `RELEASE-GATE-REPORT.json`, Markdown summary | Done: any failed gate fails the aggregate task and preserves reports |
+| 18.3 | Backup object-store corruption matrix | Tests for missing objects, bad refs, orphan objects, corrupt manifest, and restore rollback | Done: `checkBackup`/restore fail fast on corrupt input and do not pollute targets |
+| 18.4 | Column-family tombstone long stress and physical-GC proof | Long-lifecycle drop/rename/reopen/compact/backup/repair tests | Done: tombstones do not break old snapshots and cfIds are not reused; more aggressive physical GC remains future hardening |
+| 18.5 | production-gate longrun profile | Release-gate profile and benchmark report archival rules | Done: reports are reviewable, and failures preserve workload plus property snapshots |
+| 18.6 | Operations manual and incident runbook | `docs/operations.md` and English copy | Done: covers backup, restore, upgrade, check, repair, and pre-release gates |
+
+## Phase Status And Next Stages
+
+Phase 18 now has the minimal `0.5.0` pre-release closed loop. Future work should not treat 18.1-18.6 as pending planning items; they are release gates to rerun and archive continuously.
+
+The next stages move to Phases 19-22 in `docs/ldb-reliability-plan.md`:
+
+| Phase | Title | Production value |
+| --- | --- | --- |
+| 19 | Checkpoint/backup production evidence | Prove cross-filesystem behavior, low-disk failures, permission failures, long backup chains, and report archival |
+| 20 | WAL lifecycle and production write policy | Define WAL archive/retention/cleanup rules and establish long group-commit baselines |
+| 21 | Operational ecosystem and external observability | Unify CLI/report indexing and feed external metrics or trend analysis |
+| 22 | RocksDB advanced API compatibility reviews | Review MergeOperator, PrefixExtractor, transactions, TTL, custom Env, and similar advanced features independently |

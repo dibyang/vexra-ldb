@@ -4,14 +4,14 @@
 
 ## 背景
 
-LDB 当前已支持 checkpoint、全量 backup/restore、完整目录形式的 incremental backup、`BACKUP-MANIFEST.json`、`checkBackup` 和旧备份清理。现有增量备份为了保持简单，每个已发布备份目录都是完整可恢复视图，并优先硬链接复用上一备份中的同名同长度 SST。与 RocksDB BackupEngine 相比，仍缺共享对象仓库、引用计数、备份链校验和清理 dry-run。
+LDB 当前已支持 checkpoint、全量 backup/restore、完整目录形式的 incremental backup、`BACKUP-MANIFEST.json`、`checkBackup`、旧备份清理、共享对象仓库、`OBJECT-REFS.json` 和清理 dry-run。本文记录对象仓库和引用计数的生产约束；与 RocksDB BackupEngine 相比，后续差距主要在长备份链压测、跨文件系统性能、低磁盘故障矩阵和长期仓库维护工具。
 
 ## 目标
 
-- 设计共享对象仓库，避免每个备份目录都持有完整文件副本。
-- 设计引用计数和备份链 GC，安全清理不再被任何备份引用的对象。
+- 固化共享对象仓库，避免每个备份目录都持有完整文件副本。
+- 固化引用计数和备份链 GC，安全清理不再被任何备份引用的对象。
 - 保持现有 `createBackup`、`restoreBackup` 和完整目录备份兼容。
-- 为 `purgeOldBackups` 增加 dry-run 计划和可解释报告。
+- 为 `purgeOldBackups` 保留 dry-run 计划和可解释报告，并把长链压测作为后续验收。
 
 ## 非目标
 
@@ -24,10 +24,10 @@ LDB 当前已支持 checkpoint、全量 backup/restore、完整目录形式的 i
 | 能力 | 当前状态 |
 | --- | --- |
 | 全量备份 | 复制完整 DB 文件到 `backup-000001` |
-| 增量备份 | 发布完整可恢复目录，SST 尝试硬链接复用上一备份 |
+| 增量备份 | 发布完整可恢复目录，复用共享对象仓库中的 SST/WAL/meta 对象 |
 | 校验 | `checkBackup` 对备份目录执行离线 check |
-| 清理 | `purgeOldBackups(root, keepLast)` 删除旧发布目录 |
-| 报告 | `BackupReport`、`BACKUP-MANIFEST.json`、`RESTORE-REPORT.json` |
+| 清理 | `planPurgeBackups(root, keepLast)` 生成 dry-run，`purgeOldBackups(root, keepLast)` 执行清理 |
+| 报告 | `BackupReport`、`BACKUP-MANIFEST.json`、`RESTORE-REPORT.json`、`OBJECT-REFS.json` |
 
 ## 核心约束
 
@@ -49,7 +49,7 @@ LDB 当前已支持 checkpoint、全量 backup/restore、完整目录形式的 i
 
 ## 数据结构
 
-建议目录布局：
+当前目录布局：
 
 ```text
 backup-root/
@@ -161,8 +161,9 @@ backup-root/
 
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
-| 1 | 增加对象仓库格式和 manifest 设计测试 | 新旧格式识别清晰 |
-| 2 | 实现对象复用备份但不清理 | 连续增量 restore/check 通过 |
-| 3 | 实现 refs 重建和 purge dry-run | dry-run 报告可解释 |
-| 4 | 实现安全 purge | 删除后剩余备份全部可恢复 |
-| 5 | 压测大备份链 | 长链 check/restore/purge 报告稳定 |
+| 1 | 增加对象仓库格式和 manifest 设计测试 | 已完成：新旧格式识别清晰 |
+| 2 | 实现对象复用备份但不清理 | 已完成：连续增量 restore/check 通过 |
+| 3 | 实现 refs 重建和 purge dry-run | 已完成：dry-run 报告可解释 |
+| 4 | 实现安全 purge | 已完成：删除后剩余备份全部可恢复 |
+| 5 | 压测大备份链 | 后续：长链 check/restore/purge 报告稳定 |
+| 6 | 跨文件系统、低磁盘和权限故障矩阵 | 后续：失败不污染对象仓库，报告可定位 |

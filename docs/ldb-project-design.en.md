@@ -19,7 +19,7 @@ This document describes the design that is implemented today. It is the baseline
 
 - This document does not propose new runtime behavior.
 - It does not promise full RocksDB API or disk-format compatibility.
-- It does not implement non-empty column-family drop/rename, MergeOperator, PrefixExtractor, or complete range tombstone semantics.
+- It does not introduce new MergeOperator, PrefixExtractor, transactions, TTL, custom Env, or full RocksDB API compatibility.
 - It does not replace existing focused design documents such as range delete and API compatibility designs.
 
 ## Current Design
@@ -138,7 +138,8 @@ See [vexra-ldb External Commitment for LDB Users](vexra-ldb-external-commitment.
 | `LDB#getProperty` | Reads a diagnostic property |
 | `LDB#listColumnFamilies` | Returns the current effective column-family snapshot |
 | `LDB#createColumnFamily` | Creates a runtime column family and persists `COLUMN-FAMILIES` |
-| `LDB#dropColumnFamily` | Drops an empty column family; default and non-empty families fail |
+| `LDB#renameColumnFamily` | Renames an active column family while keeping cfId stable |
+| `LDB#dropColumnFamily` | Logically drops a non-default column family; dropped cfIds are not reused |
 
 ### Main Options
 
@@ -334,7 +335,7 @@ sequenceDiagram
 | Gradle | Use Gradle Wrapper and `java-library` |
 | Disk format | Keep LevelDB-style WAL, MANIFEST, SST, and CURRENT |
 | API | Preserve existing signatures; extend primarily through Options, properties, or tool commands |
-| Column families | Supports static registration before open plus runtime list/create/empty-drop; non-empty drop, rename, and tombstone migration continue through focused designs |
+| Column families | Supports static registration before open, runtime list/create/drop, non-empty drop tombstones, and rename; physical GC and migration policy continue through focused designs |
 | RocksDB | Provide partial behavior mapping and diagnostics, not full compatibility |
 | Read-only instance | Does not hold write lock or write the directory; suitable for diagnostics and properties command |
 

@@ -232,9 +232,6 @@ class LdbCoreBehaviorTest {
   }
 
   /**
-   * 验证 readOnly 配置在真实只读打开实现前会显式失败，避免调用方误以为已经只读保护。
-   */
-  /**
    * 验证非法 addLong delta 会在写 WAL 前失败，避免 batch 内其它写入被部分持久化。
    */
   @Test

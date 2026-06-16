@@ -21,7 +21,7 @@ LDB already has basic WAL, MemTable, SSTable, checkpoint, column-family, and plu
 ## Current Flow
 
 - Writes currently allocate sequences and append WAL before applying the batch to MemTable.
-- `deleteRange` is exposed in `LdbWriteBatch`, but WAL encoding and MemTable application do not implement it.
+- `deleteRange` now has baseline semantics in `LdbWriteBatch`, WAL, MemTable, SST, read paths, snapshots, and compaction.
 - `close()` attempts to close WAL, VersionSet, TableCache, ColumnFamilyState, database lock, and plugins, but several failure paths are silently ignored.
 - `suspendCompactions()` queues a suspension task in the single-thread compaction executor, but it has no timeout.
 
@@ -35,14 +35,14 @@ LDB already has basic WAL, MemTable, SSTable, checkpoint, column-family, and plu
 
 ## Interface Design
 
-- `deleteRange` remains unsupported and is rejected before WAL append.
+- `deleteRange` supports half-open range tombstones with conservative compaction cleanup.
 - `Options#getColumnFamilies` returns an immutable snapshot, and callers must register families through `addColumnFamily`.
-- `readOnly(true)` is rejected until true read-only open is implemented.
-- `getProperty` exposes basic diagnostics such as database directory, last sequence, column families, background exception, and pending outputs.
+- `readOnly(true)` supports real read-only open, creates no WAL/MANIFEST, and rejects writes, compaction, and checkpoint.
+- `getProperty` exposes diagnostics such as database directory, last sequence, column families, background exception, pending outputs, WAL/compaction/backup/checkpoint/API compatibility, and related operational properties.
 
 ## Data Structures
 
-- No new on-disk structure is introduced.
+- Later phases avoid new on-disk structures by default; landed formats such as range tombstones, column-family tombstones, and the backup object store must keep compatibility and old-version fail-fast evidence.
 - Add in-memory batch validation for unsupported operations.
 - Add close-failure aggregation to preserve resource-close causes.
 - Add a compaction suspension timeout option.
@@ -79,9 +79,9 @@ This phase has no disk-format changes. If a guard affects callers, revert the re
 
 ## Compatibility
 
-- `deleteRange` may have failed halfway before, but now fails before persistence.
+- `deleteRange` may have failed halfway before, but now has range tombstone semantics; older versions must fail fast or follow documented downgrade limits on new-format data.
 - `Options#getColumnFamilies` changes from a mutable internal list to a read-only snapshot.
-- `readOnly(true)` used to have no practical effect; it now fails explicitly to avoid misleading callers.
+- `readOnly(true)` used to have no practical effect; it is now a real read-only open to avoid accidental writes from inspection tools.
 
 ## Rollout And Migration
 
@@ -89,15 +89,15 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
 
 ## Test Plan
 
-- Cover early `deleteRange` rejection and restart safety without partial writes.
-- Cover explicit read-only rejection.
+- Cover `deleteRange` range tombstone writes, reads, recovery, snapshots, and compaction semantics.
+- Cover read-only open that does not write the directory and rejects mutating APIs.
 - Cover property queries.
 - Cover immutable column-family snapshots.
 - Keep existing WAL recovery, checkpoint, plugin lifecycle, and column-family isolation regression tests.
 
 ## Risks
 
-- Early `deleteRange` rejection may reveal hidden callers.
+- The `deleteRange` format may reveal old-version compatibility or downgrade boundaries.
 - Close failures are now visible, so callers need to handle close exceptions.
 - The default compaction suspension timeout needs later calibration through stress tests.
 
@@ -146,17 +146,17 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
 
 | Area | Current LDB State | Main Gap From RocksDB | Priority |
 | --- | --- | --- | --- |
-| Recovery and repair | WAL/SST normal recovery, file corruption, and process crash tests exist; `repair` has the 6.1 SST repair loop | Missing WAL replay into repair output, structured reports, multi-CF repair, and corrupt-WAL quarantine | P0 |
-| Read-only open | `readOnly(true)` is explicitly rejected | Missing true read-only open, no-lock/shared-lock policy, read-only diagnostics, and write protection | P1 |
-| Range delete | `deleteRange` is rejected before WAL append | Missing range tombstone, read-path masking, compaction merge rules, and compatibility tests | P1 |
-| Column-family lifecycle | Supports open-time registration, per-CF reads/writes, per-CF compactRange/properties, and minimal runtime list/create/drop-empty lifecycle | Non-empty drop, rename, migration tombstones, and richer lifecycle validation still need design | P1 |
-| Compaction policy | Has basic background compaction, manual compaction, suspend/resume | Missing configurable triggers, rate limiting, cancellation, per-CF scoring, compression-policy validation, and long stress tests | P1 |
-| Writes and WAL | Supports WAL, sync, batch, crash recovery, and a disabled-by-default minimal group commit | Missing systematic partial-WAL combinations, WAL archive/recycle policy, write throttling, and a long-run group-commit baseline | P1 |
-| Snapshot/iterator | Has snapshot cursor and basic iteration | Missing iterator leak matrix, reverse iteration, prefix/range scan contracts, and long-lived snapshot stress tests | P2 |
-| Verification and integrity | SST block checksum verification is implemented | Missing whole-DB verify/check command, optional startup full verification, and checkpoint verification reports | P2 |
-| Backup/checkpoint | Supports checkpoint, full backup, complete-directory incremental backup, verification, version cleanup, restore reports, and incremental-backup CLI commands | Missing a RocksDB-backup-engine-like shared object store, reference counts, and incremental-chain cleanup | P2 |
+| Recovery and repair | WAL/SST normal recovery, file corruption, process crash, `repair`, `repair-plan`, structured reports, multi-CF repair, and corrupt-WAL quarantine have minimal closed loops | Missing online repair coordination, automated handling of complex conflicts, a real media-failure corpus, and longer-term recovery evidence archival | P2 |
+| Read-only open | `readOnly(true)` is supported; it creates no WAL/MANIFEST and rejects writes, compaction, and checkpoint | Missing finer shared-lock/diagnostic inspection modes and operating guidance for concurrent backup or monitoring tools | P2 |
+| Range delete | `deleteRange` supports range tombstones, WAL/SST persistence, read-path masking, snapshot semantics, and conservative compaction | Missing more aggressive tombstone/point-key cleanup, long mixed-workload reports, and archived old-version fail-fast evidence | P1 |
+| Column-family lifecycle | Supports open-time registration, per-CF reads/writes, per-CF compactRange/properties, runtime list/create, non-empty drop tombstones, and rename | Missing more aggressive dropped-CF physical GC, column-family migration strategy, and large-scale multi-CF operational reports | P2 |
+| Compaction policy | Supports configurable triggers, rate limiting, cancellation cleanup, per-CF scoring, and several soak/observability entry points | Missing real low-disk, high-concurrency, and long-running production-environment compaction reports plus external visualization | P2 |
+| Writes and WAL | Supports WAL, sync, batch, crash recovery, partial-WAL combination tests, reopen/backup/repair after recycling, and a disabled-by-default minimal group commit | Missing WAL archive/retention policy, WAL lifecycle rules across backup/repair, and a long-run group-commit tail-latency baseline | P1 |
+| Snapshot/iterator | Has snapshot cursor, reverse iteration, prefix/range scan contracts, resource counters, and long-lived snapshot-across-compaction tests | Missing a larger leak matrix, disk-retention limits under very long-lived snapshots, and production stress reports | P2 |
+| Verification and integrity | Has SST checksums, offline check, `verifyOnOpen`, checkpoint reports, tool commands, and corruption-injection coverage | Missing a fuller media-failure, permission, low-disk, and cross-filesystem corruption-injection ecosystem plus operational repair/check combinations | P2 |
+| Backup/checkpoint | Supports checkpoint, full/incremental backup, object store, `OBJECT-REFS.json`, dry-run cleanup, verification, restore reports, CLI, and release gates | Missing long backup-chain soak, cross-filesystem checkpoint/backup performance baselines, low-disk failure matrices, and long-term backup-repository maintenance tooling | P1 |
 | Performance and observability | Has benchmarks, operation histograms, block cache stats, IO/compaction/write-stall metrics, slow-operation logs, and capacity watermark properties | Missing external visualization, long-term trend storage, and real low-disk/high-concurrency environment reports | P2 |
-| API compatibility and ecosystem | Provides basic DBFactory/LDB APIs | Missing common RocksDB Options mapping, MergeOperator, PrefixExtractor, statistics, and tool commands | P3 |
+| API compatibility and ecosystem | Provides DBFactory/LDB APIs, compatibility self-description, migration docs, and a minimal LDB tool entry point | Missing MergeOperator, PrefixExtractor, transactions, TTL, custom Env, full RocksDB CLI compatibility, and a mature plugin ecosystem | P3 |
 
 ### Follow-Up Implementation Order
 
@@ -222,7 +222,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
    - Tests: first full backup, incremental backup, old-version cleanup, corrupt-backup verification failure, and reopen after restore.
    - 12.1 increment: first add offline full-backup/restore entry points `LDBFactory.createBackup/restoreBackup`, write into a temporary directory and publish only after verification, and emit `BACKUP-REPORT.json` plus `RESTORE-REPORT.json`; incremental backups, version cleanup, and shared-SST reference counting remain in 12.2.
    - 12.2 increment: add `LDBFactory.purgeOldBackups(root, keepLast)`, only deleting published `backup-000001` style directories, retaining the newest N versions, and returning a cleanup report; shared-file reference counting remains in a later increment.
-   - 12.3 increment: add `LDBFactory.createIncrementalBackup/checkBackup`, publish a complete restorable directory, write `BACKUP-MANIFEST.json`, and preferentially hard-link same-name same-length SST files from the previous backup; shared object storage and reference-count cleanup remain future enhancements.
+   - 12.3 increment: add `LDBFactory.createIncrementalBackup/checkBackup`, publish a complete restorable directory, write `BACKUP-MANIFEST.json`, and preferentially hard-link same-name same-length SST files from the previous backup; shared object storage and reference-count cleanup later landed in 12.5.
    - 12.4 increment: expose incremental backup and backup validation through `LdbTool incremental-backup` and `LdbTool check-backup`, reusing `BackupReport`/`CheckReport` JSON output and exit-code semantics.
    - 12.5 increment: added `docs/ldb-backup-engine-design.md` and its English copy, and completed the minimal shared object store plus reference-count implementation: backup roots maintain `objects/` and `OBJECT-REFS.json`, and `planPurgeBackups` supports dry-run cleanup impact audits.
 
@@ -277,7 +277,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
     - 16.2 increment: add LDB/RocksDB API compatibility and migration documentation that fixes the Options mapping, property-based statistics entry points, explicitly unsupported features, rollback strategy, and review boundary for future MergeOperator, PrefixExtractor, and tool-command work. The document does not change runtime behavior, but becomes the acceptance baseline for later ecosystem compatibility increments.
     - 16.3 increment: add an LDB tool-command design review that defines arguments, read-only/write boundaries, exit codes, and error semantics for `check`, `repair`, `checkpoint`, `backup`, `restore`, `properties`, and `compact`. No CLI implementation is provided yet; `rocksdbToolCommands` remains marked unsupported until a command entry point is implemented.
     - 16.4 increment: add dedicated MergeOperator/PrefixExtractor review boundaries, making clear that they affect WAL/SST formats, MemTable merging, read-path visibility, compaction merging, snapshot semantics, repair/check/backup compatibility, and downgrade strategy. `mergeOperator` and `prefixExtractor` remain unsupported for now; future work must proceed through a separate design and migration plan.
-    - 16.5 increment: add `ldb.api.ecosystemGaps`, exposing blocking reasons for MergeOperator, PrefixExtractor, transactions, TTL, custom Env, non-empty column-family drop/rename, RocksDB tool compatibility, and secondary indexes to migration layers.
+    - 16.5 increment: add `ldb.api.ecosystemGaps`, exposing ecosystem status for MergeOperator, PrefixExtractor, transactions, TTL, custom Env, column-family drop/rename implementation state, RocksDB tool compatibility, and secondary indexes to migration layers.
     - Phase 16 completion criteria: Options mapping, runtime compatibility self-description, migration notes, tool-command semantics, and MergeOperator/PrefixExtractor review boundaries are documented, with `LdbApiCompatibilityTest` covering the core properties. Real CLI or Merge/Prefix implementations remain future independent phases and do not block closing this phase.
 
 12. Phase 17: Minimal LDB tool-command entry point.
@@ -292,7 +292,7 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
     - 17.4 increment: add `checkpoint <db> <targetDir>`, opening the source DB normally and calling the instance-level `checkpoint`; on success it prints `CHECKPOINT-REPORT.json`. Non-empty target directories or checkpoint verification failures return internal-error exit code `4`.
     - 17.5 increment: add `incremental-backup <db> <backupRoot>` and `check-backup <backupDir>`, covering complete-directory incremental backup publishing and read-only backup validation.
 
-13. Phase 18: Production release gates and operational hardening.
+13. Phase 18: Production release gates and operational hardening. (Minimal closed loop complete; keep maintaining release evidence.)
     - Design and implement a formal `releaseGate` that aggregates regular tests, old-version upgrade fixtures, backup object-store validation, a lightweight longrun profile, and report archiving.
     - Fix `0.4.0` and later historical-version fixtures, verifying that the new version can open, read, check, and backup/restore them, or emits a clear migration error when incompatible.
     - Complete the backup object-store corruption matrix covering missing objects, wrong reference counts, orphan objects, corrupt manifests, and restore rollback.
@@ -307,6 +307,27 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
     - 18.6 increment: operations manual and incident runbook.
     - Design baseline: `docs/ldb-production-readiness-plan.md` and its English copy.
 
+14. Phase 19: Solidify checkpoint/backup production evidence.
+    - Add cross-filesystem checkpoint/backup baselines covering hard-link fallback to copy, copy rate limiting, temporary-directory publishing, and failure cleanup.
+    - Add checkpoint/backup long-chain stress for large databases, many SSTs, multiple column families, repeated checkpoints, consecutive incremental backups, and purge dry-runs.
+    - Complete fault injection for low disk, permission denial, occupied target directories, interruption, and post-commit plugin failures.
+    - Include `CHECKPOINT-REPORT.json`, `BACKUP-MANIFEST.json`, `OBJECT-REFS.json`, release-gate reports, and longrun reports in a unified release-evidence index.
+
+15. Phase 20: Productionize WAL lifecycle and write policy.
+    - Design WAL archiving, retention, cleanup, and repair/backup dependencies, making clear which WALs can be deleted, retained, or included in backup evidence.
+    - Add long-run group commit baselines for tail latency, sync count, throughput, and crash/reopen behavior, defining when the feature can move from disabled-by-default to gray rollout.
+    - Evaluate production thresholds for write throttling and write-stall behavior, and emit auditable longrun reports.
+
+16. Phase 21: Operational ecosystem and external observability.
+    - Strengthen CLI/report indexing and align output paths plus exit-code guidance for check, repair, backup, restore, checkpoint, properties, longrun, and release gate.
+    - Design metrics export or report conversion so operators can feed Prometheus, log platforms, or offline trend analysis.
+    - Build a reproducible failure corpus for corrupt WAL, corrupt SST, corrupt manifest, corrupt backup objects, permission failures, and low-disk cases.
+
+17. Phase 22: RocksDB advanced API compatibility reviews.
+    - Review MergeOperator, PrefixExtractor, transactions, TTL, custom Env, and full RocksDB CLI compatibility as separate designs.
+    - Identify which features would change WAL/SST/MANIFEST formats or read/write semantics, and which must remain explicitly unsupported in migration layers.
+    - Do not block the `0.5.0` production release on these advanced features.
+
 ### Near-Term Priority
 
-The new 8.5, 10.5, 12.5, and 17.x increments now have minimal closed loops. The next priority moves into Phase 18: finish old-version upgrade fixtures and `releaseGate` first, then proceed with backup object-store corruption injection, column-family tombstone long stress, the production-gate longrun profile, and operations runbooks. `range delete`, MergeOperator, PrefixExtractor, and similar work still affect disk format or read/write semantics and must continue through separate focused design reviews.
+Phase 18.1-18.6 now has a minimal closed loop, so the plan no longer treats old-version fixtures, `releaseGate`, backup object-store corruption injection, column-family tombstone long stress, the production-gate longrun profile, or runbooks as pending phases. The next priority is Phase 19: first solidify checkpoint/backup evidence across filesystems, low-disk cases, permission failures, and long backup chains, then proceed to Phase 20 for WAL lifecycle and long group-commit baselines. MergeOperator, PrefixExtractor, transactions, TTL, custom Env, and full RocksDB CLI compatibility remain Phase 22 independent reviews.

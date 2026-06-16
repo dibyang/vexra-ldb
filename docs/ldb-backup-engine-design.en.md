@@ -4,14 +4,14 @@ English | [中文](ldb-backup-engine-design.md)
 
 ## Background
 
-LDB currently supports checkpoint, full backup/restore, complete-directory incremental backup, `BACKUP-MANIFEST.json`, `checkBackup`, and old-backup cleanup. The current incremental backup keeps every published backup as a complete restorable directory and preferentially hard-links same-name same-length SST files from the previous backup. Compared with RocksDB BackupEngine, LDB still lacks a shared object store, reference counts, backup-chain validation, and cleanup dry-run planning.
+LDB currently supports checkpoint, full backup/restore, complete-directory incremental backup, `BACKUP-MANIFEST.json`, `checkBackup`, old-backup cleanup, a shared object store, `OBJECT-REFS.json`, and cleanup dry-run planning. This document records the production constraints for object storage and reference counts. Compared with RocksDB BackupEngine, the remaining gaps are long backup-chain soak, cross-filesystem performance baselines, low-disk fault matrices, and long-term repository maintenance tooling.
 
 ## Goals
 
-- Design a shared object store to avoid full file copies in every backup directory.
-- Design reference counts and backup-chain GC so unreferenced objects can be safely removed.
+- Freeze the shared object store design so every backup directory does not need full file copies.
+- Freeze reference counts and backup-chain GC so unreferenced objects can be safely removed.
 - Keep existing `createBackup`, `restoreBackup`, and complete-directory backups compatible.
-- Add dry-run planning and explainable reports for `purgeOldBackups`.
+- Keep dry-run planning and explainable reports for `purgeOldBackups`, and make long-chain soak a later acceptance gate.
 
 ## Non-Goals
 
@@ -24,10 +24,10 @@ LDB currently supports checkpoint, full backup/restore, complete-directory incre
 | Capability | Current state |
 | --- | --- |
 | Full backup | Copies a complete DB file set into `backup-000001` |
-| Incremental backup | Publishes a complete restorable directory; SST files may be hard-linked from the previous backup |
+| Incremental backup | Publishes a complete restorable directory and reuses SST/WAL/meta objects from the shared object store |
 | Verification | `checkBackup` performs offline check on the backup directory |
-| Cleanup | `purgeOldBackups(root, keepLast)` deletes older published directories |
-| Reports | `BackupReport`, `BACKUP-MANIFEST.json`, `RESTORE-REPORT.json` |
+| Cleanup | `planPurgeBackups(root, keepLast)` creates a dry-run; `purgeOldBackups(root, keepLast)` executes cleanup |
+| Reports | `BackupReport`, `BACKUP-MANIFEST.json`, `RESTORE-REPORT.json`, `OBJECT-REFS.json` |
 
 ## Core Constraints
 
@@ -49,7 +49,7 @@ LDB currently supports checkpoint, full backup/restore, complete-directory incre
 
 ## Data Structure
 
-Recommended layout:
+Current layout:
 
 ```text
 backup-root/
@@ -161,8 +161,9 @@ Core `BACKUP-MANIFEST.json` fields:
 
 | Phase | Scope | Acceptance |
 | --- | --- | --- |
-| 1 | Add object-store format and manifest design tests | New/old formats are clearly distinguished |
-| 2 | Implement object-reuse backup without cleanup | Consecutive incremental restore/check pass |
-| 3 | Implement refs rebuild and purge dry-run | Dry-run report is explainable |
-| 4 | Implement safe purge | All remaining backups restore after deletion |
-| 5 | Soak long backup chains | Long-chain check/restore/purge reports stay stable |
+| 1 | Add object-store format and manifest design tests | Done: new/old formats are clearly distinguished |
+| 2 | Implement object-reuse backup without cleanup | Done: consecutive incremental restore/check pass |
+| 3 | Implement refs rebuild and purge dry-run | Done: dry-run report is explainable |
+| 4 | Implement safe purge | Done: all remaining backups restore after deletion |
+| 5 | Soak long backup chains | Future: long-chain check/restore/purge reports stay stable |
+| 6 | Cross-filesystem, low-disk, and permission fault matrix | Future: failures do not pollute the object store and reports identify the cause |

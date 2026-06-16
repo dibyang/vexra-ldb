@@ -146,10 +146,10 @@ public interface LDB
   LdbColumnFamily renameColumnFamily(LdbColumnFamily cf, String newName) throws DBException;
 
   /**
-   * 运行时删除一个空列族。
+   * 运行时逻辑删除一个非默认列族。
    *
-   * @param cf 目标列族，默认列族和仍包含 MemTable/SST 数据的列族会被拒绝
-   * @throws DBException 数据库只读、目标列族非空或注册表落盘失败时抛出
+   * @param cf 目标列族，默认列族会被拒绝；已删除列族的 id 不会被复用
+   * @throws DBException 数据库只读、目标列族未知或注册表落盘失败时抛出
    */
   void dropColumnFamily(LdbColumnFamily cf) throws DBException;
 

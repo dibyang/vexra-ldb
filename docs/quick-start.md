@@ -134,7 +134,7 @@ try (LDB db = LDBFactory.factory.open(new File("data/cf.ldb"), options)) {
 ```java
 LdbColumnFamily events = db.createColumnFamily(101, "events");
 System.out.println(db.listColumnFamilies());
-db.dropColumnFamily(events); // 仅空列族可直接删除
+db.dropColumnFamily(events); // 非 default 列族会被逻辑删除，cfId 不可复用
 ```
 
 ## 快照遍历

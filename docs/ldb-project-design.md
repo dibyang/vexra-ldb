@@ -19,7 +19,7 @@
 
 - 本文档不提出新的代码实现需求。
 - 不承诺完整兼容 RocksDB API 和磁盘格式。
-- 不在本文档内实现非空列族 drop/rename、MergeOperator、PrefixExtractor 或完整 range tombstone 语义。
+- 不在本文档内引入新的 MergeOperator、PrefixExtractor、transactions、TTL、custom Env 或完整 RocksDB API 兼容。
 - 不替代已有专项设计文档，例如 range delete 和 API 兼容设计。
 
 ## 现状/已有流程
@@ -138,7 +138,8 @@
 | `LDB#getProperty` | 查询诊断属性 |
 | `LDB#listColumnFamilies` | 返回当前有效列族快照 |
 | `LDB#createColumnFamily` | 运行时创建列族并持久化 `COLUMN-FAMILIES` |
-| `LDB#dropColumnFamily` | 删除空列族；default 和非空列族失败 |
+| `LDB#renameColumnFamily` | 重命名活动列族，cfId 保持不变 |
+| `LDB#dropColumnFamily` | 逻辑删除非 default 列族，已 drop 的 cfId 不复用 |
 
 ### 主要配置
 
@@ -334,7 +335,7 @@ sequenceDiagram
 | Gradle | 使用 Gradle Wrapper 和 `java-library` |
 | 磁盘格式 | 延续 LevelDB 风格 WAL、MANIFEST、SST、CURRENT |
 | API | 对外接口保留现有签名，新增能力优先通过 Options、property 或工具命令扩展 |
-| 列族 | 支持打开前静态注册和运行时 list/create/empty-drop；非空 drop、rename 和 tombstone 迁移仍按专项设计推进 |
+| 列族 | 支持打开前静态注册、运行时 list/create/drop、非空 drop tombstone 和 rename；物理 GC 与迁移策略继续按专项设计推进 |
 | RocksDB | 提供部分行为映射和诊断说明，不承诺完整兼容 |
 | 只读实例 | 不持有写锁，不写目录，适合诊断和 properties 命令 |
 

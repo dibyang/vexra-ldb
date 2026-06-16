@@ -4,32 +4,32 @@
 
 ## 背景
 
-`LdbWriteBatch` 已经暴露 `deleteRange` API，`ValueType` 也预留了 `DELETE_RANGE(0x02)`，但当前写入前会在 `LdbWriteBatchImpl.validateForWrite()` 中拒绝该操作。第九阶段的目标是把这个 API 从“提前拒绝”推进到可恢复、可持久化、可压缩合并的 range tombstone 能力。
+`LdbWriteBatch` 已经支持 `deleteRange` API，`ValueType.DELETE_RANGE(0x02)` 已进入 WAL/SST/MemTable/read/compaction 基线语义。第九阶段已经把这个 API 从“提前拒绝”推进到可恢复、可持久化、可保守压缩合并的 range tombstone 能力。
 
-Range Delete 会改变 WAL/SST 的可见语义，并影响 snapshot、iterator 和 compaction，因此必须先完成独立设计，再进入代码实现。
+Range Delete 会改变 WAL/SST 的可见语义，并影响 snapshot、iterator 和 compaction；当前实现优先保证正确性，后续再评估更激进的 tombstone/point key 清理和长时间混合 workload 证据。
 
 ## 目标
 
 - 支持 `LdbWriteBatch.deleteRange(cf, beginKey, endKey)`，删除半开区间 `[beginKey, endKey)` 内的可见 point key。
 - WAL replay 能恢复 range tombstone，进程崩溃后语义保持一致。
 - MemTable、SST、snapshot cursor 和 point get 都能按 sequence 正确遮蔽被删除的 key。
-- compaction 能合并 tombstone 与 point key，并在安全条件满足时丢弃被覆盖数据。
+- compaction 能合并 tombstone 与 point key，并采用保守策略避免过早丢弃会影响 snapshot/recovery 的数据。
 - 明确磁盘格式兼容、降级限制和回滚策略。
 
 ## 非目标
 
 - 不引入列族级 WAL；第九阶段继续沿用全局共享 WAL。
-- 不实现运行时 create/drop column family。
+- 不在本文档内展开运行时 create/drop column family；列族生命周期由独立文档维护。
 - 不引入 PrefixExtractor、MergeOperator 或 RocksDB 完整 tombstone fragmentation 策略。
 - 不改变现有 `PUT`、`DELETE`、`ADD_LONG` 的编码语义。
 
 ## 现状/已有流程
 
-- `LdbWriteBatchImpl` 能收集 `DELETE_RANGE` 操作，但写入前显式抛出 `DBException("deleteRange is not supported yet")`。
-- `LdbWriteBatchLog` 只解码 `VALUE`、`DELETION` 和 `ADD_LONG`。
-- MemTable 当前按 `InternalKey -> Slice` 保存 point entry，读路径只处理 point value 和 point deletion。
-- SST 表格式可以保存任意 `InternalKey` 与 value，但当前 reader/iterator 不理解 `DELETE_RANGE` 遮蔽语义。
-- `DbSnapshotCursor` 和 `SnapshotSeekingIterator` 只把 `DELETION` 当作 tombstone，不会检查区间删除。
+- `LdbWriteBatchImpl` 能收集并校验 `DELETE_RANGE` 操作。
+- `LdbWriteBatchLog` 能编码/解码 `VALUE`、`DELETION`、`ADD_LONG` 和 `DELETE_RANGE`。
+- MemTable 为 range tombstone 使用独立索引，避免无 tombstone 时 point get 全表扫描。
+- SST 表格式持久化 range tombstone，reader、point get 和 iterator 能按 sequence 遮蔽。
+- `DbSnapshotCursor` 和 `SnapshotSeekingIterator` 会按 snapshot sequence 处理区间删除。
 
 ## 核心约束
 
@@ -165,3 +165,4 @@ SST 中用普通 table entry 保存 range tombstone：
 3. 9.3：实现 SST tombstone 持久化与 reopen 后读路径遮蔽，覆盖跨 SST/level。（已完成基础持久化、point get 与 cursor reopen 遮蔽；compaction 合并待 9.5）
 4. 9.4：实现 iterator/scan 遮蔽与 snapshot 矩阵。（已完成）
 5. 9.5：实现 compaction 合并与保守清理规则，完成 fault injection 与兼容文档更新。（已完成；当前采用保守策略保留 range tombstone，不做激进 point key 清理）
+6. 9.6：补充长时间混合 workload、旧版本 fail-fast 证据和更激进 point key 清理评估。（后续）

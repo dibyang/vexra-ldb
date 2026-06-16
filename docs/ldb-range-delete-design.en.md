@@ -4,32 +4,32 @@ English | [中文](ldb-range-delete-design.md)
 
 ## Background
 
-`LdbWriteBatch` already exposes the `deleteRange` API, and `ValueType` has reserved `DELETE_RANGE(0x02)`, but the current write path rejects this operation in `LdbWriteBatchImpl.validateForWrite()`. Phase 9 moves this API from "rejected before write" to a recoverable, persistent, and compactable range tombstone feature.
+`LdbWriteBatch` now supports the `deleteRange` API, and `ValueType.DELETE_RANGE(0x02)` is part of the WAL/SST/MemTable/read/compaction baseline semantics. Phase 9 has moved this API from "rejected before write" to a recoverable, persistent, and conservatively compactable range tombstone feature.
 
-Range delete changes WAL/SST visibility semantics and affects snapshots, iterators, and compaction. It must be designed independently before code implementation starts.
+Range delete changes WAL/SST visibility semantics and affects snapshots, iterators, and compaction. The current implementation prioritizes correctness; future work can evaluate more aggressive tombstone/point-key cleanup and longer mixed-workload evidence.
 
 ## Goals
 
 - Support `LdbWriteBatch.deleteRange(cf, beginKey, endKey)` to delete visible point keys in the half-open range `[beginKey, endKey)`.
 - Recover range tombstones through WAL replay after process crashes.
 - Make MemTable, SST, snapshot cursors, and point reads apply sequence-aware masking correctly.
-- Let compaction merge tombstones with point keys and drop covered data only when safe.
+- Let compaction merge tombstones with point keys while conservatively avoiding premature cleanup that could affect snapshots or recovery.
 - Define disk-format compatibility, downgrade limits, and rollback rules.
 
 ## Non-Goals
 
 - Do not introduce per-column-family WAL; Phase 9 keeps the globally shared WAL.
-- Do not implement runtime create/drop column family.
+- Do not expand runtime create/drop column-family semantics here; column-family lifecycle is maintained in separate documents.
 - Do not introduce PrefixExtractor, MergeOperator, or the full RocksDB tombstone fragmentation model.
 - Do not change existing `PUT`, `DELETE`, or `ADD_LONG` encoding semantics.
 
 ## Current Flow
 
-- `LdbWriteBatchImpl` can collect `DELETE_RANGE` operations, but explicitly throws `DBException("deleteRange is not supported yet")` before write.
-- `LdbWriteBatchLog` only decodes `VALUE`, `DELETION`, and `ADD_LONG`.
-- MemTable currently stores point entries as `InternalKey -> Slice`, and the read path only handles point values and point deletions.
-- The SST table format can store arbitrary `InternalKey` and value pairs, but current readers and iterators do not understand `DELETE_RANGE` masking.
-- `DbSnapshotCursor` and `SnapshotSeekingIterator` only treat `DELETION` as a tombstone.
+- `LdbWriteBatchImpl` collects and validates `DELETE_RANGE` operations.
+- `LdbWriteBatchLog` encodes and decodes `VALUE`, `DELETION`, `ADD_LONG`, and `DELETE_RANGE`.
+- MemTable uses a separate range-tombstone index so point reads do not scan all entries when no tombstones exist.
+- SST persists range tombstones, and readers, point gets, and iterators apply sequence-aware masking.
+- `DbSnapshotCursor` and `SnapshotSeekingIterator` apply range deletes according to the snapshot sequence.
 
 ## Core Constraints
 
@@ -165,3 +165,4 @@ Invalid ranges, unknown column families, WAL append failures, and MemTable appli
 3. 9.3: Implement SST tombstone persistence and reopen-time masking across SSTs and levels. (Basic persistence, point-get masking, and cursor masking after reopen are done; compaction merge remains in 9.5)
 4. 9.4: Implement iterator/scan masking and the snapshot matrix. (Done)
 5. 9.5: Implement compaction merge and conservative cleanup rules, then complete fault injection and compatibility documentation. (Done; the current policy conservatively keeps range tombstones and does not aggressively clean covered point keys)
+6. 9.6: Add long mixed-workload evidence, old-version fail-fast evidence, and evaluate more aggressive point-key cleanup. (Future)

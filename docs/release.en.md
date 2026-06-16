@@ -47,7 +47,7 @@ Windows PowerShell:
 - Local publication gate still required before publishing: `.\gradlew.bat clean publishToMavenLocal`.
 - Upgrade compatibility gate: validate opening data created by `vexra-ldb:0.4.0` or document a clear migration error in the release note before publication.
 - Longrun release gate: run at least the documented smoke/performance/plugin profiles and keep report archives according to `ldb-longrun/README.md`.
-- Production release gate: complete 18.1-18.6 in `docs/ldb-production-readiness-plan.md`, then run `releaseGate`, old-database upgrade checks, backup corruption injection, column-family tombstone long stress, and the production-gate longrun profile before publishing a formal release.
+- Production release gate: confirm 18.1-18.6 in `docs/ldb-production-readiness-plan.md` are complete, then rerun `releaseGate`, old-database upgrade checks, backup corruption injection, column-family tombstone long stress, and the production-gate longrun profile. Do not publish a formal release until the gates pass and reports are archived.
 
 ## 0.2.0 Pre-Release Verification Record
 

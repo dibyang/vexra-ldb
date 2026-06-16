@@ -129,9 +129,9 @@ ldb checkpoint <db> <targetDir>
 
 ## 重要边界
 
-- `deleteRange` 接口存在，但 range tombstone 的完整读写语义仍是独立设计主题，详见 `docs/ldb-range-delete-design.md`。
+- `deleteRange` 已支持 range tombstone 的读写、恢复、snapshot 和保守 compaction 语义；后续继续补长时间混合 workload 与更激进清理策略，详见 `docs/ldb-range-delete-design.md`。
 - 当前仍采用全局 WAL，跨列族 batch 依赖全局 sequence 保持恢复顺序。
-- 运行时列族 list/create/empty-drop 已支持；非空 drop、列族 rename、MergeOperator、PrefixExtractor、transactions、TTL、custom Env 和完整 RocksDB CLI 兼容仍是明确非目标或生态差距。
+- 运行时列族 list/create/drop、非空 drop tombstone 和 rename 已支持；MergeOperator、PrefixExtractor、transactions、TTL、custom Env 和完整 RocksDB CLI 兼容仍是明确非目标或生态差距。
 - 插件是可信进程内扩展。longrun 外部插件目录使用托管 classloader 做依赖隔离，但这不是跨进程安全沙箱。
 - 涉及磁盘格式、恢复语义、状态机或工具副作用的改动，需要先更新设计文档并补充兼容性和回滚说明。
 
@@ -152,7 +152,7 @@ ldb checkpoint <db> <targetDir>
 - `docs/ldb-api-compatibility-design.md`：API 兼容与迁移设计。
 - `docs/ldb-plugin-design.md`：插件能力增强设计。
 - `docs/ldb-plugin-docs-index.md`：插件化文档入口。
-- `docs/ldb-column-family-tombstone-design.md`：非空列族 drop/rename/tombstone 设计。
+- `docs/ldb-column-family-tombstone-design.md`：非空列族 drop/rename/tombstone 当前语义与后续 GC 规划。
 - `docs/ldb-backup-engine-design.md`：共享对象仓库和引用计数备份引擎设计。
 - `docs/ldb-longrun-benchmark-design.md`：长期压测和 benchmark 报告框架设计。
 - `docs/ldb-production-readiness-plan.md`：生产级发布门禁、升级样本、长压测和运维 Runbook 规划。

@@ -4,14 +4,14 @@ English | [中文](ldb-column-family-tombstone-design.md)
 
 ## Background
 
-LDB now supports runtime `list/create/drop-empty` column-family lifecycle and persists runtime metadata through `COLUMN-FAMILIES` so reopen, backup, checkpoint, check, and repair can recover runtime column families. The remaining hard gap is non-empty drop and rename. If a non-empty family is removed only from the registry, older WAL, SST, and MANIFEST entries may still reference that cfId, making recovery or repair unable to explain historical data or, worse, causing data to be interpreted as another family.
+LDB now supports runtime `list/create/drop` column-family lifecycle and persists runtime metadata plus tombstone history through `COLUMN-FAMILIES` so reopen, backup, checkpoint, check, and repair can recover runtime column families. Non-empty drop and rename have a minimal implementation: drop is logical deletion, and rename keeps cfId stable. The remaining work is physical GC, migration policy, and larger-scale operational proof.
 
 ## Goals
 
-- Design recoverable, verifiable, and rollback-aware non-empty column-family drop.
-- Design rename around a stable persistent identity: cfId stays fixed while name changes.
-- Define consistency rules across MANIFEST tombstones, registry, WAL/SST, check, repair, and backup.
-- Establish implementation gates without changing disk format in this design-only step.
+- Freeze the implemented non-empty drop tombstone semantics: logical deletion, rejected new access, explainable historical cfId, and no cfId reuse.
+- Freeze the rename identity model: cfId stays fixed while name changes.
+- Define consistency rules across registry, WAL/SST, check, repair, backup, and checkpoint.
+- Provide gates for future dropped-CF physical GC, migration policy, and old-version compatibility evidence.
 
 ## Non-Goals
 
@@ -24,10 +24,10 @@ LDB now supports runtime `list/create/drop-empty` column-family lifecycle and pe
 | Capability | Current state |
 | --- | --- |
 | Runtime create | Persists id/name through `COLUMN-FAMILIES` |
-| Runtime drop | Allows empty families only; non-empty drop throws `DBException` |
-| Rename | Unsupported |
-| MANIFEST | Records file edits and cfId, but not column-family lifecycle |
-| Check/Repair | Reads registry and validates whether WAL/MANIFEST cfIds are explainable |
+| Runtime drop | Supports logical drop for non-default families; active views remove the family and dropped cfIds cannot be reused |
+| Rename | Supported; cfId stays stable |
+| MANIFEST/Registry | File edits continue using cfId, while the registry keeps active/dropped history for lifecycle interpretation |
+| Check/Repair | Reads registry and dropped history, then validates whether WAL/MANIFEST cfIds are explainable |
 
 ## Core Constraints
 
@@ -41,14 +41,14 @@ LDB now supports runtime `list/create/drop-empty` column-family lifecycle and pe
 
 | API | Current behavior | Target behavior |
 | --- | --- | --- |
-| `dropColumnFamily(cf)` | Non-empty families fail | Writes a drop tombstone, blocks new writes, and makes historical data GC-eligible |
-| `renameColumnFamily(cf, newName)` | Not available | Writes a rename edit, keeps cfId stable, updates registry name |
+| `dropColumnFamily(cf)` | Writes a drop tombstone, blocks new writes, and makes historical data GC-eligible | Add fuller physical GC and long-chain operational proof |
+| `renameColumnFamily(cf, newName)` | Keeps cfId stable and updates the registry name | Add migration policy and bulk-CF operational reports |
 | `listColumnFamilies()` | Active families | Defaults to active families; diagnostics may include dropped families |
 | `getProperty("ldb.columnFamilies")` | Active families | Adds dropped/renamed diagnostic properties |
 
 ## Data Structure
 
-Recommended new MANIFEST lifecycle edit:
+The current minimal implementation stores active/dropped history in the column-family registry view and uses cfId to keep WAL/SST history explainable. If lifecycle events later move into MANIFEST edits, use a structure like:
 
 | Field | Meaning |
 | --- | --- |
@@ -58,14 +58,14 @@ Recommended new MANIFEST lifecycle edit:
 | `sequence` | Global sequence for the lifecycle event |
 | `timestampMillis` | Diagnostic only, not used for consistency |
 
-`COLUMN-FAMILIES` may continue as the active registry, but it needs history:
+`COLUMN-FAMILIES` may continue as the active registry and keep dropped history:
 
 ```text
 active:<cfId>\t<name>
 dropped:<cfId>\t<name>\t<dropSequence>
 ```
 
-For compatibility with the current parser, a separate `COLUMN-FAMILIES-HISTORY` file is also acceptable. Implementation must choose one path and add compatibility tests before code changes.
+For stronger future compatibility, a separate `COLUMN-FAMILIES-HISTORY` file is also acceptable, but compatibility tests and old-version fail-fast evidence must come first.
 
 ## State Machine
 
@@ -82,11 +82,10 @@ For compatibility with the current parser, a separate `COLUMN-FAMILIES-HISTORY` 
 ### Non-Empty Drop
 
 1. Acquire the DB mutex and verify the target is active and not default.
-2. Block new writes for the target family and flush related MemTables.
-3. Write a MANIFEST drop edit with cfId and drop sequence.
-4. Move the family from active registry to dropped history.
-5. Background compaction/obsolete cleanup removes SSTs only after snapshot references are gone.
-6. `getColumnFamily(cfId)` fails clearly for dropped families by default.
+2. Block new writes for the target family and ensure later APIs no longer return it as active.
+3. Move the family from active registry to dropped history.
+4. Historical WAL/SST remains explainable through cfId; new writes and `getColumnFamily(cfId)` fail by default.
+5. Background compaction/obsolete cleanup removes SSTs in a later physical-GC phase.
 
 ### Rename
 
@@ -97,8 +96,8 @@ For compatibility with the current parser, a separate `COLUMN-FAMILIES-HISTORY` 
 
 ## Failure Handling
 
-- MANIFEST drop write fails: family remains active and registry is unchanged.
-- Registry update fails: check/repair must rebuild the registry from MANIFEST lifecycle edits.
+- Tombstone write fails: family remains active and registry is unchanged.
+- Registry update fails: check/repair must report lifecycle metadata inconsistency clearly. If MANIFEST lifecycle edits are introduced later, they can become the authority for registry rebuilds.
 - WAL references after drop: recovery can explain historical records, but new writes are rejected.
 - Old name after rename: cfId lookup resolves to the new name; name-based lookup must return the new name only.
 
@@ -125,7 +124,7 @@ Once lifecycle MANIFEST edits exist, older versions must not open the database s
 
 - Non-empty drop then reopen rejects reads/writes to the target family.
 - Snapshot created before drop keeps its old view; GC waits until the snapshot is closed.
-- Crash matrix: MANIFEST succeeded/registry failed and registry succeeded/MANIFEST failed.
+- Drop crash cases around registry publishing, reopen, repair, backup, and checkpoint.
 - Rename survives reopen, backup/restore, and repair.
 - Compatibility gate: old versions fail clearly on lifecycle edits.
 
@@ -134,15 +133,15 @@ Once lifecycle MANIFEST edits exist, older versions must not open the database s
 | Risk | Mitigation |
 | --- | --- |
 | Drop deletes SSTs still visible to snapshots | GC must depend on snapshot/version references |
-| Registry and MANIFEST diverge | MANIFEST is authoritative; check/repair rebuild registry |
-| Older versions silently misread | Add format marker or unknown-tag fail-fast |
+| Registry and MANIFEST diverge | check/repair reports lifecycle metadata inconsistency; if MANIFEST lifecycle edits are added later, MANIFEST becomes the authoritative log |
+| Older versions silently misread | Keep old-version upgrade fixtures and release-gate fail-fast evidence |
 
 ## Phased Plan
 
 | Phase | Scope | Acceptance |
 | --- | --- | --- |
-| 1 | Define lifecycle MANIFEST edit and registry history format | Docs and compatibility test plan ready |
-| 2 | Implement rename with stable cfId | rename/reopen/backup/repair tests pass |
-| 3 | Implement logical non-empty drop without physical GC | Dropped family rejects new reads/writes and history remains explainable |
-| 4 | Implement dropped-family file GC | snapshot/compaction/obsolete tests pass |
-| 5 | Add old-version compatibility gate | New-format old-version fail-fast behavior is documented |
+| 1 | Define lifecycle registry history and compatibility boundaries | Done |
+| 2 | Implement rename with stable cfId | Done: rename/reopen/backup/repair tests pass |
+| 3 | Implement logical non-empty drop without physical GC | Done: dropped families reject new access and history remains explainable |
+| 4 | Dropped-family file GC and migration policy | Future: snapshot/compaction/obsolete long-chain tests pass |
+| 5 | Maintain old-version compatibility and release-gate evidence | Ongoing: new-format old-version fail-fast behavior is documented |

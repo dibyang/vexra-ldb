@@ -129,9 +129,9 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 
 ## Important Boundaries
 
-- The `deleteRange` API exists, but complete range tombstone read/write semantics remain a focused design topic. See `docs/ldb-range-delete-design.md`.
+- `deleteRange` supports range tombstone read/write, recovery, snapshot, and conservative compaction semantics. Longer mixed-workload evidence and more aggressive cleanup remain future work. See `docs/ldb-range-delete-design.md`.
 - The current implementation still uses a global WAL; cross-column-family batches rely on global sequence ordering for recovery.
-- Runtime column-family list/create/empty-drop is supported; non-empty drop, column-family rename, MergeOperator, PrefixExtractor, transactions, TTL, custom Env, and full RocksDB CLI compatibility remain explicit non-goals or ecosystem gaps.
+- Runtime column-family list/create/drop, non-empty drop tombstones, and rename are supported; MergeOperator, PrefixExtractor, transactions, TTL, custom Env, and full RocksDB CLI compatibility remain explicit non-goals or ecosystem gaps.
 - Plugins are trusted in-process extensions. External longrun plugin directories use a managed classloader for dependency isolation, but this is not a cross-process security sandbox.
 - Changes involving disk format, recovery semantics, state machines, or tool side effects must update design documents first and include compatibility and rollback notes.
 
@@ -152,7 +152,7 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `docs/ldb-api-compatibility-design.md`: API compatibility and migration design.
 - `docs/ldb-plugin-design.md`: plugin capability enhancement design.
 - `docs/ldb-plugin-docs-index.md`: plugin documentation entry point.
-- `docs/ldb-column-family-tombstone-design.md`: non-empty column-family drop/rename/tombstone design.
+- `docs/ldb-column-family-tombstone-design.md`: current non-empty column-family drop/rename/tombstone semantics and future GC plan.
 - `docs/ldb-backup-engine-design.md`: shared object store and reference-counted backup engine design.
 - `docs/ldb-longrun-benchmark-design.md`: long-run stress and benchmark report framework design.
 - `docs/ldb-production-readiness-plan.md`: production release gates, upgrade fixtures, long stress, and operations runbook plan.

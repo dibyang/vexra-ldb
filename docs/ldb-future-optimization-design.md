@@ -4,17 +4,17 @@
 
 ## 背景
 
-当前 LDB 已完成 benchmark/soak 入口、compaction 压力回归、range tombstone 读取路径优化、write stall 降速配置，以及 checkpoint、backup/restore、repair 的恢复闭环测试。下一批高收益方向集中在写入聚合、备份增量化和 range delete 完整语义三个区域。这些能力都会影响 WAL、SST、MANIFEST、恢复、压缩或运维报告，必须先明确边界，再分阶段实现。
+当前 LDB 已完成 benchmark/soak 入口、compaction 压力回归、range tombstone 读写路径、write stall 降速配置、group commit 最小实现、对象仓库增量备份，以及 checkpoint、backup/restore、repair 的恢复闭环测试。本文原本规划的写入聚合、备份增量化和 range delete 完整语义已经形成基线，后续高收益方向转为生产证据固化：checkpoint/backup 跨文件系统与低磁盘矩阵、WAL 生命周期、group commit 长基线和外部观测。
 
 ## 目标
 
-- 给出 group commit、增量备份、range delete 后续落地的接口、数据结构、状态和测试门禁。
+- 记录 group commit、增量备份、range delete 已落地基线，并把剩余工作收敛为生产证据和运维硬化。
 - 明确哪些能力可以在不改变磁盘格式的情况下先推进，哪些必须作为格式变更单独评审。
 - 保护现有调用方：默认行为保持兼容，新能力必须可观测、可关闭、可回滚。
 
 ## 非目标
 
-- 本文档记录 group commit、增量备份和 range delete 后续工作的设计边界；其中 group commit 最小实现、增量备份最小实现、compaction 长压测入口和 benchmark 报告输出已在 `0.4.0` 落地。
+- 本文档记录 group commit、增量备份和 range delete 的设计边界；其中 group commit、对象仓库增量备份、range delete、compaction 长压测入口和 benchmark 报告输出均已落地为当前基线。
 - 不引入 RocksDB JNI、RocksJava 或外部存储服务。
 - 不改变现有 `LDBFactory.createBackup/restoreBackup`、`LDB#checkpoint` 和 `LdbWriteBatch.deleteRange` 的当前兼容行为。
 
@@ -22,9 +22,9 @@
 
 | 方向 | 当前能力 | 主要缺口 |
 | --- | --- | --- |
-| 写入路径 | 单 writer 顺序写 WAL，再应用 MemTable；已有 write stall 计数、可配置 slowdown delay 和默认关闭的 group commit 最小实现 | Group commit 仍按请求分别写 WAL record，尚未把多个请求编码成单条 WAL record，也未形成长期吞吐/尾延迟基线 |
-| 备份 | 离线全量 backup/restore，临时目录发布，`BACKUP-REPORT.json`、`RESTORE-REPORT.json`、清理旧版本、`BACKUP-MANIFEST.json` 和可独立恢复的增量备份目录 | 增量备份当前只复用同名同长度 SST 文件，硬链接失败会回退复制；尚未实现共享对象仓库、引用计数和增量链清理 |
-| Range Delete | API、WAL/SST/MemTable/read/compaction 已具备基础语义，读路径已避免无谓全表 tombstone 扫描 | 仍缺少格式版本边界、旧版本兼容策略、更长 snapshot/compaction/repair 矩阵和降级规则 |
+| 写入路径 | 单 writer 顺序写 WAL，再应用 MemTable；已有 write stall 计数、可配置 slowdown delay 和默认关闭的 group commit 最小实现 | Group commit 仍按请求分别写 WAL record，尚未形成长期吞吐/尾延迟基线 |
+| 备份 | 离线全量 backup/restore，临时目录发布，`BACKUP-REPORT.json`、`RESTORE-REPORT.json`、对象仓库、`OBJECT-REFS.json`、dry-run 清理和可独立恢复的增量备份目录 | 仍需长备份链、跨文件系统、低磁盘和权限故障矩阵 |
+| Range Delete | API、WAL/SST/MemTable/read/compaction 已具备基础语义，读路径已避免无谓全表 tombstone 扫描 | 仍需更激进 tombstone/point key 清理策略、长时间混合 workload 和旧版本 fail-fast 证据归档 |
 
 ## 核心约束
 
@@ -180,15 +180,15 @@
 
 1. 先上线观测属性和压力测试，不启用新行为。
 2. Group commit 在测试环境以小等待窗口灰度，观察 p99 写延迟、sync 次数和吞吐。
-3. 增量备份已支持“完整目录 + manifest + SST 硬链接复用”，后续再启用共享对象仓库和引用计数清理。
-4. Range delete 先补格式兼容测试和 repair/check 报告，再启用写入新格式。
+3. 增量备份已支持对象仓库、引用计数和 dry-run 清理；后续以长链、低磁盘和跨文件系统报告作为灰度依据。
+4. Range delete 已启用基线语义；后续以旧版本 fail-fast 证据、长 snapshot/compaction 矩阵和保守清理规则作为灰度依据。
 
 ## 测试方案
 
 | 方向 | 必测项 |
 | --- | --- |
 | Group commit | 已覆盖并发写、sync/non-sync 组合、reopen 后可恢复和统计属性；后续补 WAL 注入失败、MemTable 应用失败和更长尾延迟报告 |
-| 增量备份 | 已覆盖首次增量、连续增量、SST 复用、restore 后 reopen、checkBackup；后续补父备份缺失、共享文件损坏和引用清理 |
+| 增量备份 | 已覆盖首次增量、连续增量、对象复用、restore 后 reopen、checkBackup、损坏对象和引用清理；后续补长备份链、跨文件系统和低磁盘矩阵 |
 | Range delete | 跨 MemTable/SST/level 删除、snapshot 旧视图、crash recovery、repair/check/backup、旧格式兼容、compaction 合并 |
 
 ## 风险点
@@ -208,7 +208,9 @@
 | 1 | Group commit 观测属性和开关，默认关闭 | 已完成：单 writer 行为不变，新增 property 可观测 |
 | 2 | Group commit 最小实现 | 已完成：并发写、sync、reopen 和统计测试通过 |
 | 3 | 增量备份 manifest 与 checkBackup | 已完成：全量备份兼容，manifest 校验可解释 |
-| 4 | 共享 SST 增量备份最小实现 | 已完成：连续增量、SST 复用、restore 和 checkBackup 通过；引用计数清理仍是后续工作 |
-| 5 | Range delete 格式兼容评审与测试矩阵 | 新旧格式边界、repair/check/backup 文档和测试齐备 |
-| 6 | Range delete 完整压缩与恢复强化 | snapshot、compaction、crash、repair 全矩阵通过 |
+| 4 | 共享对象仓库与引用计数增量备份 | 已完成：连续增量、对象复用、restore、checkBackup、dry-run 清理通过 |
+| 5 | Range delete 格式兼容评审与测试矩阵 | 已完成：新旧格式边界、repair/check/backup 文档和测试齐备 |
+| 6 | Range delete 完整压缩与恢复强化 | 已完成：snapshot、compaction、crash、repair 矩阵通过；当前采用保守清理策略 |
+| 7 | checkpoint/backup 跨文件系统与低磁盘生产证据 | 后续：硬链接回退、复制限速、权限失败和长链报告稳定 |
+| 8 | WAL 生命周期与 group commit 长基线 | 后续：归档/保留策略、尾延迟和 sync 次数报告稳定 |
 

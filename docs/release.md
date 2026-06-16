@@ -47,7 +47,7 @@ Windows PowerShell:
 - 正式发布前仍需执行本地发布门禁：`.\gradlew.bat clean publishToMavenLocal`。
 - 升级兼容门禁：发布前验证可打开 `vexra-ldb:0.4.0` 创建的数据目录，或在 release note 中明确迁移错误和处理方式。
 - longrun 发布门禁：至少执行文档化的 smoke/performance/plugin profile，并按 `ldb-longrun/README.md` 归档报告。
-- 生产级发布门禁：按 `docs/ldb-production-readiness-plan.md` 补齐 18.1-18.6 后执行 `releaseGate`、旧库升级、备份损坏注入、列族 tombstone 长压测和 production-gate longrun；未通过前不得发布正式版本。
+- 生产级发布门禁：确认 `docs/ldb-production-readiness-plan.md` 中 18.1-18.6 已完成并复跑 `releaseGate`、旧库升级、备份损坏注入、列族 tombstone 长压测和 production-gate longrun；未通过或未归档报告前不得发布正式版本。
 
 ## 0.2.0 发布前验证记录
 

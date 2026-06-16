@@ -173,9 +173,22 @@ src/test/resources/upgrade/
 
 | 阶段 | 标题 | 交付物 | 验收 |
 | --- | --- | --- | --- |
-| 18.1 | 旧版本升级兼容样本库 | `0.4.0` 样本、兼容测试、样本 README | 新版本可打开并校验样本，或输出清晰迁移错误 |
-| 18.2 | 生产级 `releaseGate` 聚合任务 | Gradle 任务、`RELEASE-GATE-REPORT.json`、Markdown 摘要 | 任一门禁失败时整体失败并保留报告 |
-| 18.3 | 备份对象仓库损坏注入矩阵 | 缺失对象、坏引用、孤儿对象、坏 manifest、restore 回滚测试 | `checkBackup`/restore 对损坏输入 fail-fast 且不污染目标 |
-| 18.4 | 列族 tombstone 长压测与物理 GC 证明 | 长生命周期 drop/rename/reopen/compact/backup/repair 测试 | tombstone 不破坏旧快照，清理后 cfId 不复用 |
-| 18.5 | production-gate longrun profile | 发布门禁 profile、benchmark 报告归档规则 | 输出可复查报告，失败保留 workload 和属性快照 |
-| 18.6 | 运维手册与故障处置 Runbook | `docs/operations.md` 和英文副本 | 覆盖备份、恢复、升级、check、repair、发布前门禁 |
+| 18.1 | 旧版本升级兼容样本库 | `0.4.0` 样本、兼容测试、样本 README | 已完成：新版本可打开并校验样本，或输出清晰迁移错误 |
+| 18.2 | 生产级 `releaseGate` 聚合任务 | Gradle 任务、`RELEASE-GATE-REPORT.json`、Markdown 摘要 | 已完成：任一门禁失败时整体失败并保留报告 |
+| 18.3 | 备份对象仓库损坏注入矩阵 | 缺失对象、坏引用、孤儿对象、坏 manifest、restore 回滚测试 | 已完成：`checkBackup`/restore 对损坏输入 fail-fast 且不污染目标 |
+| 18.4 | 列族 tombstone 长压测与物理 GC 证明 | 长生命周期 drop/rename/reopen/compact/backup/repair 测试 | 已完成：tombstone 不破坏旧快照，cfId 不复用；更激进物理 GC 留给后续硬化 |
+| 18.5 | production-gate longrun profile | 发布门禁 profile、benchmark 报告归档规则 | 已完成：输出可复查报告，失败保留 workload 和属性快照 |
+| 18.6 | 运维手册与故障处置 Runbook | `docs/operations.md` 和英文副本 | 已完成：覆盖备份、恢复、升级、check、repair、发布前门禁 |
+
+## 阶段状态与下一阶段
+
+第十八阶段已经形成 `0.5.0` 发布前最小闭环。后续不再把 18.1-18.6 作为待补计划，而是作为发布门禁持续复跑和归档。
+
+下一阶段转入 `docs/ldb-reliability-plan.md` 的第十九至第二十二阶段：
+
+| 阶段 | 标题 | 生产价值 |
+| --- | --- | --- |
+| 19 | checkpoint/backup 生产证据固化 | 证明跨文件系统、低磁盘、权限失败、长备份链和报告归档可控 |
+| 20 | WAL 生命周期与写入策略生产化 | 明确 WAL 归档/保留/清理策略，并沉淀 group commit 长基线 |
+| 21 | 运维生态与外部观测 | 统一 CLI/报告索引，接入外部指标或趋势分析 |
+| 22 | RocksDB 高级 API 兼容评审 | 独立评审 MergeOperator、PrefixExtractor、transactions、TTL、custom Env 等高级能力 |
