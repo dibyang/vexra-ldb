@@ -40,7 +40,7 @@ try (LDB db = LDBFactory.factory.open(new File("data/app.ldb"), options)) {
 
 常用操作：
 
-- `put/get/delete`：基础 KV 读写。
+- `put/get/delete`：基础 KV 读写；`get(List<byte[]>)` 按输入顺序批量点查，未命中位置返回 null。
 - `write(LdbWriteBatch, WriteOptions)`：批量写。
 - `addLong`：原子计数累加。
 - `newSnapshotCursor`：快照遍历。
@@ -120,6 +120,8 @@ db.dropColumnFamily(renamed);
 - 非空列族 drop/rename 依赖 tombstone 语义，相关边界见 [列族 tombstone 设计](ldb-column-family-tombstone-design.md)。
 - 迁移前应先备份，并记录列族 id/name 映射。
 
+多列族变更、备份或恢复演练后，建议归档 `ldb.columnFamilyEvidence`，用于确认 active/dropped 列族数量、注册表记录、MemTable、Level 文件和 drop/rename 策略。
+
 ## SnapshotCursor 和遍历
 
 `SnapshotCursor` 固定打开时刻的读视图，适合一致性遍历和范围扫描。
@@ -139,6 +141,7 @@ try (SnapshotCursor cursor = db.newSnapshotCursor()) {
 - 长生命周期 cursor 会延迟旧版本资源释放，长扫描应分批执行。
 - 范围扫描需要业务自行判断结束边界。
 - 大范围扫描建议使用 `ReadOptions#fillCache(false)` 的读取模式，避免污染热点缓存；cursor API 当前没有单独的 fill-cache 参数。
+- 评审 prefix/cache 调优时可以归档 `ldb.prefixReadiness`；该属性只说明 PrefixExtractor、prefix bloom、cache warmup 的准备度和当前 cache/filter 配置，不表示 prefix 读路径已经启用。
 
 ## Compaction 和写入背压
 
@@ -168,15 +171,24 @@ db.compactRange(cf, beginKey, endKey);
 3. 对备份执行 `check-backup`。
 4. 定期做恢复演练。
 
+建议在发布门禁或演练报告中归档以下属性：
+
+- `ldb.recoveryEvidence`：记录当前库的 WAL、MANIFEST、check/repair 入口和 repair 报告状态。
+- `ldb.backupEvidence`：记录 checkpoint、backup、restore、对象仓库和清理 dry-run 的证据约定。
+
 命令：
 
 ```bash
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
+java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool properties data/app.ldb
+java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool scan data/app.ldb 20
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool backup data/app.ldb backups
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool incremental-backup data/app.ldb backups
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check-backup backups/backup-000001
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool restore backups/backup-000001 restored.ldb
 ```
+
+`scan` 只读打开默认列族，按 key 顺序输出 JSON。默认 limit 为 100，显式 limit 必须为正整数；key/value 使用 base64，适合脚本排查小样本，不适合替代业务级导出。
 
 `checkpoint` 适合生成本地一致性副本。实现会在临时目录中构建，校验通过后再发布到目标目录；失败时会清理临时目录，成功报告会包含复制、硬链接、字节数和耗时统计。
 
@@ -296,4 +308,5 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 - [发布流程](release.md)
 - [项目设计](ldb-project-design.md)
 - [生产级发布规划](ldb-production-readiness-plan.md)
+- [RocksDB 差距与下一版本规划](ldb-rocksdb-gap-next-version-plan.md)
 - [对外承诺和验收边界](vexra-ldb-external-commitment.md)

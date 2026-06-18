@@ -40,7 +40,7 @@ try (LDB db = LDBFactory.factory.open(new File("data/app.ldb"), options)) {
 
 Common operations:
 
-- `put/get/delete`: basic KV reads and writes.
+- `put/get/delete`: basic KV reads and writes; `get(List<byte[]>)` performs ordered batch point reads and returns null for missing keys.
 - `write(LdbWriteBatch, WriteOptions)`: batch writes.
 - `addLong`: atomic counter increment.
 - `newSnapshotCursor`: snapshot iteration.
@@ -120,6 +120,8 @@ Constraints:
 - Non-empty drop and rename rely on tombstone semantics. See the [Column-Family Tombstone Design](ldb-column-family-tombstone-design.en.md).
 - Before migration, create a backup and record the id/name mapping.
 
+After multi-column-family changes, backups, or restore drills, archive `ldb.columnFamilyEvidence` to confirm active/dropped counts, registry records, MemTables, level files, and drop/rename policy.
+
 ## SnapshotCursor And Iteration
 
 `SnapshotCursor` pins a read view at cursor creation time and is suitable for consistent iteration and range scans.
@@ -139,6 +141,7 @@ Notes:
 - Long-lived cursors can delay old-version resource reclamation; split long scans into batches.
 - Range scans must enforce their own end boundary.
 - Large scans should prefer read paths with `ReadOptions#fillCache(false)` to avoid polluting hot cache; the cursor API currently does not expose a separate fill-cache option.
+- When reviewing prefix/cache tuning, archive `ldb.prefixReadiness`; the property only describes PrefixExtractor, prefix-bloom, cache-warmup readiness and current cache/filter configuration, and does not mean the prefix read path is enabled.
 
 ## Compaction And Write Backpressure
 
@@ -168,15 +171,24 @@ Recommended workflow:
 3. Run `check-backup`.
 4. Practice restore regularly.
 
+Archive these properties in release gates or restore-drill reports:
+
+- `ldb.recoveryEvidence`: records WAL, MANIFEST, check/repair entry points, and repair-report state for the current database.
+- `ldb.backupEvidence`: records evidence conventions for checkpoint, backup, restore, object-store metadata, and cleanup dry-run.
+
 Commands:
 
 ```bash
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
+java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool properties data/app.ldb
+java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool scan data/app.ldb 20
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool backup data/app.ldb backups
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool incremental-backup data/app.ldb backups
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check-backup backups/backup-000001
 java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool restore backups/backup-000001 restored.ldb
 ```
+
+`scan` opens the default column family read-only and emits key-order JSON. The default limit is 100, an explicit limit must be positive, and key/value bytes are base64-encoded. Use it for small diagnostic samples, not as a business export replacement.
 
 `checkpoint` creates a local consistent copy. The implementation builds in a temporary directory, publishes the target only after verification, cleans the temporary directory on failure, and records copy, hard-link, byte, and duration statistics in the success report.
 
@@ -296,4 +308,5 @@ It is not recommended. Stop writes, back up the raw directory, generate a repair
 - [Release Process](release.en.md)
 - [Project Design](ldb-project-design.en.md)
 - [Production Readiness Plan](ldb-production-readiness-plan.en.md)
+- [RocksDB Gap And Next-Version Plan](ldb-rocksdb-gap-next-version-plan.en.md)
 - [External Commitments And Acceptance Boundaries](vexra-ldb-external-commitment.en.md)

@@ -87,7 +87,7 @@
 ### 维护流程
 
 - `checkpoint(targetDir)`：flush 后暂停 compaction，冻结文件集合，在目标目录旁的唯一临时目录中复制或硬链接 CURRENT、MANIFEST、`COLUMN-FAMILIES`、live SST、引用 WAL 和 INFO_LOG，写入 `CHECKPOINT-REPORT.json` 并校验通过后再原子发布到 `targetDir`；失败时清理临时目录，避免把半成品暴露成成功快照。
-- `LDBFactory.check`：离线扫描 CURRENT、MANIFEST、`COLUMN-FAMILIES`、SST、WAL，返回 `CheckReport`，不获取写锁，不修改目录。
+- `LDBFactory.check`：离线扫描 CURRENT、MANIFEST、`COLUMN-FAMILIES`、SST、WAL，返回 `CheckReport`，不获取写锁，不修改目录；CURRENT 内容必须是同目录内合法 `MANIFEST-NNNNNN` 文件名。
 - `LDBFactory.repair`：从可用 SST/WAL 重建 MANIFEST/CURRENT，隔离损坏文件，并写入 `REPAIR-REPORT.json`。
 - `createBackup/restoreBackup`：执行全量备份和恢复，使用临时目录发布，生成 JSON 报告。
 - `createIncrementalBackup/checkBackup`：创建完整可恢复的增量备份目录，优先通过硬链接复用上一备份中的同名同长度 SST 文件，并写入 `BACKUP-MANIFEST.json`。
@@ -174,6 +174,7 @@
 | --- | --- | --- |
 | `check <db>` | 无 | `CheckReport` JSON |
 | `properties <db> [property...]` | 只读打开，无磁盘写入 | property JSON |
+| `scan <db> [limit]` | 只读打开，无磁盘写入 | 默认列族 key/value base64 JSON |
 | `repair <db>` | 重建元数据、隔离损坏文件 | `REPAIR-REPORT.json` |
 | `backup <db> <backupRoot>` | 创建备份目录 | `BackupReport` JSON |
 | `incremental-backup <db> <backupRoot>` | 创建可独立恢复的增量备份目录 | `BackupReport` JSON |
@@ -393,3 +394,4 @@ sequenceDiagram
 | 4 | 增强工具命令和 JSON 报告稳定性 | 工具测试覆盖退出码和输出 |
 | 5 | 增加长时间 soak、故障注入和兼容性测试 | 覆盖恢复、compaction、snapshot 和备份恢复 |
 | 6 | 生产级发布门禁与运维硬化 | `ldb-production-readiness-plan.*` 落档，后续以 `releaseGate`、旧版本样本、损坏注入、longrun 和 Runbook 验收 |
+| 7 | RocksDB 差距与下一版本规划 | `ldb-rocksdb-gap-next-version-plan.*` 落档，后续按高级 API、WAL/恢复、列族、备份、compaction/cache、CLI/观测工作包验收 |

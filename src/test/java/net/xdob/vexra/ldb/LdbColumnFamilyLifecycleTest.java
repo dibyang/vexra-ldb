@@ -71,12 +71,16 @@ class LdbColumnFamilyLifecycleTest {
       assertThrows(IllegalArgumentException.class, () -> db.getColumnFamily(23));
       assertFalse(containsColumnFamily(db.listColumnFamilies(), 23, "non-empty-runtime"));
       assertTrue(db.getProperty("ldb.api.supportedFeatures").contains("runtimeColumnFamilyDropNonEmpty"));
+      assertTrue(db.getProperty("ldb.columnFamilyEvidence").contains("droppedCount=1"));
+      assertTrue(db.getProperty("ldb.columnFamilyEvidence").contains("D:23:non-empty-runtime"));
+      assertTrue(db.getProperty("ldb.columnFamilyEvidence").contains("dropPolicy=tombstoneNoCfIdReuse"));
     }
 
     try (LDB reopened = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
       assertThrows(IllegalArgumentException.class, () -> reopened.getColumnFamily(23));
       assertFalse(containsColumnFamily(reopened.listColumnFamilies(), 23, "non-empty-runtime"));
       assertThrows(DBException.class, () -> reopened.createColumnFamily(23, "reused-id"));
+      assertTrue(reopened.getProperty("ldb.columnFamilyEvidence").contains("droppedCount=1"));
     }
   }
 
@@ -95,6 +99,9 @@ class LdbColumnFamilyLifecycleTest {
       assertTrue(containsColumnFamily(db.listColumnFamilies(), 25, "after-rename"));
       assertFalse(containsColumnFamily(db.listColumnFamilies(), 25, "before-rename"));
       assertTrue(db.getProperty("ldb.api.supportedFeatures").contains("runtimeColumnFamilyRename"));
+      assertTrue(db.getProperty("ldb.columnFamilyEvidence").contains("A:25:after-rename"));
+      assertTrue(db.getProperty("ldb.columnFamilyEvidence").contains("renamePolicy=stableCfId"));
+      assertTrue(db.getProperty("ldb.columnFamilyEvidence").contains("perCfOptions=unsupported"));
     }
 
     try (LDB reopened = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {

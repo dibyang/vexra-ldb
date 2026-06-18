@@ -6,7 +6,7 @@ English | [中文](README.md)
 
 ## Features
 
-- Basic KV API: `put`, `get`, `delete`, `write`, and `addLong`.
+- Basic KV API: `put`, `get`, batch `get(List<byte[]>)`, `delete`, `write`, and `addLong`.
 - Column families: register through `Options#addColumnFamily` or the runtime `listColumnFamilies`/`createColumnFamily`/empty `dropColumnFamily` APIs; the default family is `LdbColumnFamily.DEFAULT`.
 - Write reliability: writes go to WAL first and are then applied to MemTable; restart recovery uses MANIFEST, SST, and WAL.
 - Read path: lookup checks MemTable, immutable MemTable, and Version/SSTable in order, with snapshot cursor support.
@@ -93,6 +93,7 @@ The command-line entry point is `net.xdob.vexra.ldb.tool.LdbTool`. Current comma
 ```text
 ldb check <db>
 ldb properties <db> [property...]
+ldb scan <db> [limit]
 ldb repair <db>
 ldb repair-plan <db>
 ldb backup <db> <backupRoot>
@@ -102,7 +103,7 @@ ldb restore <backupDir> <targetDir>
 ldb checkpoint <db> <targetDir>
 ```
 
-Commands primarily output JSON so scripts and tests can parse them. `check`, `properties`, `repair-plan`, and `check-backup` are read-only diagnostics commands. `repair`, `backup`, `incremental-backup`, `restore`, and `checkpoint` create file-system side effects, so callers should confirm target directories and backup strategy before running them.
+Commands primarily output JSON so scripts and tests can parse them. `check`, `properties`, `scan`, `repair-plan`, and `check-backup` are read-only diagnostics commands. `scan` prints at most 100 default-column-family entries by default, with key/value encoded as base64. `repair`, `backup`, `incremental-backup`, `restore`, and `checkpoint` create file-system side effects, so callers should confirm target directories and backup strategy before running them.
 
 ## Common Diagnostic Properties
 
@@ -111,6 +112,10 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `ldb.lastSequence`
 - `ldb.currentLogNumber`
 - `ldb.walPolicy`
+- `ldb.recoveryEvidence`
+- `ldb.backupEvidence`
+- `ldb.columnFamilyEvidence`
+- `ldb.prefixReadiness`
 - `ldb.fileCounts`
 - `ldb.fileBytes`
 - `ldb.totalBytes`
@@ -126,12 +131,14 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `ldb.api.compatibility`
 - `ldb.api.supportedFeatures`
 - `ldb.api.unsupportedFeatures`
+- `ldb.api.rocksdbGapPlan`
 
 ## Important Boundaries
 
 - `deleteRange` supports range tombstone read/write, recovery, snapshot, and conservative compaction semantics. Longer mixed-workload evidence and more aggressive cleanup remain future work. See `docs/ldb-range-delete-design.md`.
 - The current implementation still uses a global WAL; cross-column-family batches rely on global sequence ordering for recovery.
-- Runtime column-family list/create/drop, non-empty drop tombstones, and rename are supported; MergeOperator, PrefixExtractor, transactions, TTL, custom Env, and full RocksDB CLI compatibility remain explicit non-goals or ecosystem gaps.
+- Runtime column-family list/create/drop, non-empty drop tombstones, and rename are supported; `ldb.prefixReadiness` only exposes prefix/cache tuning readiness; MergeOperator, PrefixExtractor, transactions, TTL, custom Env, and full RocksDB CLI compatibility remain explicit non-goals or ecosystem gaps.
+- The next-version RocksDB gap plan and work-package split are tracked in `docs/ldb-rocksdb-gap-next-version-plan.md`.
 - Plugins are trusted in-process extensions. External longrun plugin directories use a managed classloader for dependency isolation, but this is not a cross-process security sandbox.
 - Changes involving disk format, recovery semantics, state machines, or tool side effects must update design documents first and include compatibility and rollback notes.
 
@@ -158,6 +165,7 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `docs/ldb-production-readiness-plan.md`: production release gates, upgrade fixtures, long stress, and operations runbook plan.
 - `docs/vexra-ldb-external-commitment.md`: external commitments and release acceptance boundaries.
 - `docs/ldb-future-optimization-design.md`: future performance and reliability evaluation.
+- `docs/ldb-rocksdb-gap-next-version-plan.md`: RocksDB gap alignment and next-version planning design.
 
 ## License
 

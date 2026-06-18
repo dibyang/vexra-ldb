@@ -6,6 +6,8 @@ English | [中文](ldb-api-compatibility-design.md)
 
 LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, column families, range delete, read-only open, observability properties, and plugin support. Phase 16 does not try to clone the full RocksDB API. Its first purpose is to make supported, partially supported, and explicitly unsupported boundaries visible so callers do not assume RocksDB-style options have silently taken effect.
 
+The next-version gap split and work-package tracking against current RocksDB product capabilities are documented in [LDB RocksDB Gap and Next-Version Planning Design](ldb-rocksdb-gap-next-version-plan.en.md).
+
 ## Goals
 
 - Define how RocksDB/LevelDB-style Options map to LDB `Options`.
@@ -25,6 +27,7 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 | Capability | Current LDB behavior | Migration note |
 | --- | --- | --- |
 | Basic read/write | `put`, `delete`, `get`, and `write` are supported | Failures surface as `DBException` or argument errors |
+| Batch point reads | `get(List<byte[]>)` and column-family overloads are supported | Results preserve input order; missing keys return null; no disk-format change |
 | Column families | Declared before open through `Options.addColumnFamily`, with runtime `list/create/drop`, non-empty drop tombstones, and rename support | Dropped-CF physical GC, migration policy, and large-scale multi-CF operations remain hardening items |
 | Range delete | `LdbWriteBatch.deleteRange` is supported | Check old-version readability before using data with range tombstones |
 | Read-only open | `Options.readOnly(true)` is supported | Read-only instances do not create new WALs and reject writes/compaction/checkpoint |
@@ -52,6 +55,11 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 | `ldb.api.supportedFeatures` | Explicitly supported capability list | Fields may be added |
 | `ldb.api.unsupportedFeatures` | Explicitly unsupported capability list | Implemented capabilities may move out |
 | `ldb.api.ecosystemGaps` | Blocking reasons for key unsupported ecosystem features | Fields may be added |
+| `ldb.api.rocksdbGapPlan` | RocksDB gap plan, next-version target, and low-risk implementation item | Fields may be added |
+| `ldb.recoveryEvidence` | WAL, MANIFEST, check/repair entry points, and report-file state for the current database directory | Fields may be added |
+| `ldb.backupEvidence` | Evidence conventions for checkpoint, backup, restore, object-store metadata, and cleanup dry-run | Fields may be added |
+| `ldb.columnFamilyEvidence` | Summary of column-family registry state, active/dropped counts, MemTables, level files, and lifecycle policy | Fields may be added |
+| `ldb.prefixReadiness` | PrefixExtractor, prefix-bloom, and cache-warmup prerequisites plus current cache/filter state | Fields may be added; observation-only and must not change the read path |
 
 ### Options Mapping Policy
 
@@ -71,6 +79,7 @@ LDB now has WAL, MemTable, SSTable, checkpoint, repair, verify/check, backup, co
 | `verify_checksums` | `Options.verifyChecksums` | supported |
 | `comparator` | `Options.comparator` | supported; callers own ordering consistency |
 | `filter_policy` | `Options.filterPolicy` | supported |
+| `multi_get` | `LDB#get(List<byte[]>)` | supported, preserving input order |
 | `statistics` | `LDB.getProperty` | properties |
 | `merge_operator` | none | unsupported |
 | `prefix_extractor` | none | unsupported |
@@ -161,6 +170,7 @@ The repository now has a minimal `net.xdob.vexra.ldb.tool.LdbTool` CLI entry poi
 | `ldb incremental-backup <db> <backup-root>` | `LDBFactory.createIncrementalBackup` | Reads source, writes backup dir | Offline source check | `BackupReport` JSON and verification result |
 | `ldb check-backup <backup>` | `LDBFactory.checkBackup` | No | No writer lock | `CheckReport` JSON |
 | `ldb properties <db> [property...]` | `LDB.getProperty` | No | Read-only open by default | Property key/value output |
+| `ldb scan <db> [limit]` | `LDB.newSnapshotCursor` | No | Read-only open by default | Default-CF key-order JSON, with key/value encoded as base64 and a default limit of 100 entries |
 | `ldb compact <db> [begin] [end]` | `LDB.compactRange` | Yes | Normal writer open | Compaction stats and errors |
 
 ### Exit Codes
@@ -175,7 +185,7 @@ The repository now has a minimal `net.xdob.vexra.ldb.tool.LdbTool` CLI entry poi
 
 ### Error Semantics
 
-- `check` and `properties` must be read-only by default, create no new WALs, and avoid modifying MANIFEST.
+- `check`, `properties`, and `scan` must be read-only by default, create no new WALs, and avoid modifying MANIFEST.
 - `repair`, `compact`, and `restore` are write commands; help text and logs must clearly state their side effects. The currently exposed `repair` command prints `REPAIR-REPORT.json` after success.
 - `checkpoint` and `backup` should not change source DB semantics, but they write target directories; non-empty targets must fail. `checkpoint` builds through a temporary directory, publishes only after verification, cleans the temporary directory on failure, and preserves the failure cause. The currently exposed `backup`/`restore` commands reuse offline backup reports directly, and failed reports return exit code `2`; `checkpoint` prints the target directory's `CHECKPOINT-REPORT.json`.
 - All commands should support machine-readable output, preferably JSON; human text is only an additional view.
@@ -186,7 +196,8 @@ The repository now has a minimal `net.xdob.vexra.ldb.tool.LdbTool` CLI entry poi
 1. When adding or extending CLI commands, add command parser tests and do not reuse temporary test `main` classes.
 2. Cover lock conflicts, missing paths, non-empty targets, and permission failures for all write commands.
 3. Cover `ldb.api.*`, statistics properties, and unknown properties in the `properties` command.
-4. Command output fields must stay compatible with repair/check/backup reports instead of inventing parallel meanings.
+4. Cover the default limit, explicit limit, bad limit, read-only no-write behavior, and base64 output in the `scan` command.
+5. Command output fields must stay compatible with repair/check/backup reports instead of inventing parallel meanings.
 
 ## MergeOperator/PrefixExtractor Review
 
@@ -218,7 +229,7 @@ If MergeOperator is implemented later, it must first define the operator registr
 | Compaction | Whether prefix partitioning affects file boundaries and candidate choice | Do not change compaction picker |
 | Check/Repair | How corrupt or missing prefix metadata is verified | Add no new check item |
 
-If PrefixExtractor is implemented later, it must first prove the combined semantics with current `DBComparator`, `FilterPolicy`, `SnapshotCursor`, range delete, and per-CF compaction. Any prefix bloom or prefix seek optimization must have a degradation path and must not allow a bad prefix configuration to cause missed reads.
+If PrefixExtractor is implemented later, it must first prove the combined semantics with current `DBComparator`, `FilterPolicy`, `SnapshotCursor`, range delete, and per-CF compaction. Any prefix bloom or prefix seek optimization must have a degradation path and must not allow a bad prefix configuration to cause missed reads. In the next-version 23.5 increment, LDB only adds the `ldb.prefixReadiness` observation property to record `prefixExtractor=unsupported`, `prefixBloom=unsupported`, cache-warmup state, current comparator/filter/cache configuration, and enablement prerequisites; it must not change point get, MultiGet, cursor, range delete, or compaction behavior.
 
 ### Review Entry Checklist
 
@@ -240,3 +251,4 @@ If PrefixExtractor is implemented later, it must first prove the combined semant
 | 17.2 | LDB repair tool command | `repair` is covered by a missing-CURRENT repair and reopen test |
 | 17.3 | LDB backup/restore tool commands | `backup`/`restore` are covered by backup publication, restore reopen, and corrupt-source failure tests |
 | 17.4 | LDB checkpoint tool command | `checkpoint` is covered by report output, target reopen, and non-empty target failure tests |
+| 23.1 | RocksDB advanced API compatibility review | MergeOperator, PrefixExtractor, TTL, and transactions remain clearly unsupported or one low-risk minimal implementation is selected |

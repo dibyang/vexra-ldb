@@ -81,6 +81,63 @@ class LdbCoreBehaviorTest {
   }
 
   /**
+   * 验证批量点查按输入顺序返回结果，并且缺失 key 保持为 null。
+   */
+  @Test
+  void shouldReadMultipleKeysInInputOrder() throws Exception {
+    File dbDir = new File(tempDir, "multi-get-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true).addColumnFamily(META_CF))) {
+      db.put(bytes("a"), bytes("default-a"));
+      db.put(bytes("b"), bytes("default-b"));
+      db.put(META_CF, bytes("a"), bytes("meta-a"));
+      db.put(META_CF, bytes("c"), bytes("meta-c"));
+
+      List<byte[]> values = db.get(Arrays.asList(bytes("b"), bytes("missing"), bytes("a")));
+      assertEquals(3, values.size());
+      assertArrayEquals(bytes("default-b"), values.get(0));
+      assertNull(values.get(1));
+      assertArrayEquals(bytes("default-a"), values.get(2));
+
+      List<byte[]> metaValues = db.get(META_CF, Arrays.asList(bytes("c"), bytes("a"), bytes("missing")));
+      assertEquals(3, metaValues.size());
+      assertArrayEquals(bytes("meta-c"), metaValues.get(0));
+      assertArrayEquals(bytes("meta-a"), metaValues.get(1));
+      assertNull(metaValues.get(2));
+    }
+  }
+
+  /**
+   * 验证批量点查使用同一个 snapshot 视图，覆盖后仍能看到旧值。
+   */
+  @Test
+  void shouldReadMultipleKeysFromSnapshotView() throws Exception {
+    File dbDir = new File(tempDir, "multi-get-snapshot-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true))) {
+      db.put(bytes("a"), bytes("v1-a"));
+      db.put(bytes("b"), bytes("v1-b"));
+      Snapshot snapshot = db.getSnapshot();
+      try {
+        db.put(bytes("a"), bytes("v2-a"));
+        db.delete(bytes("b"));
+
+        List<byte[]> latest = db.get(Arrays.asList(bytes("a"), bytes("b")));
+        assertArrayEquals(bytes("v2-a"), latest.get(0));
+        assertNull(latest.get(1));
+
+        List<byte[]> snapshotValues = db.get(
+            Arrays.asList(bytes("a"), bytes("b")),
+            new ReadOptions().snapshot(snapshot));
+        assertArrayEquals(bytes("v1-a"), snapshotValues.get(0));
+        assertArrayEquals(bytes("v1-b"), snapshotValues.get(1));
+      } finally {
+        snapshot.close();
+      }
+    }
+  }
+
+  /**
    * 验证 checkpoint 目录可被重新打开，且包含创建 checkpoint 前已经写入的数据。
    */
   @Test

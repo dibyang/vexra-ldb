@@ -8,6 +8,17 @@
 
 ### Added
 
+- 新增 RocksDB 差距与下一版本规划中英文设计文档，确认 `0.6.0` 下一开发线、`11.1.1` 对标 baseline、`MultiGet` 低风险实现项和高级 API unsupported 边界。
+- 新增 `LDB#get(List<byte[]>)` 及列族重载的批量点查能力，按输入顺序返回结果，未命中 key 返回 null。
+- 新增 `ldb.recoveryEvidence` 与 `ldb.backupEvidence` 诊断属性，用于归档 WAL/Manifest、check/repair、checkpoint、backup/restore、对象仓库和清理 dry-run 证据约定。
+- 新增 `ldb.columnFamilyEvidence` 诊断属性，用于归档列族注册表、active/dropped 数量、MemTable、Level 文件和 drop/rename 策略。
+- 新增 `ldb.prefixReadiness` 诊断属性，用于归档 PrefixExtractor、prefix bloom、cache warmup 的启用前置条件和当前 cache/filter 配置；本阶段只观测，不改变读路径。
+- 收敛 RocksDB 差距规划开放问题，补充性能门禁、property 契约、旧版本打开新库、外部观测和备份存储后端的默认决策。
+- 新增 `LdbTool scan <db> [limit]` 只读诊断命令，按默认列族 key 顺序输出 base64 JSON 样本，默认最多 100 条，不创建 WAL 或修改 MANIFEST。
+- 新增 `docs/release.md` 的 `0.6.0` 发布前验证记录，要求归档 releaseGate、MultiGet、恢复/备份/列族 evidence、`ldb.prefixReadiness`、`scan` 和开放问题默认决策。
+- 增强 CURRENT/MANIFEST 恢复校验，`check` 与 `open` 均拒绝非法 Manifest 文件名或包含路径分隔符的 CURRENT 内容。
+- 增强 `checkBackup` 证据报告，`CheckReport.checkedFiles` 现在会记录 `BACKUP-MANIFEST.json`、`OBJECT-REFS.json` 和已校验对象文件名。
+- 增强 `releaseGate` 报告，新增 `rocksdbGapPlan` 和 `rocksdbGapGates` 分组，用于归档 RocksDB baseline、下一版本目标、MultiGet 验收和高级 API unsupported 策略。
 - 新增非空列族 drop/rename/tombstone 中英文设计文档，明确列族逻辑删除、稳定 cfId、MANIFEST/注册表历史、回滚和兼容边界。
 - 新增 Backup Engine 共享对象仓库与引用计数中英文设计文档，规划对象复用、备份链 GC、dry-run 清理和发布状态机。
 - 新增长期压测与 benchmark 报告框架中英文设计文档，规划 workload 矩阵、机器可读报告、发布阈值和失败保留策略。

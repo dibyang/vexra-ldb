@@ -6,7 +6,7 @@
 
 ## 主要能力
 
-- 基础 KV API：`put`、`get`、`delete`、`write`、`addLong`。
+- 基础 KV API：`put`、`get`、批量 `get(List<byte[]>)`、`delete`、`write`、`addLong`。
 - 列族：通过 `Options#addColumnFamily` 注册，默认列族为 `LdbColumnFamily.DEFAULT`。
 - 写入可靠性：写入先进入 WAL，再应用到 MemTable；重启时通过 MANIFEST、SST 和 WAL 恢复。
 - 读路径：按 MemTable、immutable MemTable、Version/SSTable 的顺序查询，并支持 snapshot cursor。
@@ -93,6 +93,7 @@ try (LDB db = LDBFactory.factory.open(new File("data/cf.ldb"), options)) {
 ```text
 ldb check <db>
 ldb properties <db> [property...]
+ldb scan <db> [limit]
 ldb repair <db>
 ldb repair-plan <db>
 ldb backup <db> <backupRoot>
@@ -102,7 +103,7 @@ ldb restore <backupDir> <targetDir>
 ldb checkpoint <db> <targetDir>
 ```
 
-命令输出以 JSON 为主，便于脚本和测试解析。`check`、`properties`、`repair-plan`、`check-backup` 是只读诊断命令；`repair`、`backup`、`incremental-backup`、`restore`、`checkpoint` 会产生文件副作用，使用前应确认目标目录和备份策略。
+命令输出以 JSON 为主，便于脚本和测试解析。`check`、`properties`、`scan`、`repair-plan`、`check-backup` 是只读诊断命令；`scan` 默认最多输出 100 条默认列族记录，key/value 使用 base64；`repair`、`backup`、`incremental-backup`、`restore`、`checkpoint` 会产生文件副作用，使用前应确认目标目录和备份策略。
 
 ## 常用诊断属性
 
@@ -111,6 +112,10 @@ ldb checkpoint <db> <targetDir>
 - `ldb.lastSequence`
 - `ldb.currentLogNumber`
 - `ldb.walPolicy`
+- `ldb.recoveryEvidence`
+- `ldb.backupEvidence`
+- `ldb.columnFamilyEvidence`
+- `ldb.prefixReadiness`
 - `ldb.fileCounts`
 - `ldb.fileBytes`
 - `ldb.totalBytes`
@@ -126,12 +131,14 @@ ldb checkpoint <db> <targetDir>
 - `ldb.api.compatibility`
 - `ldb.api.supportedFeatures`
 - `ldb.api.unsupportedFeatures`
+- `ldb.api.rocksdbGapPlan`
 
 ## 重要边界
 
 - `deleteRange` 已支持 range tombstone 的读写、恢复、snapshot 和保守 compaction 语义；后续继续补长时间混合 workload 与更激进清理策略，详见 `docs/ldb-range-delete-design.md`。
 - 当前仍采用全局 WAL，跨列族 batch 依赖全局 sequence 保持恢复顺序。
-- 运行时列族 list/create/drop、非空 drop tombstone 和 rename 已支持；MergeOperator、PrefixExtractor、transactions、TTL、custom Env 和完整 RocksDB CLI 兼容仍是明确非目标或生态差距。
+- 运行时列族 list/create/drop、非空 drop tombstone 和 rename 已支持；`ldb.prefixReadiness` 仅提供 prefix/cache 调优准备度观测；MergeOperator、PrefixExtractor、transactions、TTL、custom Env 和完整 RocksDB CLI 兼容仍是明确非目标或生态差距。
+- 下一版本 RocksDB 对标差距和开发包拆分见 `docs/ldb-rocksdb-gap-next-version-plan.md`。
 - 插件是可信进程内扩展。longrun 外部插件目录使用托管 classloader 做依赖隔离，但这不是跨进程安全沙箱。
 - 涉及磁盘格式、恢复语义、状态机或工具副作用的改动，需要先更新设计文档并补充兼容性和回滚说明。
 
@@ -158,6 +165,7 @@ ldb checkpoint <db> <targetDir>
 - `docs/ldb-production-readiness-plan.md`：生产级发布门禁、升级样本、长压测和运维 Runbook 规划。
 - `docs/vexra-ldb-external-commitment.md`：对外承诺和发布验收边界。
 - `docs/ldb-future-optimization-design.md`：后续性能与可靠性专项评估。
+- `docs/ldb-rocksdb-gap-next-version-plan.md`：对齐 RocksDB 差距与下一版本规划设计。
 
 ## License
 

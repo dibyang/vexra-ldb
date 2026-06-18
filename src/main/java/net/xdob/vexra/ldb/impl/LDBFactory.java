@@ -406,7 +406,14 @@ public class LDBFactory
           report.addFailure(current, "CURRENT file does not end with newline");
           return;
         }
-        File manifest = new File(databaseDir, currentName.substring(0, currentName.length() - 1));
+        String manifestName = currentName.substring(0, currentName.length() - 1);
+        try {
+          Filename.parseCurrentManifestFileName(manifestName);
+        } catch (IllegalArgumentException e) {
+          report.addFailure(current, e.getMessage());
+          return;
+        }
+        File manifest = new File(databaseDir, manifestName);
         if (!manifest.isFile()) {
           report.addFailure(current, "CURRENT points to missing manifest: " + manifest.getName());
         }
@@ -1162,6 +1169,7 @@ public class LDBFactory
         report.addFailure("Backup object refs file is missing: " + refsFile);
         return;
       }
+      report.addCheckedFile(refsFile);
       Map<String, Set<String>> expectedRefs;
       try {
         expectedRefs = collectObjectRefs(backupRoot);
@@ -1184,6 +1192,8 @@ public class LDBFactory
         File objectFile = new File(objectsDir, objectId);
         if (!objectFile.isFile()) {
           report.addFailure("Missing backup object: " + objectId);
+        } else {
+          report.addCheckedFile(objectFile);
         }
         String objectEntry = findObjectRefEntry(refsText, objectId);
         if (objectEntry == null) {
@@ -1215,6 +1225,7 @@ public class LDBFactory
         report.addFailure("Missing backup manifest: " + manifest);
         return;
       }
+      report.addCheckedFile(manifest);
       try {
         String text = readText(manifest);
         if (!text.contains("\"formatVersion\"")

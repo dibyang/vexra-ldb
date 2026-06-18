@@ -105,8 +105,11 @@ ldb properties <targetDir>
 ```text
 ldb check <db>
 ldb properties <db> [property...]
+ldb scan <db> [limit]
 ldb repair-plan <db>
 ```
+
+`scan` 只读取默认列族，输出按 key 排序的 JSON 样本；默认 limit 为 100，key/value 使用 base64，适合事故排查时确认少量数据形态。
 
 修复：
 

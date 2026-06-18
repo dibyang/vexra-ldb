@@ -2,6 +2,7 @@ package net.xdob.vexra.ldb.tool;
 
 import net.xdob.vexra.ldb.LDB;
 import net.xdob.vexra.ldb.Options;
+import net.xdob.vexra.ldb.SnapshotCursor;
 import net.xdob.vexra.ldb.impl.LDBFactory;
 
 import java.io.File;
@@ -9,6 +10,7 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 
 /**
@@ -22,6 +24,7 @@ public final class LdbTool {
   private static final int EXIT_USAGE = 1;
   private static final int EXIT_CHECK_FAILED = 2;
   private static final int EXIT_INTERNAL_ERROR = 4;
+  private static final int DEFAULT_SCAN_LIMIT = 100;
 
   private static final List<String> DEFAULT_PROPERTIES = Arrays.asList(
       "ldb.api.compatibility",
@@ -29,11 +32,16 @@ public final class LdbTool {
       "ldb.api.supportedFeatures",
       "ldb.api.unsupportedFeatures",
       "ldb.api.ecosystemGaps",
+      "ldb.api.rocksdbGapPlan",
       "ldb.api.optionValues",
       "ldb.operationStats",
       "ldb.blockCacheStats",
       "ldb.compactionStats",
       "ldb.walPolicy",
+      "ldb.recoveryEvidence",
+      "ldb.backupEvidence",
+      "ldb.columnFamilyEvidence",
+      "ldb.prefixReadiness",
       "ldb.snapshotCursorStats");
 
   private LdbTool() {
@@ -67,6 +75,9 @@ public final class LdbTool {
       }
       if ("properties".equals(command)) {
         return runProperties(args, out, err);
+      }
+      if ("scan".equals(command)) {
+        return runScan(args, out, err);
       }
       if ("repair".equals(command)) {
         return runRepair(args, out, err);
@@ -276,10 +287,70 @@ public final class LdbTool {
     return EXIT_OK;
   }
 
+  private static int runScan(String[] args, PrintStream out, PrintStream err) throws Exception {
+    if (args.length < 2 || args.length > 3) {
+      err.println("Usage error: scan requires a database directory and optional positive limit");
+      printUsage(err);
+      return EXIT_USAGE;
+    }
+
+    int limit = DEFAULT_SCAN_LIMIT;
+    if (args.length == 3) {
+      try {
+        limit = Integer.parseInt(args[2]);
+      } catch (NumberFormatException e) {
+        err.println("Usage error: scan limit must be a positive integer");
+        printUsage(err);
+        return EXIT_USAGE;
+      }
+      if (limit <= 0) {
+        err.println("Usage error: scan limit must be a positive integer");
+        printUsage(err);
+        return EXIT_USAGE;
+      }
+    }
+
+    File databaseDir = new File(args[1]);
+    try (LDB db = LDBFactory.factory.open(databaseDir,
+        new Options().createIfMissing(false).readOnly(true));
+         SnapshotCursor cursor = db.newSnapshotCursor()) {
+      out.println("{");
+      out.println("  \"command\": \"scan\",");
+      out.println("  \"databaseDir\": \"" + escape(databaseDir.getAbsolutePath()) + "\",");
+      out.println("  \"columnFamily\": \"default\",");
+      out.println("  \"readOnly\": true,");
+      out.println("  \"limit\": " + limit + ",");
+      out.println("  \"entries\": [");
+      cursor.seekToFirst();
+      int count = 0;
+      boolean first = true;
+      while (cursor.isValid() && count < limit) {
+        if (!first) {
+          out.println(",");
+        }
+        out.print("    {\"keyBase64\": \"");
+        out.print(base64(cursor.key()));
+        out.print("\", \"valueBase64\": \"");
+        out.print(base64(cursor.value()));
+        out.print("\"}");
+        first = false;
+        count++;
+        cursor.next();
+      }
+      out.println();
+      out.println("  ],");
+      out.println("  \"count\": " + count + ",");
+      out.println("  \"truncated\": " + Boolean.toString(cursor.isValid()));
+      out.println("}");
+    }
+    return EXIT_OK;
+  }
+
   private static void printUsage(PrintStream err) {
     err.println("Usage:");
     err.println("  ldb check <db>");
     err.println("  ldb properties <db> [property...]");
+    err.println("  ldb scan <db> [limit]");
     err.println("  ldb repair-plan <db>");
     err.println("  ldb repair <db>");
     err.println("  ldb backup <db> <backupRoot>");
@@ -306,5 +377,9 @@ public final class LdbTool {
       }
     }
     return builder.toString();
+  }
+
+  private static String base64(byte[] value) {
+    return Base64.getEncoder().encodeToString(value);
   }
 }

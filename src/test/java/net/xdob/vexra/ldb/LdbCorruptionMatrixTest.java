@@ -91,6 +91,36 @@ class LdbCorruptionMatrixTest {
   }
 
   @Test
+  void shouldReportCurrentPointingToInvalidManifestName() throws Exception {
+    File dbDir = new File(tempDir, "invalid-current-name-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true))) {
+      db.put(bytes("k"), bytes("v"));
+    }
+    writeText(new File(dbDir, Filename.currentFileName()), "MANIFEST-not-a-number\n");
+
+    LDBFactory.CheckReport report = LDBFactory.factory.check(dbDir, new Options().createIfMissing(false));
+    assertFalse(report.isOk(), report.toString());
+    assertTrue(report.getFailures().stream()
+            .anyMatch(failure -> failure.contains("invalid manifest file name")),
+        report.toString());
+  }
+
+  @Test
+  void shouldFailOpenWhenCurrentContainsPathSeparator() throws Exception {
+    File dbDir = new File(tempDir, "current-path-separator-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true))) {
+      db.put(bytes("k"), bytes("v"));
+    }
+    writeText(new File(dbDir, Filename.currentFileName()), "../MANIFEST-000001\n");
+
+    IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+        () -> LDBFactory.factory.open(dbDir, new Options().createIfMissing(false)));
+    assertTrue(error.getMessage().contains("path separators"), error.getMessage());
+  }
+
+  @Test
   void shouldRejectRestoreWhenBackupRegistryIsCorrupt() throws Exception {
     File dbDir = new File(tempDir, "backup-source-db");
     File backupRoot = new File(tempDir, "backup-root");

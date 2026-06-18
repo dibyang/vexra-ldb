@@ -25,7 +25,7 @@ LDB currently supports checkpoint, full backup/restore, complete-directory incre
 | --- | --- |
 | Full backup | Copies a complete DB file set into `backup-000001` |
 | Incremental backup | Publishes a complete restorable directory and reuses SST/WAL/meta objects from the shared object store |
-| Verification | `checkBackup` performs offline check on the backup directory |
+| Verification | `checkBackup` performs offline check on the backup directory and archives the backup manifest, object refs file, and checked object files in `CheckReport.checkedFiles` |
 | Cleanup | `planPurgeBackups(root, keepLast)` creates a dry-run; `purgeOldBackups(root, keepLast)` executes cleanup |
 | Reports | `BackupReport`, `BACKUP-MANIFEST.json`, `RESTORE-REPORT.json`, `OBJECT-REFS.json` |
 
@@ -43,7 +43,7 @@ LDB currently supports checkpoint, full backup/restore, complete-directory incre
 | --- | --- |
 | `createIncrementalBackup(source, root, options)` | Remains available; new mode writes object store plus backup manifest |
 | `restoreBackup(backup, target, options)` | Restores from complete-directory or object-store-backed view |
-| `checkBackup(backup, options)` | Verifies manifest, object references, and content checksums |
+| `checkBackup(backup, options)` | Verifies manifest, object references, and content checksums, with checked backup metadata and object files listed in the report |
 | `planPurgeBackups(root, keepLast)` | New dry-run plan for backups and objects to remove |
 | `purgeOldBackups(root, keepLast)` | Executes a plan and returns actual result |
 

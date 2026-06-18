@@ -87,7 +87,7 @@ This document describes the design that is implemented today. It is the baseline
 ### Maintenance Flow
 
 - `checkpoint(targetDir)`: flushes first, suspends compaction, freezes the file set, builds the copy in a unique temporary sibling directory, copies or hard-links CURRENT, MANIFEST, `COLUMN-FAMILIES`, live SST, referenced WAL, and INFO_LOG files, writes `CHECKPOINT-REPORT.json`, verifies the output, and then publishes it to `targetDir`; failures clean up the temporary directory so half-built outputs are not exposed as successful checkpoints.
-- `LDBFactory.check`: offline scan of CURRENT, MANIFEST, `COLUMN-FAMILIES`, SST, and WAL. It returns `CheckReport`, does not acquire the write lock, and does not modify the directory.
+- `LDBFactory.check`: offline scan of CURRENT, MANIFEST, `COLUMN-FAMILIES`, SST, and WAL. It returns `CheckReport`, does not acquire the write lock, and does not modify the directory; CURRENT content must be a legal same-directory `MANIFEST-NNNNNN` file name.
 - `LDBFactory.repair`: rebuilds MANIFEST/CURRENT from available SST/WAL files, quarantines corrupt files, and writes `REPAIR-REPORT.json`.
 - `createBackup/restoreBackup`: creates full backups and restores them through a temporary-directory publish flow, producing JSON reports.
 - `createIncrementalBackup/checkBackup`: creates a complete restorable incremental backup directory, preferentially hard-linking same-name same-length SST files from the previous backup and writing `BACKUP-MANIFEST.json`.
@@ -174,6 +174,7 @@ See [vexra-ldb External Commitment for LDB Users](vexra-ldb-external-commitment.
 | --- | --- | --- |
 | `check <db>` | None | `CheckReport` JSON |
 | `properties <db> [property...]` | Read-only open, no disk writes | Property JSON |
+| `scan <db> [limit]` | Read-only open, no disk writes | Default-CF key/value base64 JSON |
 | `repair <db>` | Rebuilds metadata and quarantines corrupt files | `REPAIR-REPORT.json` |
 | `backup <db> <backupRoot>` | Creates a backup directory | `BackupReport` JSON |
 | `incremental-backup <db> <backupRoot>` | Creates a complete restorable incremental backup directory | `BackupReport` JSON |
@@ -393,3 +394,4 @@ Future changes should add coverage for:
 | 4 | Improve tool commands and JSON report stability | Tool tests cover exit codes and output |
 | 5 | Add longer soak, fault-injection, and compatibility tests | Recovery, compaction, snapshot, backup, and restore paths are covered |
 | 6 | Production release gates and operational hardening | `ldb-production-readiness-plan.*` is documented; follow-up acceptance uses `releaseGate`, old-version fixtures, corruption injection, longrun, and runbooks |
+| 7 | RocksDB gap and next-version planning | `ldb-rocksdb-gap-next-version-plan.*` is documented; follow-up acceptance is organized by advanced API, WAL/recovery, column-family, backup, compaction/cache, CLI, and observability packages |

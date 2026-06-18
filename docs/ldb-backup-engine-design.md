@@ -25,7 +25,7 @@ LDB 当前已支持 checkpoint、全量 backup/restore、完整目录形式的 i
 | --- | --- |
 | 全量备份 | 复制完整 DB 文件到 `backup-000001` |
 | 增量备份 | 发布完整可恢复目录，复用共享对象仓库中的 SST/WAL/meta 对象 |
-| 校验 | `checkBackup` 对备份目录执行离线 check |
+| 校验 | `checkBackup` 对备份目录执行离线 check，并在 `CheckReport.checkedFiles` 中归档备份 manifest、对象引用文件和已校验对象文件 |
 | 清理 | `planPurgeBackups(root, keepLast)` 生成 dry-run，`purgeOldBackups(root, keepLast)` 执行清理 |
 | 报告 | `BackupReport`、`BACKUP-MANIFEST.json`、`RESTORE-REPORT.json`、`OBJECT-REFS.json` |
 
@@ -43,7 +43,7 @@ LDB 当前已支持 checkpoint、全量 backup/restore、完整目录形式的 i
 | --- | --- |
 | `createIncrementalBackup(source, root, options)` | 继续保留；新模式写对象仓库和备份 manifest |
 | `restoreBackup(backup, target, options)` | 可从完整目录或对象仓库视图恢复 |
-| `checkBackup(backup, options)` | 校验 manifest、对象引用和内容 checksum |
+| `checkBackup(backup, options)` | 校验 manifest、对象引用和内容 checksum，报告中列出已校验备份元数据和对象文件 |
 | `planPurgeBackups(root, keepLast)` | 新增 dry-run，输出将删除的备份和对象 |
 | `purgeOldBackups(root, keepLast)` | 基于 plan 执行删除，输出实际结果 |
 

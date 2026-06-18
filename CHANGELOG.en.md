@@ -8,6 +8,17 @@ This document records important changes for `vexra-ldb`. It follows the spirit o
 
 ### Added
 
+- Added Chinese and English RocksDB gap and next-version planning documents, confirming the `0.6.0` next development line, `11.1.1` comparison baseline, `MultiGet` as the low-risk implementation item, and unsupported advanced API boundaries.
+- Added batch point reads through `LDB#get(List<byte[]>)` and column-family overloads, preserving input order and returning null for missing keys.
+- Added `ldb.recoveryEvidence` and `ldb.backupEvidence` diagnostic properties for archiving WAL/MANIFEST, check/repair, checkpoint, backup/restore, object-store, and cleanup dry-run evidence conventions.
+- Added `ldb.columnFamilyEvidence` for archiving column-family registry state, active/dropped counts, MemTables, level files, and drop/rename policy.
+- Added `ldb.prefixReadiness` for archiving PrefixExtractor, prefix-bloom, and cache-warmup prerequisites plus the current cache/filter configuration; this phase is observation-only and does not change the read path.
+- Closed the RocksDB gap-plan open-question defaults for performance gates, property contracts, old-version access to new data, external observability, and backup storage backends.
+- Added the read-only `LdbTool scan <db> [limit]` diagnostic command, emitting a default-CF key-order base64 JSON sample with a default limit of 100 entries and no WAL/MANIFEST modification.
+- Added the `0.6.0` pre-release verification record to `docs/release.md`, requiring archived releaseGate, MultiGet, recovery/backup/column-family evidence, `ldb.prefixReadiness`, `scan`, and open-question default decisions.
+- Tightened CURRENT/MANIFEST recovery validation so both `check` and `open` reject illegal manifest file names or CURRENT contents with path separators.
+- Enhanced `checkBackup` evidence reporting so `CheckReport.checkedFiles` now records `BACKUP-MANIFEST.json`, `OBJECT-REFS.json`, and checked object-file names.
+- Enhanced the `releaseGate` report with `rocksdbGapPlan` and `rocksdbGapGates` groups for archiving the RocksDB baseline, next-version target, MultiGet acceptance, and advanced API unsupported policy.
 - Added Chinese and English non-empty column-family drop/rename/tombstone design documents covering logical deletion, stable cfId identity, MANIFEST/registry history, rollback, and compatibility boundaries.
 - Added Chinese and English Backup Engine design documents for shared object storage, reference counts, backup-chain GC, dry-run cleanup, and publication state management.
 - Added Chinese and English long-run stress and benchmark report design documents covering workload matrices, machine-readable reports, release thresholds, and failure preservation.

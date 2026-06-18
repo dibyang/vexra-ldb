@@ -277,6 +277,7 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
       throw new IllegalStateException("CURRENT file does not end with newline");
     }
     currentName = currentName.substring(0, currentName.length() - 1);
+    Filename.parseCurrentManifestFileName(currentName);
 
     try (FileInputStream fis = new FileInputStream(new File(databaseDir, currentName));
          FileChannel fileChannel = fis.getChannel()) {

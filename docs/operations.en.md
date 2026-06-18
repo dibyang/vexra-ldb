@@ -7,7 +7,7 @@ This document is for production-readiness validation and day-to-day operations o
 ## Basic Principles
 
 - Stop further writes before checkpoint, backup, check, or repair.
-- `check`, `properties`, `check-backup`, and `repair-plan` are read-only diagnostics.
+- `check`, `properties`, `scan`, `check-backup`, and `repair-plan` are read-only diagnostics.
 - `repair`, `backup`, `incremental-backup`, `restore`, and `checkpoint` create file-system side effects. Confirm directories, permissions, and free disk space first.
 - Archive `BACKUP-REPORT.json`, `RESTORE-REPORT.json`, `BACKUP-MANIFEST.json`, `OBJECT-REFS.json`, and longrun/release-gate reports.
 - Do not delete failed samples when old-version upgrades, column-family tombstones, object-store corruption, or longrun failures are involved.
@@ -105,8 +105,11 @@ Read-only diagnostics:
 ```text
 ldb check <db>
 ldb properties <db> [property...]
+ldb scan <db> [limit]
 ldb repair-plan <db>
 ```
+
+`scan` reads only the default column family and emits a key-ordered JSON sample. The default limit is 100, and key/value bytes are base64-encoded for incident diagnostics.
 
 Repair:
 

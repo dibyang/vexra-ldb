@@ -14,6 +14,49 @@ public interface LDB
   byte[] get(LdbColumnFamily cf, byte[] key);
   byte[] get(LdbColumnFamily cf, byte[] key, ReadOptions options);
 
+  /**
+   * 按输入顺序批量读取默认列族中的 key。
+   *
+   * <p>本方法只提供批量点查语义，不改变磁盘格式或读取隔离模型；同一次调用使用同一个
+   * 读取视图，返回列表位置与输入 key 一一对应，未命中的 key 返回 null。</p>
+   *
+   * @param keys 待读取 key 列表，列表和元素都不能为 null
+   * @return 与输入顺序一致的 value 列表，未命中位置为 null
+   * @throws DBException 读取过程中发现后台错误或底层文件读取失败时抛出
+   */
+  List<byte[]> get(List<byte[]> keys) throws DBException;
+
+  /**
+   * 按输入顺序批量读取默认列族中的 key，并使用指定读取选项。
+   *
+   * @param keys 待读取 key 列表，列表和元素都不能为 null
+   * @param options 读取选项，不能为 null；包含 snapshot 时使用该快照视图
+   * @return 与输入顺序一致的 value 列表，未命中位置为 null
+   * @throws DBException 读取过程中发现后台错误或底层文件读取失败时抛出
+   */
+  List<byte[]> get(List<byte[]> keys, ReadOptions options) throws DBException;
+
+  /**
+   * 按输入顺序批量读取指定列族中的 key。
+   *
+   * @param cf 目标列族，不能为 null
+   * @param keys 待读取 key 列表，列表和元素都不能为 null
+   * @return 与输入顺序一致的 value 列表，未命中位置为 null
+   * @throws DBException 读取过程中发现后台错误或底层文件读取失败时抛出
+   */
+  List<byte[]> get(LdbColumnFamily cf, List<byte[]> keys) throws DBException;
+
+  /**
+   * 按输入顺序批量读取指定列族中的 key，并使用指定读取选项。
+   *
+   * @param cf 目标列族，不能为 null
+   * @param keys 待读取 key 列表，列表和元素都不能为 null
+   * @param options 读取选项，不能为 null；包含 snapshot 时使用该快照视图
+   * @return 与输入顺序一致的 value 列表，未命中位置为 null
+   * @throws DBException 读取过程中发现后台错误或底层文件读取失败时抛出
+   */
+  List<byte[]> get(LdbColumnFamily cf, List<byte[]> keys, ReadOptions options) throws DBException;
+
   SnapshotCursor newSnapshotCursor();
 
   SnapshotCursor newSnapshotCursor(LdbColumnFamily cf);

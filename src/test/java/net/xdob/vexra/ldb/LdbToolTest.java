@@ -9,6 +9,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.PrintStream;
 import java.io.RandomAccessFile;
+import java.util.Base64;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.*;
@@ -65,6 +66,9 @@ class LdbToolTest {
     assertTrue(result.out.contains("\"ldb.api.compatibility\""), result.out);
     assertTrue(result.out.contains("\"ldb.api.unsupportedFeatures\""), result.out);
     assertTrue(result.out.contains("\"ldb.api.ecosystemGaps\""), result.out);
+    assertTrue(result.out.contains("\"ldb.api.rocksdbGapPlan\""), result.out);
+    assertTrue(result.out.contains("\"ldb.prefixReadiness\""), result.out);
+    assertTrue(result.out.contains("prefixExtractor=unsupported"), result.out);
     assertTrue(result.out.contains("\"ldb.walPolicy\""), result.out);
     assertEquals("", result.err);
     assertArrayEquals(beforeFiles, sortedFileNames(dbDir));
@@ -103,6 +107,10 @@ class LdbToolTest {
     assertEquals(1, badCommand.exitCode);
     assertTrue(badCommand.err.contains("Unknown command"), badCommand.err);
 
+    ToolResult badScan = run("scan", dbDir.getAbsolutePath(), "0");
+    assertEquals(1, badScan.exitCode);
+    assertTrue(badScan.err.contains("scan limit must be a positive integer"), badScan.err);
+
     ToolResult badRepair = run("repair");
     assertEquals(1, badRepair.exitCode);
     assertTrue(badRepair.err.contains("repair requires exactly one database directory"), badRepair.err);
@@ -133,6 +141,33 @@ class LdbToolTest {
     assertEquals(1, badCheckpoint.exitCode);
     assertTrue(badCheckpoint.err.contains("checkpoint requires a database directory and a target directory"),
         badCheckpoint.err);
+  }
+
+  @Test
+  void shouldScanDefaultColumnFamilyReadOnlyWithBase64AndLimit() throws Exception {
+    File dbDir = new File(tempDir, "scan-command-db");
+    String[] beforeFiles;
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(true))) {
+      db.put(bytes("scan:002"), bytes("value-2"));
+      db.put(bytes("scan:001"), bytes("value-1"));
+      db.put(bytes("scan:003"), bytes("value-3"));
+      beforeFiles = sortedFileNames(dbDir);
+    }
+
+    ToolResult result = run("scan", dbDir.getAbsolutePath(), "2");
+
+    assertEquals(0, result.exitCode);
+    assertEquals("", result.err);
+    assertTrue(result.out.contains("\"command\": \"scan\""), result.out);
+    assertTrue(result.out.contains("\"readOnly\": true"), result.out);
+    assertTrue(result.out.contains("\"limit\": 2"), result.out);
+    assertTrue(result.out.contains("\"count\": 2"), result.out);
+    assertTrue(result.out.contains("\"truncated\": true"), result.out);
+    assertTrue(result.out.contains("\"keyBase64\": \"" + b64("scan:001") + "\""), result.out);
+    assertTrue(result.out.contains("\"valueBase64\": \"" + b64("value-1") + "\""), result.out);
+    assertTrue(result.out.indexOf(b64("scan:001")) < result.out.indexOf(b64("scan:002")), result.out);
+    assertFalse(result.out.contains(b64("scan:003")), result.out);
+    assertArrayEquals(beforeFiles, sortedFileNames(dbDir));
   }
 
   @Test
@@ -318,6 +353,10 @@ class LdbToolTest {
 
   private static byte[] bytes(String value) {
     return value.getBytes(UTF_8);
+  }
+
+  private static String b64(String value) {
+    return Base64.getEncoder().encodeToString(bytes(value));
   }
 
   private static String[] sortedFileNames(File dir) {

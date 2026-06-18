@@ -22,6 +22,19 @@ class LdbBackupObjectStoreCorruptionTest {
   File tempDir;
 
   @Test
+  void shouldExposeBackupMetadataEvidenceInCheckReport() throws Exception {
+    BackupFixture fixture = createBackupFixture("metadata-evidence");
+    File object = firstObjectFile(fixture.objectsDir);
+
+    LDBFactory.CheckReport check =
+        LDBFactory.factory.checkBackup(fixture.latestBackup, new Options().createIfMissing(false));
+    assertTrue(check.isOk(), check.toString());
+    assertTrue(check.getCheckedFiles().contains("BACKUP-MANIFEST.json"), check.toString());
+    assertTrue(check.getCheckedFiles().contains("OBJECT-REFS.json"), check.toString());
+    assertTrue(check.getCheckedFiles().contains(object.getName()), check.toString());
+  }
+
+  @Test
   void shouldRejectMissingObjectFile() throws Exception {
     BackupFixture fixture = createBackupFixture("missing-object");
     File object = firstObjectFile(fixture.objectsDir);

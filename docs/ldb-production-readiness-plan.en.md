@@ -67,6 +67,8 @@ Plan to add `RELEASE-GATE-REPORT.json` and a Markdown summary in the same direct
 | `javaVersion` | JDK version |
 | `startedAt` / `finishedAt` | Gate start and finish time |
 | `gates[]` | Name, command, duration, result, and report path for each gate |
+| `rocksdbGapPlan` | RocksDB gap-plan version, next-version target, baseline, dynamic record time, and low-risk implementation item |
+| `rocksdbGapGates[]` | Gate results for RocksDB gap work packages, such as planning docs, baseline record, MultiGet acceptance, and advanced API unsupported policy |
 | `artifacts[]` | Archived paths for longrun, backup, compatibility fixture, and test reports |
 | `failures[]` | Failed gate, exception summary, and suggested diagnostic entry |
 | `result` | `PASSED` or `FAILED` |

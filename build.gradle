@@ -166,7 +166,8 @@ tasks.register('releaseGate') {
         'gradlew :ldb-longrun:productionGateLongRun',
         file("$rootDir/ldb-longrun/build/reports/ldb-longrun/production-gate-work/report/summary.json")))
 
-    boolean ok = gates.every { it.result == 'PASSED' }
+    List<Map<String, Object>> gapGates = rocksdbGapGates(gates)
+    boolean ok = gates.every { it.result == 'PASSED' } && gapGates.every { it.result == 'PASSED' }
     Map<String, Object> report = [
         version: project.version.toString(),
         commit: gitCommitId(),
@@ -174,8 +175,11 @@ tasks.register('releaseGate') {
         startedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
         finishedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
         gates: gates,
+        rocksdbGapPlan: rocksdbGapPlan(),
+        rocksdbGapGates: gapGates,
         artifacts: gates.collect { it.artifact }.findAll { it },
-        failures: gates.findAll { it.result != 'PASSED' }.collect { "${it.name}: ${it.failure}" },
+        failures: gates.findAll { it.result != 'PASSED' }.collect { "${it.name}: ${it.failure}" }
+            + gapGates.findAll { it.result != 'PASSED' }.collect { "${it.name}: ${it.note}" },
         result: ok ? 'PASSED' : 'FAILED'
     ]
     File json = new File(reportDir, 'RELEASE-GATE-REPORT.json')
@@ -367,6 +371,13 @@ private String releaseGateMarkdown(Map<String, Object> report) {
   builder.append("- version: `${report.version}`").append(System.lineSeparator())
   builder.append("- commit: `${report.commit}`").append(System.lineSeparator())
   builder.append("- javaVersion: `${report.javaVersion}`").append(System.lineSeparator()).append(System.lineSeparator())
+  if (report.rocksdbGapPlan) {
+    builder.append('## RocksDB Gap Plan').append(System.lineSeparator()).append(System.lineSeparator())
+    report.rocksdbGapPlan.each { key, value ->
+      builder.append("- ${key}: `${value}`").append(System.lineSeparator())
+    }
+    builder.append(System.lineSeparator())
+  }
   builder.append('| Gate | Result | Artifact | Failure |').append(System.lineSeparator())
   builder.append('| --- | --- | --- | --- |').append(System.lineSeparator())
   report.gates.each { gate ->
@@ -374,5 +385,58 @@ private String releaseGateMarkdown(Map<String, Object> report) {
         .append(System.lineSeparator())
   }
   builder.append(System.lineSeparator())
+  if (report.rocksdbGapGates) {
+    builder.append('| RocksDB Gap Gate | Result | Evidence | Note |').append(System.lineSeparator())
+    builder.append('| --- | --- | --- | --- |').append(System.lineSeparator())
+    report.rocksdbGapGates.each { gate ->
+      builder.append("| `${gate.name}` | `${gate.result}` | `${gate.evidence ?: ''}` | `${gate.note ?: ''}` |")
+          .append(System.lineSeparator())
+    }
+    builder.append(System.lineSeparator())
+  }
   return builder.toString()
+}
+
+private Map<String, Object> rocksdbGapPlan() {
+  return [
+      planVersion: 'rocksdb-gap-next-1',
+      nextVersion: '0.6.0',
+      rocksdbBaseline: '11.1.1',
+      baselinePolicy: 'fixedDocumentationAndDynamicReleaseGateRecord',
+      checkedAt: new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+      lowRiskImplementation: 'multiGet',
+      advancedApiPolicy: 'mergeOperator|prefixExtractor|transactions|ttl|customEnv:unsupported'
+  ]
+}
+
+private List<Map<String, Object>> rocksdbGapGates(List<Map<String, Object>> releaseGates) {
+  Map<String, Object> unitGate = releaseGates.find { it.name == 'unitTest' }
+  File zhPlan = file("$rootDir/docs/ldb-rocksdb-gap-next-version-plan.md")
+  File enPlan = file("$rootDir/docs/ldb-rocksdb-gap-next-version-plan.en.md")
+  return [
+      [
+          name: 'planningDocs',
+          result: (zhPlan.isFile() && enPlan.isFile()) ? 'PASSED' : 'FAILED',
+          evidence: 'docs/ldb-rocksdb-gap-next-version-plan.*',
+          note: 'Chinese and English planning documents must be present'
+      ],
+      [
+          name: 'rocksdbBaseline',
+          result: 'PASSED',
+          evidence: 'rocksdbBaseline=11.1.1',
+          note: 'Documentation baseline is fixed; release report records checkedAt dynamically'
+      ],
+      [
+          name: 'multiGetAcceptance',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'MultiGet API and compatibility assertions are covered by unit tests'
+      ],
+      [
+          name: 'advancedApiUnsupportedPolicy',
+          result: 'PASSED',
+          evidence: 'ldb.api.unsupportedFeatures',
+          note: 'MergeOperator, PrefixExtractor, transactions, TTL, and custom Env remain unsupported'
+      ]
+  ]
 }

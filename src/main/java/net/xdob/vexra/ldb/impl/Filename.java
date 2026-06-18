@@ -55,6 +55,25 @@ public final class Filename {
   }
 
   /**
+   * 校验 CURRENT 中记录的 MANIFEST 文件名。
+   *
+   * CURRENT 只能指向数据库目录内由 LDB 生成的 descriptor 文件，不能包含路径分隔符、
+   * 绝对路径或其它文件类型名称。调用方可用返回的文件信息继续读取 descriptor 编号。
+   */
+  public static FileInfo parseCurrentManifestFileName(String fileName) {
+    requireNonNull(fileName, "fileName is null");
+    checkArgument(!fileName.isEmpty(), "CURRENT points to empty manifest name");
+    checkArgument(fileName.indexOf('/') < 0 && fileName.indexOf('\\') < 0,
+        "CURRENT manifest name must not contain path separators: %s", fileName);
+    checkArgument(fileName.matches("MANIFEST-[0-9]{6,}"),
+        "CURRENT points to invalid manifest file name: %s", fileName);
+    FileInfo info = parseFileName(new File(fileName));
+    checkArgument(info != null && info.getFileType() == FileType.DESCRIPTOR,
+        "CURRENT points to non-manifest file: %s", fileName);
+    return info;
+  }
+
+  /**
    * Return the name of the lock file.
    */
   public static String lockFileName() {

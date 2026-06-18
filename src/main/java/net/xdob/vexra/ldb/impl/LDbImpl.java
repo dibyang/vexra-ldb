@@ -41,6 +41,12 @@ import static net.xdob.vexra.ldb.util.Slices.writeLengthPrefixedBytes;
 public class LDbImpl implements LDB {
   static Logger LOG = LoggerFactory.getLogger(LDbImpl.class);
   private static final String CHECKPOINT_REPORT_FILE = "CHECKPOINT-REPORT.json";
+  private static final String REPAIR_REPORT_FILE = "REPAIR-REPORT.json";
+  private static final String BACKUP_REPORT_FILE = "BACKUP-REPORT.json";
+  private static final String RESTORE_REPORT_FILE = "RESTORE-REPORT.json";
+  private static final String BACKUP_MANIFEST_FILE = "BACKUP-MANIFEST.json";
+  private static final String OBJECT_REFS_FILE = "OBJECT-REFS.json";
+  private static final String OBJECTS_DIR = "objects";
   private final Options options;
   private final File databaseDir;
   private final List<LdbPlugin> plugins;
@@ -1571,6 +1577,9 @@ public class LDbImpl implements LDB {
       if ("ldb.blockCacheStats".equals(name)) {
         return tableCache.blockCacheStats();
       }
+      if ("ldb.prefixReadiness".equals(name)) {
+        return prefixReadiness();
+      }
 
       mutex.lock();
       try {
@@ -1598,6 +1607,12 @@ public class LDbImpl implements LDB {
       if ("ldb.walPolicy".equals(name)) {
         return walPolicy();
       }
+      if ("ldb.recoveryEvidence".equals(name)) {
+        return recoveryEvidence();
+      }
+      if ("ldb.backupEvidence".equals(name)) {
+        return backupEvidence();
+      }
       if ("ldb.walArchiveEnabled".equals(name)) {
         return "false";
       }
@@ -1621,6 +1636,9 @@ public class LDbImpl implements LDB {
       }
       if ("ldb.columnFamilyMemTableBytes".equals(name)) {
         return columnFamilyMemTableBytes();
+      }
+      if ("ldb.columnFamilyEvidence".equals(name)) {
+        return columnFamilyEvidence();
       }
       if ("ldb.levelFiles".equals(name)) {
         return levelFiles();
@@ -1669,15 +1687,7 @@ public class LDbImpl implements LDB {
         return columnFamilyProperty;
       }
       if ("ldb.columnFamilies".equals(name)) {
-        List<LdbColumnFamily> columnFamilies = listColumnFamiliesLocked();
-        StringBuilder builder = new StringBuilder();
-        for (LdbColumnFamily cf : columnFamilies) {
-          if (builder.length() > 0) {
-            builder.append(',');
-          }
-          builder.append(cf.getId()).append(':').append(cf.getName());
-        }
-        return builder.toString();
+        return columnFamiliesProperty();
       }
       return null;
     } finally {
@@ -1806,9 +1816,10 @@ public class LDbImpl implements LDB {
           + ",runtimeColumnFamilyLifecycle=minimal";
     }
     if ("ldb.api.supportedFeatures".equals(name)) {
-      return "basicReadWrite,columnFamilies,rangeDelete,readOnly,checkpoint,backup,verifyCheck,repair,"
+      return "basicReadWrite,multiGet,columnFamilies,rangeDelete,readOnly,checkpoint,backup,verifyCheck,repair,"
           + "incrementalBackup,groupCommit,operationHistograms,blockCacheStats,"
           + "snapshotCursor,reverseSnapshotCursor,properties,plugins,ldbToolCheck,ldbToolProperties,"
+          + "ldbToolScan,"
           + "ldbToolIncrementalBackup,ldbToolCheckBackup,"
           + "ldbToolRepair,ldbToolBackup,ldbToolRestore,ldbToolCheckpoint,"
           + "runtimeColumnFamilyList,runtimeColumnFamilyCreate,runtimeColumnFamilyDropEmpty,"
@@ -1827,6 +1838,14 @@ public class LDbImpl implements LDB {
           + ",runtimeColumnFamilyRename=implementedWithStableCfIdRegistryUpdate"
           + ",rocksdbToolCommands=requiresCommandCompatibilityLayer"
           + ",secondaryIndex=requiresIndexFormatAndConsistencyModel";
+    }
+    if ("ldb.api.rocksdbGapPlan".equals(name)) {
+      return "planVersion=rocksdb-gap-next-1"
+          + ",nextVersion=0.6.0"
+          + ",rocksdbBaseline=11.1.1"
+          + ",baselinePolicy=fixedDocumentationAndDynamicReleaseGateRecord"
+          + ",lowRiskImplementation=multiGet"
+          + ",advancedApiPolicy=mergeOperator|prefixExtractor|transactions|ttl|customEnv:unsupported";
     }
     if ("ldb.api.optionsMapping".equals(name)) {
       return "createIfMissing=supported"
@@ -1860,6 +1879,7 @@ public class LDbImpl implements LDB {
           + ",verifyOnOpen=supported"
           + ",forceLogOnClose=supported"
           + ",forceSstOnFlush=supported"
+          + ",multiGet=supported"
           + ",mergeOperator=unsupported"
           + ",prefixExtractor=unsupported"
           + ",ldbToolCommands=partial"
@@ -1904,6 +1924,21 @@ public class LDbImpl implements LDB {
         + ",verifyOnOpen=" + options.verifyOnOpen()
         + ",forceLogOnClose=" + options.forceLogOnClose()
         + ",forceSstOnFlush=" + options.forceSstOnFlush();
+  }
+
+  private String prefixReadiness() {
+    return "defaultPolicy=disabled"
+        + ",prefixExtractor=unsupported"
+        + ",prefixBloom=unsupported"
+        + ",cacheWarmup=notImplemented"
+        + ",readPath=fullKey"
+        + ",rangeScanStop=callerControlled"
+        + ",comparator=" + (options.comparator() == null ? "bytewise" : "custom")
+        + ",filterPolicy=" + (options.filterPolicy() == null ? "none" : options.filterPolicy().getClass().getName())
+        + ",cacheBlocks=" + options.cacheBlocks()
+        + ",blockCacheSize=" + options.blockCacheSize()
+        + ",requiredBeforeEnable=keyEncodingContract|comparatorPrefixOrder|rangeDeleteSemantics|snapshotVisibility|misconfigurationFailFast"
+        + ",risk=missedReadsIfMisconfigured";
   }
 
   private long totalMemTableBytes() {
@@ -2300,6 +2335,62 @@ public class LDbImpl implements LDB {
     return builder.toString();
   }
 
+  private String columnFamiliesProperty() {
+    List<LdbColumnFamily> columnFamilies = listColumnFamiliesLocked();
+    StringBuilder builder = new StringBuilder();
+    for (LdbColumnFamily cf : columnFamilies) {
+      if (builder.length() > 0) {
+        builder.append(',');
+      }
+      builder.append(cf.getId()).append(':').append(cf.getName());
+    }
+    return builder.toString();
+  }
+
+  private String columnFamilyEvidence() {
+    int active = 0;
+    int dropped = 0;
+    StringBuilder registry = new StringBuilder();
+    for (ColumnFamilyRegistry.Record record : columnFamilyRecords.values()) {
+      if (record.isActive()) {
+        active++;
+      } else {
+        dropped++;
+      }
+      if (registry.length() > 0) {
+        registry.append('|');
+      }
+      registry.append(record.isActive() ? 'A' : 'D')
+          .append(':')
+          .append(record.getColumnFamily().getId())
+          .append(':')
+          .append(record.getColumnFamily().getName());
+    }
+    if (columnFamilyRecords.isEmpty()) {
+      active = cfs.size();
+      for (ColumnFamilyState state : sortedColumnFamilyStates()) {
+        if (registry.length() > 0) {
+          registry.append('|');
+        }
+        registry.append('A')
+            .append(':')
+            .append(state.getColumnFamily().getId())
+            .append(':')
+            .append(state.getColumnFamily().getName());
+      }
+    }
+    return "registryFile=" + fileState(ColumnFamilyRegistry.FILE_NAME)
+        + ",activeCount=" + active
+        + ",droppedCount=" + dropped
+        + ",activeFamilies=" + columnFamiliesProperty()
+        + ",registryRecords=" + registry
+        + ",memTableBytes=" + columnFamilyMemTableBytes()
+        + ",levelFiles=" + levelFiles()
+        + ",dropPolicy=tombstoneNoCfIdReuse"
+        + ",renamePolicy=stableCfId"
+        + ",perCfOptions=unsupported";
+  }
+
   private String referencedLogNumbers() {
     List<Long> logs = new ArrayList<>(getReferencedLogNumbers());
     Collections.sort(logs);
@@ -2334,6 +2425,48 @@ public class LDbImpl implements LDB {
         + ",recycle=delete-obsolete"
         + ",groupCommit=" + (options.groupCommitEnabled() ? "enabled" : "disabled")
         + ",writeThrottle=write-stall";
+  }
+
+  private String recoveryEvidence() {
+    return "databaseDir=" + databaseDir.getAbsolutePath()
+        + ",currentLogNumber=" + (log == null ? "" : log.getFileNumber())
+        + ",referencedLogNumbers=" + referencedLogNumbers()
+        + ",manifestFileNumber=" + versions.getManifestFileNumber()
+        + ",walPolicy=global"
+        + ",currentFile=" + fileState("CURRENT")
+        + ",manifestFile=" + fileState(Filename.descriptorFileName(versions.getManifestFileNumber()))
+        + ",repairReport=" + REPAIR_REPORT_FILE
+        + ",repairReportState=" + fileState(REPAIR_REPORT_FILE)
+        + ",checkEntry=LDBFactory.check"
+        + ",repairPlanEntry=LDBFactory.planRepair"
+        + ",repairEntry=LDBFactory.repair"
+        + ",formatChanges=none";
+  }
+
+  private String backupEvidence() {
+    return "backupRoot=callerProvided"
+        + ",checkpointReport=" + CHECKPOINT_REPORT_FILE
+        + ",checkpointLast=" + lastCheckpointSummary
+        + ",backupReport=" + BACKUP_REPORT_FILE
+        + ",restoreReport=" + RESTORE_REPORT_FILE
+        + ",backupManifest=" + BACKUP_MANIFEST_FILE
+        + ",objectRefs=" + OBJECT_REFS_FILE
+        + ",objectsDir=" + OBJECTS_DIR
+        + ",backupChain=fullOrIncrementalDirectories"
+        + ",checkBackupEntry=LDBFactory.checkBackup"
+        + ",purgeDryRunEntry=LDBFactory.planPurgeBackups"
+        + ",objectStoreMaintenance=rebuildAndPruneOnBackup";
+  }
+
+  private String fileState(String fileName) {
+    File file = new File(databaseDir, fileName);
+    if (file.isFile()) {
+      return "present:" + fileName;
+    }
+    if (file.exists()) {
+      return "nonFile:" + fileName;
+    }
+    return "missing:" + fileName;
   }
 
   private List<Long> logFileNumbers() {
@@ -2948,6 +3081,89 @@ public class LDbImpl implements LDB {
   @Override
   public byte[] get(byte[] key, ReadOptions options) throws DBException {
     return get(LdbColumnFamily.DEFAULT, key, options);
+  }
+
+  @Override
+  public List<byte[]> get(List<byte[]> keys) throws DBException {
+    return get(LdbColumnFamily.DEFAULT, keys, new ReadOptions());
+  }
+
+  @Override
+  public List<byte[]> get(List<byte[]> keys, ReadOptions options) throws DBException {
+    return get(LdbColumnFamily.DEFAULT, keys, options);
+  }
+
+  @Override
+  public List<byte[]> get(LdbColumnFamily cf, List<byte[]> keys) throws DBException {
+    return get(cf, keys, new ReadOptions());
+  }
+
+  @Override
+  public List<byte[]> get(LdbColumnFamily cf, List<byte[]> keys, ReadOptions options) throws DBException {
+    requireNonNull(cf, "cf is null");
+    requireNonNull(keys, "keys is null");
+    requireNonNull(options, "options is null");
+    for (byte[] key : keys) {
+      requireNonNull(key, "key is null");
+    }
+
+    long start = System.nanoTime();
+    try {
+      checkBackgroundException();
+      ColumnFamilyState state = getColumnFamilyState(cf);
+      List<byte[]> values = new ArrayList<byte[]>(Collections.nCopies(keys.size(), (byte[]) null));
+      List<LookupKey> missedLookupKeys = new ArrayList<LookupKey>();
+      List<Integer> missedIndexes = new ArrayList<Integer>();
+
+      mutex.lock();
+      try {
+        SnapshotImpl snapshot = getSnapshot(cf, options);
+        for (int i = 0; i < keys.size(); i++) {
+          LookupKey lookupKey = new LookupKey(Slices.wrappedBuffer(keys.get(i)), snapshot.getLastSequence());
+          LookupResult lookupResult = state.getMemTable().get(lookupKey);
+          if (lookupResult != null) {
+            values.set(i, valueBytes(lookupResult));
+            continue;
+          }
+
+          if (state.getImmutableMemTable() != null) {
+            lookupResult = state.getImmutableMemTable().get(lookupKey);
+            if (lookupResult != null) {
+              values.set(i, valueBytes(lookupResult));
+              continue;
+            }
+          }
+          missedLookupKeys.add(lookupKey);
+          missedIndexes.add(i);
+        }
+      } finally {
+        mutex.unlock();
+      }
+
+      for (int i = 0; i < missedLookupKeys.size(); i++) {
+        LookupResult lookupResult = versions.get(cf.getId(), missedLookupKeys.get(i));
+        if (lookupResult != null) {
+          values.set(missedIndexes.get(i), valueBytes(lookupResult));
+        }
+      }
+
+      mutex.lock();
+      try {
+        if (versions.needsCompaction()) {
+          maybeScheduleCompaction();
+        }
+      } finally {
+        mutex.unlock();
+      }
+      return values;
+    } finally {
+      getStats.record(System.nanoTime() - start, this.options.slowOperationThresholdMicros(), databaseDir);
+    }
+  }
+
+  private static byte[] valueBytes(LookupResult lookupResult) {
+    Slice value = lookupResult.getValue();
+    return value == null ? null : value.getBytes();
   }
 
   @Override

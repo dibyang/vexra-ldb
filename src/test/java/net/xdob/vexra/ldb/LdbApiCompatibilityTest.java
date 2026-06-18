@@ -62,6 +62,7 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.optionsMapping", "groupCommitEnabled=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "groupCommitMaxDelayNanos=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "groupCommitMaxBatchBytes=supported");
+      assertPropertyContains(db, "ldb.api.optionsMapping", "multiGet=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "mergeOperator=unsupported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "prefixExtractor=unsupported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "rocksdbToolCommands=unsupported");
@@ -80,6 +81,10 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.optionValues", "groupCommitEnabled=true");
       assertPropertyContains(db, "ldb.api.optionValues", "groupCommitMaxDelayNanos=300000");
       assertPropertyContains(db, "ldb.api.optionValues", "groupCommitMaxBatchBytes=16384");
+      assertPropertyContains(db, "ldb.prefixReadiness", "defaultPolicy=disabled");
+      assertPropertyContains(db, "ldb.prefixReadiness", "cacheBlocks=false");
+      assertPropertyContains(db, "ldb.prefixReadiness", "blockCacheSize=128");
+      assertPropertyContains(db, "ldb.prefixReadiness", "filterPolicy=none");
     }
   }
 
@@ -91,6 +96,7 @@ class LdbApiCompatibilityTest {
       db.put(bytes("k"), bytes("v"));
       assertArrayEquals(bytes("v"), db.get(bytes("k")));
 
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "multiGet");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "rangeDelete");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "readOnly");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "incrementalBackup");
@@ -99,6 +105,7 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.supportedFeatures", "blockCacheStats");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "snapshotCursor");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolCheck");
+      assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolScan");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolIncrementalBackup");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolCheckBackup");
       assertPropertyContains(db, "ldb.api.supportedFeatures", "ldbToolRepair");
@@ -117,10 +124,25 @@ class LdbApiCompatibilityTest {
           "mergeOperator=requiresDeterministicOperatorAndDiskMetadata");
       assertPropertyContains(db, "ldb.api.ecosystemGaps",
           "runtimeColumnFamilyDropNonEmpty=implementedWithRegistryTombstoneAndBestEffortSstGc");
+      assertPropertyContains(db, "ldb.api.rocksdbGapPlan", "nextVersion=0.6.0");
+      assertPropertyContains(db, "ldb.api.rocksdbGapPlan", "lowRiskImplementation=multiGet");
 
       assertPropertyContains(db, "ldb.operationStats", "get.count=");
       assertPropertyContains(db, "ldb.compactionStats", "runCount=");
       assertPropertyContains(db, "ldb.walPolicy", "scheme=global");
+      assertPropertyContains(db, "ldb.recoveryEvidence", "repairReport=REPAIR-REPORT.json");
+      assertPropertyContains(db, "ldb.recoveryEvidence", "checkEntry=LDBFactory.check");
+      assertPropertyContains(db, "ldb.backupEvidence", "checkpointReport=CHECKPOINT-REPORT.json");
+      assertPropertyContains(db, "ldb.backupEvidence", "backupManifest=BACKUP-MANIFEST.json");
+      assertPropertyContains(db, "ldb.backupEvidence", "purgeDryRunEntry=LDBFactory.planPurgeBackups");
+      assertPropertyContains(db, "ldb.columnFamilyEvidence", "activeCount=");
+      assertPropertyContains(db, "ldb.columnFamilyEvidence", "dropPolicy=tombstoneNoCfIdReuse");
+      assertPropertyContains(db, "ldb.prefixReadiness", "prefixExtractor=unsupported");
+      assertPropertyContains(db, "ldb.prefixReadiness", "prefixBloom=unsupported");
+      assertPropertyContains(db, "ldb.prefixReadiness", "cacheWarmup=notImplemented");
+      assertPropertyContains(db, "ldb.prefixReadiness", "readPath=fullKey");
+      assertPropertyContains(db, "ldb.prefixReadiness",
+          "requiredBeforeEnable=keyEncodingContract|comparatorPrefixOrder|rangeDeleteSemantics|snapshotVisibility|misconfigurationFailFast");
       assertPropertyContains(db, "ldb.snapshotCursorStats", "openCount=");
       assertNull(db.getProperty("ldb.api.unknown"));
     }

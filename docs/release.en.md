@@ -36,6 +36,20 @@ Windows PowerShell:
 ./gradlew clean publishToMavenLocal
 ```
 
+## 0.6.0 Pre-Release Verification Record
+
+- Target version: `0.6.0`.
+- Current development baseline: `gradle.properties` remains `version=0.6.0-SNAPSHOT`; the Gradle release plugin will switch to `0.6.0` during the release flow.
+- RocksDB comparison baseline: before release, confirm `docs/ldb-rocksdb-gap-next-version-plan.md` and its English copy still record the current comparison version, work-package state, open-question default decisions, and non-goal boundaries.
+- Changelog: `CHANGELOG.md` still keeps the current changes under `Unreleased`; move them into `0.6.0` before the formal release.
+- Required gates: `.\gradlew.bat clean test`, `.\gradlew.bat releaseGate`, and `.\gradlew.bat clean publishToMavenLocal`.
+- API compatibility evidence: confirm `LdbApiCompatibilityTest` covers `multiGet`, `ldb.api.rocksdbGapPlan`, `ldb.recoveryEvidence`, `ldb.backupEvidence`, `ldb.columnFamilyEvidence`, `ldb.prefixReadiness`, and `ldbToolScan`.
+- Tool evidence: confirm `LdbToolTest` covers default `properties` export, read-only `scan <db> [limit]` base64 JSON, bad-argument exit codes, and no database-directory mutation.
+- Recovery and backup evidence: archive `LDBFactory.check`, `repair-plan`, `checkBackup`, backup/restore, checkpoint, and object-store validation reports; failed samples must not be deleted.
+- Operations closure: before release, confirm `docs/operations.md`, `docs/user-manual.md`, README, and the API compatibility design all document `scan`, `prefixReadiness`, RocksDB gap default decisions, and unsupported capability boundaries.
+- Long-run policy: the short `releaseGate` is the hard gate; nightly/24h soak evidence is archived before release candidates, and any missing long-run evidence must be called out in the release note with a rerun plan.
+- Do not publish if `releaseGate` fails, open-question defaults conflict with business confirmation, unsupported features are silently ignored by an adapter, or recovery/backup/scan evidence is missing.
+
 ## 0.5.0 Pre-Release Verification Record
 
 - Target version: `0.5.0`.
