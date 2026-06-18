@@ -6,6 +6,8 @@ This document records important changes for `vexra-ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-18
+
 ### Added
 
 - Added Chinese and English RocksDB gap and next-version planning documents, confirming the `0.6.0` next development line, `11.1.1` comparison baseline, `MultiGet` as the low-risk implementation item, and unsupported advanced API boundaries.
@@ -30,7 +32,7 @@ This document records important changes for `vexra-ldb`. It follows the spirit o
 
 ### Changed
 
-- Updated the release guide's current development baseline to `0.5.0-SNAPSHOT` and the next formal target version to `0.5.0`.
+- Switched the build version to the formal release version `0.6.0` for local publication verification.
 
 ## [0.4.0] - 2026-06-08
 

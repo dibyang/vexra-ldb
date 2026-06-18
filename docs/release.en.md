@@ -39,9 +39,9 @@ Windows PowerShell:
 ## 0.6.0 Pre-Release Verification Record
 
 - Target version: `0.6.0`.
-- Current development baseline: `gradle.properties` remains `version=0.6.0-SNAPSHOT`; the Gradle release plugin will switch to `0.6.0` during the release flow.
+- Current release-prep state: `gradle.properties` is set to `version=0.6.0`; after publication, switch back to the next SNAPSHOT for continued development.
 - RocksDB comparison baseline: before release, confirm `docs/ldb-rocksdb-gap-next-version-plan.md` and its English copy still record the current comparison version, work-package state, open-question default decisions, and non-goal boundaries.
-- Changelog: `CHANGELOG.md` still keeps the current changes under `Unreleased`; move them into `0.6.0` before the formal release.
+- Changelog: `CHANGELOG.md` has been archived to `0.6.0`; further changes should go back under `Unreleased`.
 - Required gates: `.\gradlew.bat clean test`, `.\gradlew.bat releaseGate`, and `.\gradlew.bat clean publishToMavenLocal`.
 - API compatibility evidence: confirm `LdbApiCompatibilityTest` covers `multiGet`, `ldb.api.rocksdbGapPlan`, `ldb.recoveryEvidence`, `ldb.backupEvidence`, `ldb.columnFamilyEvidence`, `ldb.prefixReadiness`, and `ldbToolScan`.
 - Tool evidence: confirm `LdbToolTest` covers default `properties` export, read-only `scan <db> [limit]` base64 JSON, bad-argument exit codes, and no database-directory mutation.

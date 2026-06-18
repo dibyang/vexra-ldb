@@ -39,9 +39,9 @@ Windows PowerShell:
 ## 0.6.0 发布前验证记录
 
 - 目标版本：`0.6.0`。
-- 当前开发基线：`gradle.properties` 保持 `version=0.6.0-SNAPSHOT`；正式发布流程由 Gradle release 插件切换为 `0.6.0`。
+- 当前发布准备状态：`gradle.properties` 已切换为 `version=0.6.0`；后续继续开发时应切回下一 SNAPSHOT。
 - RocksDB 对标 baseline：发布前确认 `docs/ldb-rocksdb-gap-next-version-plan.md` 和英文副本仍记录当前对标版本、工作包状态、开放问题默认决策和非目标边界。
-- 变更记录：`CHANGELOG.md` 当前仍保留 `Unreleased` 内容，正式发布前应归档到 `0.6.0`。
+- 变更记录：`CHANGELOG.md` 已归档到 `0.6.0`；如继续追加变更，应重新放入 `Unreleased`。
 - 必跑门禁：`.\gradlew.bat clean test`、`.\gradlew.bat releaseGate`、`.\gradlew.bat clean publishToMavenLocal`。
 - API 兼容证据：确认 `LdbApiCompatibilityTest` 覆盖 `multiGet`、`ldb.api.rocksdbGapPlan`、`ldb.recoveryEvidence`、`ldb.backupEvidence`、`ldb.columnFamilyEvidence`、`ldb.prefixReadiness` 和 `ldbToolScan`。
 - 工具证据：确认 `LdbToolTest` 覆盖 `properties` 默认导出、`scan <db> [limit]` 只读 base64 JSON、坏参数退出码和不修改库目录。
