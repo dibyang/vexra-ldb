@@ -61,27 +61,47 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
   -ExistingLdbSummary ldb-longrun\build\reports\ldb-db-bench\ldb-db-bench-summary.json
 ```
 
-## 当前本机首版结果
+如果 Windows 本机没有 native `db_bench`，可以先用 RocksDB JNI 做 Java 口径对比：
 
-当前机器没有可直接调用的 `db_bench`，因此首版只生成 LDB 单侧基线；RocksDB 比例待安装 `db_bench` 后补齐。
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\run-rocksdbjni-comparison.ps1 `
+  -RocksDbJniVersion 10.10.1 `
+  -Num 200000 `
+  -Reads 200000 `
+  -ValueSize 100
+```
+
+输出目录：
+
+- `build/reports/rocksdbjni-comparison/rocksdbjni/rocksdbjni-db-bench-summary.json`
+- `build/reports/rocksdbjni-comparison/comparison.csv`
+- `build/reports/rocksdbjni-comparison/comparison.json`
+
+## 当前本机 RocksDB JNI 对比结果
+
+当前机器没有可直接调用的 native `db_bench`，因此先使用 `rocksdbjni-10.10.1` 做 Java 口径对比。该结果可以回答当前 Java 调用路径下的大概差距，但不能替代 RocksDB 官方 native `db_bench` 结论。
 
 运行参数：
 
 - 版本：`0.7.0-SNAPSHOT`
+- RocksDB JNI：`10.10.1`
 - `num=200000`
 - `reads=200000`
 - `value_size=100`
 - `sync=false`
 - `groupCommit=false`
 
-| 场景 | LDB ops/s | 备注 |
-| --- | ---: | --- |
-| `fillseq` | 251,394 | 顺序写入 |
-| `readrandom` | 118,020 | 随机读，命中 200,000/200,000 |
-| `overwrite` | 109,196 | 随机覆盖 |
-| `readwhilewriting` | 95,117 | 并发读写，总操作 400,000 |
+| 场景 | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | 结论 |
+| --- | ---: | ---: | ---: | --- |
+| `fillseq` | 286,508 | 102,664 | 2.79 | LDB 在该 Java 小 value 顺序写口径更快 |
+| `readrandom` | 132,910 | 462,859 | 0.29 | LDB 约为 RocksDB JNI 的 29% |
+| `overwrite` | 102,906 | 84,439 | 1.22 | LDB 在该 Java 随机覆盖写口径略快 |
+| `readwhilewriting` | 99,450 | 170,468 | 0.58 | LDB 约为 RocksDB JNI 的 58% |
 
-本次运行过程中 Windows 目录 fsync 仍打印 `AccessDeniedException` WARN，但 `ldbDbBenchReport` 任务最终 `PASS`。该 WARN 与之前 releaseGate 记录一致，当前先作为环境口径记录，不把它解释为 workload 失败。
+本次 RocksDB JNI runner 在当前 Windows/JDK 环境中显式 close 会触发 JNI dispose 符号不匹配，因此 standalone runner 采用短进程不显式 close 的方式，每个场景使用独立目录，并由进程退出释放 native 资源。这个口径会略微偏向 RocksDB JNI，因为不把 close 成本计入结果。LDB 运行过程中 Windows 目录 fsync 仍打印 `AccessDeniedException` WARN，但 `ldbDbBenchReport` 任务最终 `PASS`；该 WARN 与之前 releaseGate 记录一致，当前先作为环境口径记录，不把它解释为 workload 失败。
+
+整体判断：在 Java/JNI 对比口径下，LDB 不是简单的“只有 RocksDB 十分之一”。写入类小 value 场景已经接近或超过 RocksDB JNI；随机读仍明显落后，约三成；并发读写约六成。后续如果要得出更权威的 RocksDB 对标结论，还需要补 native `db_bench`。
 
 ## 解读规则
 

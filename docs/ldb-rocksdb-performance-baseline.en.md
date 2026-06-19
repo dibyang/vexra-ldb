@@ -61,27 +61,47 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
   -ExistingLdbSummary ldb-longrun\build\reports\ldb-db-bench\ldb-db-bench-summary.json
 ```
 
-## First Local Result
+If native `db_bench` is not available on Windows, use RocksDB JNI for a Java-level comparison first:
 
-The current machine does not have a directly callable `db_bench`, so the first pass only records the LDB-side baseline. The RocksDB ratio should be filled after installing or building `db_bench`.
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\run-rocksdbjni-comparison.ps1 `
+  -RocksDbJniVersion 10.10.1 `
+  -Num 200000 `
+  -Reads 200000 `
+  -ValueSize 100
+```
+
+Outputs:
+
+- `build/reports/rocksdbjni-comparison/rocksdbjni/rocksdbjni-db-bench-summary.json`
+- `build/reports/rocksdbjni-comparison/comparison.csv`
+- `build/reports/rocksdbjni-comparison/comparison.json`
+
+## Current Local RocksDB JNI Comparison
+
+The current machine does not have a directly callable native `db_bench`, so this pass uses `rocksdbjni-10.10.1` for a Java-level comparison. These numbers are useful for the current Java call path, but they do not replace official RocksDB native `db_bench` results.
 
 Parameters:
 
 - Version: `0.7.0-SNAPSHOT`
+- RocksDB JNI: `10.10.1`
 - `num=200000`
 - `reads=200000`
 - `value_size=100`
 - `sync=false`
 - `groupCommit=false`
 
-| Scenario | LDB ops/s | Notes |
-| --- | ---: | --- |
-| `fillseq` | 251,394 | Sequential writes |
-| `readrandom` | 118,020 | Random reads, 200,000/200,000 hits |
-| `overwrite` | 109,196 | Random overwrites |
-| `readwhilewriting` | 95,117 | Concurrent reads and writes, 400,000 total operations |
+| Scenario | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | Conclusion |
+| --- | ---: | ---: | ---: | --- |
+| `fillseq` | 286,508 | 102,664 | 2.79 | LDB is faster in this Java small-value sequential-write profile |
+| `readrandom` | 132,910 | 462,859 | 0.29 | LDB is about 29% of RocksDB JNI |
+| `overwrite` | 102,906 | 84,439 | 1.22 | LDB is slightly faster in this Java random-overwrite profile |
+| `readwhilewriting` | 99,450 | 170,468 | 0.58 | LDB is about 58% of RocksDB JNI |
 
-The run still printed Windows directory fsync `AccessDeniedException` warnings, but the `ldbDbBenchReport` task ended with `PASS`. This is consistent with the earlier releaseGate observation and is recorded as an environment note rather than a workload failure.
+In the current Windows/JDK environment, explicit close in the RocksDB JNI runner triggers a JNI dispose symbol mismatch. The standalone runner therefore uses a short-lived process without explicit close, keeps one directory per scenario, and lets process exit release native resources. This slightly favors RocksDB JNI because close cost is not counted. The LDB run still printed Windows directory fsync `AccessDeniedException` warnings, but the `ldbDbBenchReport` task ended with `PASS`; this is consistent with earlier releaseGate observations and is recorded as an environment note rather than a workload failure.
+
+Overall: under the Java/JNI comparison profile, LDB is not simply one tenth of RocksDB. Small-value write profiles are near or above RocksDB JNI, random reads are still clearly behind at about 30%, and concurrent read/write is about 60%. A more authoritative RocksDB comparison still requires native `db_bench`.
 
 ## Interpretation
 
