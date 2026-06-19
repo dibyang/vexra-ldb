@@ -162,6 +162,7 @@ ldb checkpoint <db> <targetDir>
 - `docs/ldb-column-family-tombstone-design.md`：非空列族 drop/rename/tombstone 当前语义与后续 GC 规划。
 - `docs/ldb-backup-engine-design.md`：共享对象仓库和引用计数备份引擎设计。
 - `docs/ldb-longrun-benchmark-design.md`：长期压测和 benchmark 报告框架设计。
+- `docs/ldb-rocksdb-performance-baseline.md`：LDB 与 RocksDB db_bench 风格性能基线和对比脚本说明。
 - `docs/ldb-production-readiness-plan.md`：生产级发布门禁、升级样本、长压测和运维 Runbook 规划。
 - `docs/vexra-ldb-external-commitment.md`：对外承诺和发布验收边界。
 - `docs/ldb-future-optimization-design.md`：后续性能与可靠性专项评估。

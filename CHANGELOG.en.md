@@ -10,6 +10,7 @@ This document records important changes for `vexra-ldb`. It follows the spirit o
 
 ### Added
 
+- Added Chinese and English LDB/RocksDB performance baseline documents, an `ldbDbBenchReport` task, and a PowerShell comparison script covering db_bench-style `fillseq`, `readrandom`, `overwrite`, and `readwhilewriting` scenarios.
 - Added Chinese and English RocksDB gap and next-version planning documents, confirming the `0.6.0` next development line, `11.1.1` comparison baseline, `MultiGet` as the low-risk implementation item, and unsupported advanced API boundaries.
 - Added batch point reads through `LDB#get(List<byte[]>)` and column-family overloads, preserving input order and returning null for missing keys.
 - Added `ldb.recoveryEvidence` and `ldb.backupEvidence` diagnostic properties for archiving WAL/MANIFEST, check/repair, checkpoint, backup/restore, object-store, and cleanup dry-run evidence conventions.

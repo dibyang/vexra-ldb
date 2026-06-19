@@ -97,6 +97,31 @@ tasks.register('benchmarkReport', JavaExec) {
       '--run.workDir', outputDir.get(), '--run.seed', seed.get()
 }
 
+tasks.register('ldbDbBenchReport', JavaExec) {
+  group = 'verification'
+  description = 'Runs db_bench-style LDB benchmarks and writes JSON/CSV reports.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.bench.LdbDbBenchMain'
+  def outputDir = providers.gradleProperty('ldb.dbBench.outputDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-db-bench').map { it.asFile.path })
+  def dbDir = providers.gradleProperty('ldb.dbBench.dbDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-db-bench/db').map { it.asFile.path })
+  def benchmarks = providers.gradleProperty('ldb.dbBench.benchmarks')
+      .orElse('fillseq,readrandom,overwrite,readwhilewriting')
+  def num = providers.gradleProperty('ldb.dbBench.num').orElse('200000')
+  def reads = providers.gradleProperty('ldb.dbBench.reads').orElse('200000')
+  def valueSize = providers.gradleProperty('ldb.dbBench.valueSize').orElse('100')
+  def sync = providers.gradleProperty('ldb.dbBench.sync').orElse('false')
+  def groupCommit = providers.gradleProperty('ldb.dbBench.groupCommit').orElse('false')
+  def writeBufferSizeMb = providers.gradleProperty('ldb.dbBench.writeBufferSizeMb').orElse('512')
+  def seed = providers.gradleProperty('ldb.dbBench.seed').orElse('20260619')
+  args '--output', outputDir.get(), '--db', dbDir.get(), '--benchmarks', benchmarks.get(),
+      '--num', num.get(), '--reads', reads.get(), '--value_size', valueSize.get(),
+      '--sync', sync.get(), '--group_commit', groupCommit.get(),
+      '--write_buffer_size_mb', writeBufferSizeMb.get(), '--seed', seed.get()
+}
+
 tasks.register('longRunTest', JavaExec) {
   group = 'verification'
   description = 'Runs the explicit local long-run smoke profile; not part of default test.'

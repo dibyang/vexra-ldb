@@ -10,6 +10,7 @@
 
 ### Added
 
+- 新增 LDB/RocksDB 性能基线中英文文档、`ldbDbBenchReport` 任务和 PowerShell 对比脚本，覆盖 `fillseq`、`readrandom`、`overwrite`、`readwhilewriting` 四类 db_bench 风格场景。
 - 新增 RocksDB 差距与下一版本规划中英文设计文档，确认 `0.6.0` 下一开发线、`11.1.1` 对标 baseline、`MultiGet` 低风险实现项和高级 API unsupported 边界。
 - 新增 `LDB#get(List<byte[]>)` 及列族重载的批量点查能力，按输入顺序返回结果，未命中 key 返回 null。
 - 新增 `ldb.recoveryEvidence` 与 `ldb.backupEvidence` 诊断属性，用于归档 WAL/Manifest、check/repair、checkpoint、backup/restore、对象仓库和清理 dry-run 证据约定。

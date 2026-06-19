@@ -162,6 +162,7 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `docs/ldb-column-family-tombstone-design.md`: current non-empty column-family drop/rename/tombstone semantics and future GC plan.
 - `docs/ldb-backup-engine-design.md`: shared object store and reference-counted backup engine design.
 - `docs/ldb-longrun-benchmark-design.md`: long-run stress and benchmark report framework design.
+- `docs/ldb-rocksdb-performance-baseline.md`: LDB and RocksDB db_bench-style performance baseline and comparison script guide.
 - `docs/ldb-production-readiness-plan.md`: production release gates, upgrade fixtures, long stress, and operations runbook plan.
 - `docs/vexra-ldb-external-commitment.md`: external commitments and release acceptance boundaries.
 - `docs/ldb-future-optimization-design.md`: future performance and reliability evaluation.
