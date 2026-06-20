@@ -11,6 +11,7 @@ buildscript {
 
 import net.researchgate.release.GitAdapter
 import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 
 plugins {
   id 'java'
@@ -333,12 +334,22 @@ tasks.named('publish') {
   mustRunAfter tasks.named('verifyExplicitUserManagedRemoteReleaseConfig')
 }
 
+tasks.register('submitUserManagedReleaseRepository') {
+  group = 'publishing'
+  description = 'Submits an open Sonatype manual staging repository after upload; it never performs a final Central release.'
+  dependsOn tasks.named('publish')
+  mustRunAfter tasks.named('publish')
+  doLast {
+    submitOpenUserManagedReleaseRepository()
+  }
+}
+
 tasks.register('publishUserManagedRelease') {
   group = 'publishing'
-  description = 'Uploads a formal release only after verifying USER_MANAGED/staging review mode; it does not confirm Central visibility.'
+  description = 'Uploads a formal release, submits the open manual staging repository for validation, and stops before final Central release.'
   dependsOn tasks.named('verifyExplicitUserManagedRemoteReleaseConfig')
   dependsOn tasks.named('verifyGitReleaseTraceability')
-  dependsOn tasks.named('publish')
+  dependsOn tasks.named('submitUserManagedReleaseRepository')
 }
 
 // 将构建的包签名
@@ -390,6 +401,112 @@ private void assertExplicitUserManagedRemoteReleaseRepository(String releaseRepo
     throw new GradleException('publishUserManagedRelease requires an explicit remote release repository, not the local dry-run repository: ' + releaseRepository)
   }
   assertUserManagedReleaseRepository(releaseRepository)
+}
+
+private String sonatypeStagingApiBase() {
+  String releaseRepository = releaseRepositoryForPublishing()
+  String marker = '/service/local/staging/'
+  int index = releaseRepository.indexOf(marker)
+  if (index >= 0) {
+    return releaseRepository.substring(0, index)
+  }
+  if (releaseRepository.endsWith('/')) {
+    return releaseRepository.substring(0, releaseRepository.length() - 1)
+  }
+  return releaseRepository
+}
+
+private String requiredReleaseProperty(String name) {
+  Object value = findProperty(name)
+  if (value == null || value.toString().trim().isEmpty()) {
+    throw new GradleException('Missing required release property: ' + name)
+  }
+  return value.toString()
+}
+
+private Map<String, String> sonatypeAuthHeaders() {
+  String pair = requiredReleaseProperty('ossrhUsername') + ':' + requiredReleaseProperty('ossrhPassword')
+  String basic = pair.bytes.encodeBase64().toString()
+  return [
+      'Authorization': 'Basic ' + basic,
+      'Accept': 'application/json'
+  ]
+}
+
+private Map<String, Object> httpRequest(String method, String url, Map<String, String> headers, byte[] body) {
+  HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection()
+  connection.setRequestMethod(method)
+  connection.setConnectTimeout(30000)
+  connection.setReadTimeout(120000)
+  headers.each { key, value -> connection.setRequestProperty(key, value) }
+  if (body != null) {
+    connection.setDoOutput(true)
+    connection.outputStream.withCloseable { it.write(body) }
+  }
+  int code = connection.responseCode
+  InputStream stream = code >= 400 ? connection.errorStream : connection.inputStream
+  String text = stream == null ? '' : stream.getText('UTF-8')
+  return [code: code, body: text]
+}
+
+private void writeUserManagedDeploymentReport(Map<String, Object> report) {
+  File reportDir = releaseGateReportDir.get().asFile
+  if (!reportDir.exists() && !reportDir.mkdirs()) {
+    throw new GradleException("Failed to create release gate report dir: ${reportDir}")
+  }
+  File json = new File(reportDir, 'USER-MANAGED-DEPLOYMENT.json')
+  json.text = JsonOutput.prettyPrint(JsonOutput.toJson(report)) + System.lineSeparator()
+}
+
+private void submitOpenUserManagedReleaseRepository() {
+  String base = sonatypeStagingApiBase()
+  Map<String, String> headers = sonatypeAuthHeaders()
+  String searchUrl = base + '/manual/search/repositories'
+  Map<String, Object> search = httpRequest('GET', searchUrl, headers, null)
+  if (search.code != 200) {
+    throw new GradleException('Failed to search Sonatype manual repositories: HTTP ' + search.code + ' ' + search.body)
+  }
+  Object parsed = search.body.trim().isEmpty() ? [repositories: []] : new JsonSlurper().parseText(search.body)
+  List repositories = parsed.repositories ?: []
+  List openRepositories = repositories.findAll { repo ->
+    String state = repo.state == null ? '' : repo.state.toString()
+    state.equalsIgnoreCase('open')
+  }
+  if (openRepositories.isEmpty()) {
+    Map<String, Object> report = [
+        result: 'NO_OPEN_REPOSITORY',
+        version: project.version.toString(),
+        searchUrl: searchUrl,
+        note: 'No open manual staging repository was visible after upload; repository may already be submitted or released.'
+    ]
+    writeUserManagedDeploymentReport(report)
+    println 'USER_MANAGED_DEPLOYMENT_SUBMIT=NO_OPEN_REPOSITORY'
+    return
+  }
+  if (openRepositories.size() > 1) {
+    throw new GradleException('More than one open Sonatype manual repository is visible; refusing to submit ambiguously: '
+        + openRepositories.collect { it.key }.join(','))
+  }
+  Object repository = openRepositories[0]
+  String repositoryKey = repository.key.toString()
+  String submitUrl = base + '/manual/upload/repository/' + repositoryKey
+  Map<String, Object> submit = httpRequest('POST', submitUrl, headers + ['Content-Type': 'application/octet-stream'], new byte[0])
+  if (submit.code < 200 || submit.code >= 300) {
+    throw new GradleException('Failed to submit Sonatype manual repository for validation: HTTP ' + submit.code + ' ' + submit.body)
+  }
+  Map<String, Object> report = [
+      result: 'SUBMITTED',
+      version: project.version.toString(),
+      repositoryKey: repositoryKey,
+      stateBefore: repository.state,
+      portalDeploymentId: repository.portal_deployment_id,
+      warnings: repository.warnings,
+      submitUrl: submitUrl,
+      submitHttpStatus: submit.code,
+      note: 'Repository was submitted after upload. This task does not perform final Central release/publish.'
+  ]
+  writeUserManagedDeploymentReport(report)
+  println 'USER_MANAGED_DEPLOYMENT_SUBMITTED=' + repositoryKey
 }
 
 private Map<String, Object> collectUserManagedReleaseConfigGate() {

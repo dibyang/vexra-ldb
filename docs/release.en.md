@@ -512,3 +512,12 @@ Required release-preparation command:
 ```
 
 If `releaseGate` is run immediately after switching the version but before commit/tag, `gitReleaseTraceability` is expected to block it. The correct order is committing the version switch, pushing to GitHub, creating and pushing the `v0.9.0` tag, then running the release gate again.
+## 0.9.0 Release Completion Record
+
+Release status: 0.9.0 has completed the Central repository publication flow.
+
+Post-release closure:
+
+- The workspace version has been advanced to `0.10.0-SNAPSHOT` so development no longer continues on the formal `0.9.0` version.
+- Future `publishUserManagedRelease` runs now execute `submitUserManagedReleaseRepository` after upload, submitting the open manual staging repository into validation / follow-up publication flow and writing `USER-MANAGED-DEPLOYMENT.json`.
+- This automation only submits the open repository. It does not perform the final Central release/publish; Central visibility still requires explicit user confirmation.

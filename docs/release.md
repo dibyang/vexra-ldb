@@ -512,3 +512,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-rocksdbjni-comparison.ps1
 ```
 
 若第一次在切换版本后、提交/tag 前执行 `releaseGate`，预期会被 `gitReleaseTraceability` 拦截；正确顺序是提交版本切换、推送 GitHub、创建并推送 `v0.9.0` tag 后再次执行发布门禁。
+## 0.9.0 发布完成记录
+
+发布状态：0.9.0 已完成中央仓库发布流程。
+
+发布后收口：
+
+- 工作区版本已升级为 `0.10.0-SNAPSHOT`，避免继续在正式版本号 `0.9.0` 上开发。
+- `publishUserManagedRelease` 后续将自动执行 `submitUserManagedReleaseRepository`，把 open manual staging repository 提交到校验/后续可发布流程，并输出 `USER-MANAGED-DEPLOYMENT.json`。
+- 该自动化只提交 open repository，不执行最终 Central release/publish；最终可见发布仍以用户明确确认为准。
