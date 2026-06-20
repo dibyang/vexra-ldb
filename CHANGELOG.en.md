@@ -6,6 +6,7 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- Added `readrandom_miss`, `readrandom_mixed`, and `multiget_mixed` to `ldbDbBenchReport` for Bloom/filter miss-heavy and mixed random-read comparisons; v3 table properties now record filter policy, scope, key count, filter block bytes, and bits-per-key when a `FilterPolicy` is enabled.
 - Added `multiget_sameblock` and `scan` benchmarks to `ldbDbBenchReport`, and wired `blockLocalIndexBenchmarkEvidence` into `releaseGate` so v3 block-local-index default-enable review has dense same-block MultiGet and scan-regression evidence entry points.
 - Added the `blockLocalIndexFormatCoverage` release gate, requiring v3/block-local-index design docs, the `block.local_index.v1` feature, check/repair report fields, and offline self-check tests before storage-format release gates can pass.
 - Wired the v3 block-local-index self-check skeleton into check/repair: offline paths now validate directory coverage counts, local-index handle boundaries, and local-index block readability, reporting classes such as `BLOCK_LOCAL_INDEX_COVERAGE_MISMATCH`, `BLOCK_LOCAL_INDEX_HANDLE_OUT_OF_RANGE`, and `BLOCK_LOCAL_INDEX_BLOCK_CORRUPT`.

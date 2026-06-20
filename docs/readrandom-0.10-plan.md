@@ -187,3 +187,7 @@
 - 更深层块内查找优化：减少 restart 区间线性扫描。
 - 缓存策略优化：区分随机读/扫描读的 block cache admission。
 - Long-run benchmark：随机读、混合读写、MultiGet 分布式热点。
+
+## Bloom/filter miss/mixed 验证补充
+
+- Bloom/filter 专项进入下一阶段验证：ldbDbBenchReport 新增 eadrandom_miss、eadrandom_mixed、multiget_mixed，用于区分全命中随机读与缺失/混合随机读；启用 BloomFilterPolicy 时，v3 properties 会记录 filter policy、scope、key count、filter block bytes 与 bits-per-key，方便发布前归档 miss-heavy 场景证据。

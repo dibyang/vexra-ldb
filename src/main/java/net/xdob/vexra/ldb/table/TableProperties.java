@@ -30,6 +30,11 @@ public final class TableProperties {
   public static final String BLOCK_LOCAL_INDEX_INTERVAL_KEY = "ldb.table.block_local_index.interval";
   public static final String BLOCK_LOCAL_INDEX_BYTES_KEY = "ldb.table.block_local_index.bytes";
   public static final String BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY = "ldb.table.block_local_index.covered_blocks";
+  public static final String FILTER_POLICY_KEY = "ldb.table.filter_policy";
+  public static final String FILTER_SCOPE_KEY = "ldb.table.filter_scope";
+  public static final String FILTER_KEY_COUNT_KEY = "ldb.table.filter.key_count";
+  public static final String FILTER_BLOCK_BYTES_KEY = "ldb.table.filter.block_bytes";
+  public static final String FILTER_BITS_PER_KEY_KEY = "ldb.table.filter.bits_per_key";
 
   private static final int LEGACY_FORMAT_VERSION = 1;
   private static final int CURRENT_FORMAT_VERSION = 3;

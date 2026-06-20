@@ -1,6 +1,7 @@
 package net.xdob.vexra.ldb.table;
 
 import net.xdob.vexra.ldb.Options;
+import net.xdob.vexra.ldb.impl.BloomFilterPolicy;
 import net.xdob.vexra.ldb.impl.InternalKey;
 import net.xdob.vexra.ldb.impl.ValueType;
 import net.xdob.vexra.ldb.util.Slices;
@@ -94,6 +95,30 @@ class TablePropertiesTest {
       assertEquals("0", values.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY));
       assertEquals("0", values.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
       assertDoesNotThrow(() -> properties.validateReadable(true, "v3-disabled.sst"));
+    } finally {
+      table.closer().call();
+    }
+  }
+
+  @Test
+  void shouldWriteFilterSelfDescriptionWhenBloomFilterIsEnabled() throws Exception {
+    File tableFile = new File(tempDir, "v3-filter.sst");
+
+    writeTable(tableFile, new Options()
+        .tableFormatVersion(3)
+        .filterPolicy(new BloomFilterPolicy(10)));
+
+    Table table = openTable(tableFile, new Options().filterPolicy(new BloomFilterPolicy(10)));
+    try {
+      TableProperties properties = table.getProperties();
+      Map<String, String> values = properties.getValues();
+
+      assertEquals("vexra.BuiltinBloomFilter2", values.get(TableProperties.FILTER_POLICY_KEY));
+      assertEquals("full-key", values.get(TableProperties.FILTER_SCOPE_KEY));
+      assertEquals("2", values.get(TableProperties.FILTER_KEY_COUNT_KEY));
+      assertEquals("10", values.get(TableProperties.FILTER_BITS_PER_KEY_KEY));
+      assertTrue(Long.parseLong(values.get(TableProperties.FILTER_BLOCK_BYTES_KEY)) > 0);
+      assertFalse(table.mayContain(Slices.utf8Slice("a-miss")));
     } finally {
       table.closer().call();
     }

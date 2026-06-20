@@ -4,6 +4,7 @@ import com.google.common.base.Throwables;
 import net.xdob.vexra.ldb.CompressionType;
 import net.xdob.vexra.ldb.FilterPolicy;
 import net.xdob.vexra.ldb.Options;
+import net.xdob.vexra.ldb.impl.BloomFilterPolicy;
 import net.xdob.vexra.ldb.impl.InternalKey;
 import net.xdob.vexra.ldb.util.*;
 
@@ -47,6 +48,7 @@ public class TableBuilder {
   private long dataBlockCount;
   private long blockLocalIndexBytes;
   private long blockLocalIndexCoveredBlocks;
+  private long filterBlockBytes;
 
   // Either Finish() or Abandon() has been called.
   private boolean closed;
@@ -317,6 +319,7 @@ public class TableBuilder {
       return null;
     }
 
+    filterBlockBytes = filterBytes.length;
     return writeRawBlock(Slices.wrappedBuffer(filterBytes));
   }
 
@@ -357,8 +360,13 @@ public class TableBuilder {
     addProperty(propertiesBlockBuilder, "ldb.table.compression", compressionTypes());
     addProperty(propertiesBlockBuilder, "ldb.table.data_block_count", Long.toString(dataBlockCount));
     addProperty(propertiesBlockBuilder, "ldb.table.entry_count", Long.toString(entryCount));
-    addProperty(propertiesBlockBuilder, "ldb.table.filter_policy", filterPolicy == null ? "" : filterPolicy.name());
-    addProperty(propertiesBlockBuilder, "ldb.table.filter_scope", filterBlockHandle == null ? "" : "full-key");
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_POLICY_KEY, filterPolicy == null ? "" : filterPolicy.name());
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_SCOPE_KEY, filterBlockHandle == null ? "" : "full-key");
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_KEY_COUNT_KEY,
+        filterBlockHandle == null ? "0" : Integer.toString(filterKeys.size()));
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_BLOCK_BYTES_KEY,
+        filterBlockHandle == null ? "0" : Long.toString(filterBlockBytes));
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_BITS_PER_KEY_KEY, filterBitsPerKey());
     addProperty(propertiesBlockBuilder, "ldb.table.index_type", "single-level");
     addProperty(propertiesBlockBuilder, "ldb.table.largest_key", lastKey == null ? "" : java.util.Base64.getEncoder().encodeToString(lastKey.getBytes()));
     addProperty(propertiesBlockBuilder, "ldb.table.smallest_key", firstKey == null ? "" : java.util.Base64.getEncoder().encodeToString(firstKey.getBytes()));
@@ -444,6 +452,13 @@ public class TableBuilder {
       values.add(type.name().toLowerCase(java.util.Locale.US));
     }
     return join(values);
+  }
+
+  private String filterBitsPerKey() {
+    if (filterPolicy instanceof BloomFilterPolicy) {
+      return Integer.toString(((BloomFilterPolicy) filterPolicy).bitsPerKey());
+    }
+    return "";
   }
 
   private String join(List<String> values) {

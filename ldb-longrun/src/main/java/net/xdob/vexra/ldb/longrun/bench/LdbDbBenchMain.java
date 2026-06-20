@@ -90,8 +90,14 @@ public final class LdbDbBenchMain {
         results.add(warmReadRandom(config, dbDir, benchmark));
       } else if ("cold_readrandom".equals(benchmark)) {
         results.add(coldReadRandom(config, dbDir));
+      } else if ("readrandom_miss".equals(benchmark)) {
+        results.add(readRandomMiss(config, dbDir));
+      } else if ("readrandom_mixed".equals(benchmark)) {
+        results.add(readRandomMixed(config, dbDir));
       } else if ("multiget_random".equals(benchmark)) {
         results.add(multiGetRandom(config, dbDir));
+      } else if ("multiget_mixed".equals(benchmark)) {
+        results.add(multiGetMixed(config, dbDir));
       } else if ("multiget_sameblock".equals(benchmark)) {
         results.add(multiGetSameBlock(config, dbDir));
       } else if ("scan".equals(benchmark)) {
@@ -153,6 +159,43 @@ public final class LdbDbBenchMain {
     }
   }
 
+  private static Result readRandomMiss(Config config, File dbDir) throws Exception {
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+      db.compactRange(key(0), key(config.num));
+    }
+    Random random = new Random(config.seed);
+    long hits = 0;
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      long start = System.nanoTime();
+      for (int i = 0; i < config.reads; i++) {
+        if (db.get(missKey(random.nextInt(Math.max(1, config.num - 1)))) != null) {
+          hits++;
+        }
+      }
+      return Result.of("readrandom_miss", config.reads, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result readRandomMixed(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+      db.compactRange(key(0), key(config.num));
+      long start = System.nanoTime();
+      for (int i = 0; i < config.reads; i++) {
+        byte[] lookupKey = (i & 1) == 0
+            ? key(random.nextInt(config.num))
+            : missKey(random.nextInt(Math.max(1, config.num - 1)));
+        if (db.get(lookupKey) != null) {
+          hits++;
+        }
+      }
+      return Result.of("readrandom_mixed", config.reads, hits, start, System.nanoTime(), db);
+    }
+  }
+
   private static Result multiGetRandom(Config config, File dbDir) throws Exception {
     Random random = new Random(config.seed);
     long hits = 0;
@@ -176,6 +219,34 @@ public final class LdbDbBenchMain {
         operations += batchSize;
       }
       return Result.of("multiget_random", operations, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result multiGetMixed(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    long operations = 0;
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+      db.compactRange(key(0), key(config.num));
+      long start = System.nanoTime();
+      while (operations < config.reads) {
+        int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
+        List<byte[]> keys = new ArrayList<>(batchSize);
+        for (int i = 0; i < batchSize; i++) {
+          keys.add(((operations + i) & 1) == 0
+              ? key(random.nextInt(config.num))
+              : missKey(random.nextInt(Math.max(1, config.num - 1))));
+        }
+        List<byte[]> values = db.get(keys);
+        for (byte[] value : values) {
+          if (value != null) {
+            hits++;
+          }
+        }
+        operations += batchSize;
+      }
+      return Result.of("multiget_mixed", operations, hits, start, System.nanoTime(), db);
     }
   }
 
@@ -340,6 +411,10 @@ public final class LdbDbBenchMain {
 
   private static byte[] key(int value) {
     return String.format(Locale.ROOT, "key%016d", value).getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] missKey(int value) {
+    return String.format(Locale.ROOT, "key%016d-miss", value).getBytes(StandardCharsets.UTF_8);
   }
 
   private static byte[] value(int index, int valueSize) {

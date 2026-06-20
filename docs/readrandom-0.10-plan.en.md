@@ -193,6 +193,7 @@ A current-version in-memory full-entry seek index was evaluated but is not enabl
 
 ## Follow-up candidates
 
+- Bloom/filter moves into the next validation stage: `ldbDbBenchReport` now adds `readrandom_miss`, `readrandom_mixed`, and `multiget_mixed` so all-hit random reads can be separated from miss-heavy and mixed random reads. When `BloomFilterPolicy` is enabled, v3 properties record the filter policy, scope, key count, filter block bytes, and bits-per-key for pre-release evidence.
 - Next-stage file-format design has been started in `docs/storage-format-0.11-block-index-design.md` and its English copy, focusing on compact persisted block-local indexes instead of full-entry in-memory indexes.
 - File-format improvements: persisted compact block-level key index, filter/layout metadata, and format-version capabilities.
 - Deeper block lookup optimization: reduce restart-region scans without eagerly decoding every entry in sparse random workloads.

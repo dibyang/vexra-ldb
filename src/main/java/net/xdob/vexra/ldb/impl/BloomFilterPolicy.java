@@ -17,6 +17,13 @@ public final class BloomFilterPolicy implements FilterPolicy {
     this.k = calcK;
   }
 
+  /**
+   * 返回每个 key 的 Bloom bit 预算，用于 SST properties 自描述和 benchmark 归档。
+   */
+  public int bitsPerKey() {
+    return bitsPerKey;
+  }
+
   @Override
   public String name() {
     return "vexra.BuiltinBloomFilter2";

@@ -22,7 +22,7 @@ class LdbDbBenchMainTest {
     int exit = LdbDbBenchMain.run(new String[] {
         "--output", output.getAbsolutePath(),
         "--db", db.getAbsolutePath(),
-        "--benchmarks", "fillseq,warm_readrandom,multiget_random,multiget_sameblock,scan",
+        "--benchmarks", "fillseq,warm_readrandom,readrandom_miss,readrandom_mixed,multiget_random,multiget_mixed,multiget_sameblock,scan",
         "--num", "128",
         "--reads", "128",
         "--value_size", "32",
@@ -42,7 +42,10 @@ class LdbDbBenchMainTest {
     assertTrue(json.contains("\"writeBlockLocalIndex\": true"), json);
     assertTrue(json.contains("\"blockLocalIndexInterval\": 1"), json);
     assertTrue(json.contains("\"name\": \"warm_readrandom\""), json);
+    assertTrue(json.contains("\"name\": \"readrandom_miss\""), json);
+    assertTrue(json.contains("\"name\": \"readrandom_mixed\""), json);
     assertTrue(json.contains("\"name\": \"multiget_random\""), json);
+    assertTrue(json.contains("\"name\": \"multiget_mixed\""), json);
     assertTrue(json.contains("\"name\": \"multiget_sameblock\""), json);
     assertTrue(json.contains("\"name\": \"scan\""), json);
     assertTrue(json.contains("blockLocalIndexSeekCount="), json);

@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- ldbDbBenchReport 新增 eadrandom_miss、eadrandom_mixed 与 multiget_mixed，用于 Bloom/filter miss-heavy 与 mixed 随机读专项对比；v3 table properties 在启用 FilterPolicy 时记录 filter policy、scope、key count、filter block bytes 与 bits-per-key，补齐发布前自描述证据。
+
 - `ldbDbBenchReport` 新增 `multiget_sameblock` 和 `scan` benchmark，并把 `blockLocalIndexBenchmarkEvidence` 纳入 `releaseGate`，为 v3 block-local index 默认开启评审补齐 dense same-block MultiGet 与 scan 回归证据入口。
 - `releaseGate` 新增 `blockLocalIndexFormatCoverage` 门禁，要求 v3/block-local index 设计文档、`block.local_index.v1` feature、check/repair 报告字段和离线自检测试同时覆盖后才允许通过存储格式发布门禁。
 - v3 block-local index 自检骨架接入 check/repair：离线路径现在会验证 directory 覆盖数、local index handle 边界和 local index block 可读性，并以 `BLOCK_LOCAL_INDEX_COVERAGE_MISMATCH`、`BLOCK_LOCAL_INDEX_HANDLE_OUT_OF_RANGE`、`BLOCK_LOCAL_INDEX_BLOCK_CORRUPT` 等分类进入报告。
