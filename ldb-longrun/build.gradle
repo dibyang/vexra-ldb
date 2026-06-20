@@ -117,7 +117,13 @@ tasks.register('ldbDbBenchReport', JavaExec) {
   def writeBufferSizeMb = providers.gradleProperty('ldb.dbBench.writeBufferSizeMb').orElse('512')
   def readProfile = providers.gradleProperty('ldb.dbBench.readProfile').orElse('default')
   def cacheBlocks = providers.gradleProperty('ldb.dbBench.cacheBlocks').orElse('true')
+  def blockCacheWarmOnOpen = providers.gradleProperty('ldb.dbBench.blockCacheWarmOnOpen').orElse('false')
   def blockCacheSize = providers.gradleProperty('ldb.dbBench.blockCacheSize').orElse('4096')
+  def blockCacheAdmissionMinReads = providers.gradleProperty('ldb.dbBench.blockCacheAdmissionMinReads').orElse('1')
+  def tableFormatVersion = providers.gradleProperty('ldb.dbBench.tableFormatVersion').orElse('1')
+  def writeTableProperties = providers.gradleProperty('ldb.dbBench.writeTableProperties').orElse('true')
+  def writeBlockLocalIndex = providers.gradleProperty('ldb.dbBench.writeBlockLocalIndex').orElse('false')
+  def blockLocalIndexInterval = providers.gradleProperty('ldb.dbBench.blockLocalIndexInterval').orElse('4')
   def verifyChecksums = providers.gradleProperty('ldb.dbBench.verifyChecksums').orElse('true')
   def batchSize = providers.gradleProperty('ldb.dbBench.batchSize').orElse('64')
   def seed = providers.gradleProperty('ldb.dbBench.seed').orElse('20260619')
@@ -125,7 +131,13 @@ tasks.register('ldbDbBenchReport', JavaExec) {
       '--num', num.get(), '--reads', reads.get(), '--value_size', valueSize.get(),
       '--sync', sync.get(), '--group_commit', groupCommit.get(),
       '--write_buffer_size_mb', writeBufferSizeMb.get(), '--read_profile', readProfile.get(),
-      '--cache_blocks', cacheBlocks.get(), '--block_cache_size', blockCacheSize.get(),
+      '--cache_blocks', cacheBlocks.get(), '--block_cache_warm_on_open', blockCacheWarmOnOpen.get(),
+      '--block_cache_size', blockCacheSize.get(),
+      '--block_cache_admission_min_reads', blockCacheAdmissionMinReads.get(),
+      '--table_format_version', tableFormatVersion.get(),
+      '--write_table_properties', writeTableProperties.get(),
+      '--write_block_local_index', writeBlockLocalIndex.get(),
+      '--block_local_index_interval', blockLocalIndexInterval.get(),
       '--verify_checksums', verifyChecksums.get(), '--batch_size', batchSize.get(),
       '--seed', seed.get()
 }

@@ -166,6 +166,34 @@ class LdbRepairTest {
   }
 
   @Test
+  void shouldReportV3BlockLocalIndexWhenRepairingFromReadableSst() throws Exception {
+    File dbDir = new File(tempDir, "repair-v3-block-local-index-format");
+    createCompactedV3BlockLocalIndexDb(dbDir);
+    deleteFilesWithPrefix(dbDir, "MANIFEST-");
+    assertTrue(new File(dbDir, Filename.currentFileName()).delete());
+
+    LDBFactory.factory.repair(dbDir, new Options().tableFormatVersion(3).writeBlockLocalIndex(true));
+
+    String report = readText(new File(dbDir, "REPAIR-REPORT.json"));
+    assertTrue(report.contains("\"storageFormat\""), report);
+    assertTrue(report.contains("\"tableFormats\""), report);
+    assertTrue(report.contains("formatVersion=3"), report);
+    assertTrue(report.contains("blockLocalIndex=true"), report);
+    assertTrue(report.contains("blockLocalIndexPolicy=restart-anchor"), report);
+    assertTrue(report.contains("coverageMatches=true"), report);
+    assertTrue(report.contains("handlesInRange=true"), report);
+    assertTrue(report.contains("blocksReadable=true"), report);
+    assertTrue(report.contains("\"v3Tables\": 1"), report);
+    assertTrue(report.contains("\"blockLocalIndexTables\": 1"), report);
+    assertTrue(report.contains("block.local_index.v1"), report);
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
+      assertArrayEquals(bytes("v3-value-0"), db.get(bytes("v3-k000")));
+      assertArrayEquals(bytes("v3-value-39"), db.get(bytes("v3-k039")));
+    }
+  }
+
+  @Test
   void shouldPlanRepairWithoutModifyingDatabaseDirectory() throws Exception {
     File dbDir = new File(tempDir, "repair-plan");
     createCompactedDefaultDb(dbDir);
@@ -256,6 +284,24 @@ class LdbRepairTest {
         db.put(bytes(String.format("v2-k%03d", i)), bytes("v2-value-" + i));
       }
       db.compactRange(bytes("v2-k000"), bytes("v2-k999"));
+    }
+  }
+
+  private static void createCompactedV3BlockLocalIndexDb(File dbDir) throws Exception {
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options()
+            .createIfMissing(true)
+            .writeBufferSize(128)
+            .forceSstOnFlush(true)
+            .tableFormatVersion(3)
+            .writeTableProperties(true)
+            .writeBlockLocalIndex(true)
+            .blockRestartInterval(1)
+            .blockLocalIndexInterval(1))) {
+      for (int i = 0; i < 40; i++) {
+        db.put(bytes(String.format("v3-k%03d", i)), bytes("v3-value-" + i));
+      }
+      db.compactRange(bytes("v3-k000"), bytes("v3-k999"));
     }
   }
 

@@ -166,3 +166,19 @@ Evidence paths:
 
 - `ldb-longrun/build/reports/ldb-multiget-optimized-200k/ldb-db-bench-summary.json`
 - `build/reports/rocksdbjni-comparison-multiget-optimized-200k/comparison.csv`
+## V3E-09 random-read comparison after cache admission
+
+This pass uses `ldb-longrun/build/reports/ldb-db-bench-v3e09-cache-admission2-200k/ldb-db-bench-summary.json` as the existing LDB result and reruns the RocksDB JNI 10.10.1 workloads supported by the Java comparison runner. Command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-rocksdbjni-comparison.ps1 -ExistingLdbSummary "ldb-longrun\build\reports\ldb-db-bench-v3e09-cache-admission2-200k\ldb-db-bench-summary.json" -OutputDir "build\reports\rocksdbjni-comparison-v3e09-random-supported-200k" -Benchmarks "cold_readrandom,multiget_random" -Num 200000 -Reads 200000 -BatchSize 64 -Runs 1
+```
+
+| Scenario | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | Report |
+| --- | ---: | ---: | ---: | --- |
+| `cold_readrandom` | 187,734.903 | 308,937.564 | 0.6077 | `build/reports/rocksdbjni-comparison-v3e09-random-supported-200k/comparison.csv` |
+| `multiget_random` | 178,359.627 | 262,404.208 | 0.6797 | `build/reports/rocksdbjni-comparison-v3e09-random-supported-200k/comparison.csv` |
+
+Boundary note: the LDB runner also reported `multiget_sameblock=274,764.640 ops/s` and `scan=2,666,513.787 ops/s`, but the current RocksDB JNI runner supports only `cold_readrandom` and `multiget_random` for this comparison. `multiget_sameblock` is an LDB-specific dense batch scenario used to validate data-block grouping and admission behavior, so this pass does not claim a RocksDB JNI ratio for it.
+
+Conclusion: under the current Windows/JDK/RocksDB JNI 10.10.1 Java comparison profile, `read_optimized + blockCacheAdmissionMinReads=2` keeps both `cold_readrandom` and `multiget_random` above 0.5x RocksDB JNI. The random-read workstream remains closed against the local JNI target. Native RocksDB `db_bench` remains the more authoritative external comparison entry point.

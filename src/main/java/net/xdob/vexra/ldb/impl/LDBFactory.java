@@ -195,7 +195,11 @@ public class LDBFactory
     private long sstEntries;
     private long legacyTables;
     private long v2Tables;
+    private long v3Tables;
     private long incompatibleTables;
+    private long blockLocalIndexTables;
+    private long blockLocalIndexBytes;
+    private long blockLocalIndexCoveredBlocks;
 
     private void setDatabaseDir(File databaseDir) {
       this.databaseDir = databaseDir;
@@ -227,21 +231,43 @@ public class LDBFactory
       sstEntries++;
     }
 
-    private void addTableFormat(File file, TableProperties properties) {
+    private void addTableFormat(File file,
+                                TableProperties properties,
+                                String blockLocalIndexEvidence,
+                                List<String> blockLocalIndexFailures) {
       if (properties.isLegacy()) {
         legacyTables++;
       }
       if (properties.getFormatVersion() == 2) {
         v2Tables++;
       }
+      if (properties.getFormatVersion() == 3) {
+        v3Tables++;
+      }
       if (!properties.getIncompatibleFeatures().isEmpty()) {
         incompatibleTables++;
+      }
+      if (hasBlockLocalIndex(properties)) {
+        blockLocalIndexTables++;
+        blockLocalIndexBytes += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY));
+        blockLocalIndexCoveredBlocks += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
       }
       tableFormats.add(file.getName()
           + ":formatVersion=" + properties.getFormatVersion()
           + ",legacy=" + properties.isLegacy()
           + ",compatible=" + properties.getCompatibleFeatures()
-          + ",incompatible=" + properties.getIncompatibleFeatures());
+          + ",incompatible=" + properties.getIncompatibleFeatures()
+          + ",blockLocalIndex=" + hasBlockLocalIndex(properties)
+          + ",blockLocalIndexPolicy=" + valueOrEmpty(properties.get(TableProperties.BLOCK_LOCAL_INDEX_POLICY_KEY))
+          + ",blockLocalIndexInterval=" + valueOrEmpty(properties.get(TableProperties.BLOCK_LOCAL_INDEX_INTERVAL_KEY))
+          + ",blockLocalIndexBytes=" + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY))
+          + ",blockLocalIndexCoveredBlocks="
+          + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY))
+          + ",blockLocalIndexEvidence=" + valueOrEmpty(blockLocalIndexEvidence)
+          + ",blockLocalIndexFailures=" + blockLocalIndexFailures);
+      for (String failure : blockLocalIndexFailures) {
+        addFailure(file, failure);
+      }
     }
 
     /**
@@ -313,7 +339,11 @@ public class LDBFactory
           + ", sstEntries=" + sstEntries
           + ", legacyTables=" + legacyTables
           + ", v2Tables=" + v2Tables
+          + ", v3Tables=" + v3Tables
           + ", incompatibleTables=" + incompatibleTables
+          + ", blockLocalIndexTables=" + blockLocalIndexTables
+          + ", blockLocalIndexBytes=" + blockLocalIndexBytes
+          + ", blockLocalIndexCoveredBlocks=" + blockLocalIndexCoveredBlocks
           + '}';
     }
 
@@ -331,7 +361,11 @@ public class LDBFactory
       appendJsonField(builder, "sstEntries", sstEntries, true);
       appendJsonField(builder, "legacyTables", legacyTables, true);
       appendJsonField(builder, "v2Tables", v2Tables, true);
-      appendJsonField(builder, "incompatibleTables", incompatibleTables, false);
+      appendJsonField(builder, "v3Tables", v3Tables, true);
+      appendJsonField(builder, "incompatibleTables", incompatibleTables, true);
+      appendJsonField(builder, "blockLocalIndexTables", blockLocalIndexTables, true);
+      appendJsonField(builder, "blockLocalIndexBytes", blockLocalIndexBytes, true);
+      appendJsonField(builder, "blockLocalIndexCoveredBlocks", blockLocalIndexCoveredBlocks, false);
       builder.append("\n}\n");
       return builder.toString();
     }
@@ -340,7 +374,11 @@ public class LDBFactory
       return "table={tables=" + tableFormats.size()
           + ",legacy=" + legacyTables
           + ",v2=" + v2Tables
+          + ",v3=" + v3Tables
           + ",incompatible=" + incompatibleTables
+          + ",blockLocalIndexTables=" + blockLocalIndexTables
+          + ",blockLocalIndexBytes=" + blockLocalIndexBytes
+          + ",blockLocalIndexCoveredBlocks=" + blockLocalIndexCoveredBlocks
           + "},wal=log-v1"
           + ",manifest=version-edit-log-v1"
           + ",current=text-manifest-pointer-v1"
@@ -376,6 +414,26 @@ public class LDBFactory
 
     private static String escape(String value) {
       return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static boolean hasBlockLocalIndex(TableProperties properties) {
+      return "true".equals(properties.get(TableProperties.BLOCK_LOCAL_INDEX_KEY))
+          || properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE);
+    }
+
+    private static long parseLong(String value) {
+      if (value == null || value.trim().isEmpty()) {
+        return 0;
+      }
+      return Long.parseLong(value.trim());
+    }
+
+    private static String valueOrEmpty(String value) {
+      return value == null ? "" : value;
+    }
+
+    private static String valueOrZero(String value) {
+      return value == null || value.trim().isEmpty() ? "0" : value;
     }
   }
 
@@ -530,7 +588,11 @@ public class LDBFactory
             options,
             options.cacheBlocks() ? new BlockCache(options.blockCacheSize()) : null);
         try {
-          report.addTableFormat(tableFile, table.getProperties());
+          report.addTableFormat(
+              tableFile,
+              table.getProperties(),
+              table.getBlockLocalIndexFormatEvidence(),
+              table.getBlockLocalIndexFormatFailures());
           InternalTableIterator iterator = new InternalTableIterator(table.iterator());
           iterator.seekToFirst();
           while (iterator.hasNext()) {
@@ -1764,13 +1826,18 @@ public class LDBFactory
      * 记录 repair 过程中可恢复 SST 的格式证据，不修改原始 SST 内容。
      */
     private void recordRepairTableFormat(RepairReport report, long fileNumber) throws IOException {
-      report.addTableFormat(new File(databaseDir, Filename.tableFileName(fileNumber)), readTableProperties(fileNumber));
+      TableFormatEvidence evidence = readTableFormatEvidence(fileNumber);
+      report.addTableFormat(
+          new File(databaseDir, Filename.tableFileName(fileNumber)),
+          evidence.properties,
+          evidence.blockLocalIndexEvidence,
+          evidence.blockLocalIndexFailures);
     }
 
     /**
      * 读取指定 SST 的 table properties，用于 repair/report 解释新旧 table 格式。
      */
-    private TableProperties readTableProperties(long fileNumber) throws IOException {
+    private TableFormatEvidence readTableFormatEvidence(long fileNumber) throws IOException {
       TableCache tableCache = new TableCache(
           databaseDir,
           Math.max(16, options.maxOpenFiles() - 10),
@@ -1778,9 +1845,26 @@ public class LDBFactory
           options.verifyChecksums(),
           options);
       try {
-        return tableCache.getTableProperties(fileNumber);
+        return new TableFormatEvidence(
+            tableCache.getTableProperties(fileNumber),
+            tableCache.getBlockLocalIndexFormatEvidence(fileNumber),
+            tableCache.getBlockLocalIndexFormatFailures(fileNumber));
       } finally {
         tableCache.close();
+      }
+    }
+
+    private static final class TableFormatEvidence {
+      private final TableProperties properties;
+      private final String blockLocalIndexEvidence;
+      private final List<String> blockLocalIndexFailures;
+
+      private TableFormatEvidence(TableProperties properties,
+                                  String blockLocalIndexEvidence,
+                                  List<String> blockLocalIndexFailures) {
+        this.properties = properties;
+        this.blockLocalIndexEvidence = blockLocalIndexEvidence;
+        this.blockLocalIndexFailures = blockLocalIndexFailures;
       }
     }
 
@@ -2256,7 +2340,11 @@ public class LDBFactory
       private long nextFileNumber;
       private long legacyTables;
       private long v2Tables;
+      private long v3Tables;
       private long incompatibleTables;
+      private long blockLocalIndexTables;
+      private long blockLocalIndexBytes;
+      private long blockLocalIndexCoveredBlocks;
 
       private void setDatabaseDir(File databaseDir) {
         this.databaseDir = databaseDir;
@@ -2273,21 +2361,40 @@ public class LDBFactory
       /**
        * 追加单个 SST 的格式摘要，并维护 v1/v2/incompatible 计数。
        */
-      private void addTableFormat(File file, TableProperties properties) {
+      private void addTableFormat(File file,
+                                  TableProperties properties,
+                                  String blockLocalIndexEvidence,
+                                  List<String> blockLocalIndexFailures) {
         if (properties.isLegacy()) {
           legacyTables++;
         }
         if (properties.getFormatVersion() == 2) {
           v2Tables++;
         }
+        if (properties.getFormatVersion() == 3) {
+          v3Tables++;
+        }
         if (!properties.getIncompatibleFeatures().isEmpty()) {
           incompatibleTables++;
+        }
+        if (hasBlockLocalIndex(properties)) {
+          blockLocalIndexTables++;
+          blockLocalIndexBytes += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY));
+          blockLocalIndexCoveredBlocks += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
         }
         tableFormats.add(file.getName()
             + ":formatVersion=" + properties.getFormatVersion()
             + ",legacy=" + properties.isLegacy()
             + ",compatible=" + properties.getCompatibleFeatures()
-            + ",incompatible=" + properties.getIncompatibleFeatures());
+            + ",incompatible=" + properties.getIncompatibleFeatures()
+            + ",blockLocalIndex=" + hasBlockLocalIndex(properties)
+            + ",blockLocalIndexPolicy=" + valueOrEmpty(properties.get(TableProperties.BLOCK_LOCAL_INDEX_POLICY_KEY))
+            + ",blockLocalIndexInterval=" + valueOrEmpty(properties.get(TableProperties.BLOCK_LOCAL_INDEX_INTERVAL_KEY))
+            + ",blockLocalIndexBytes=" + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY))
+            + ",blockLocalIndexCoveredBlocks="
+            + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY))
+            + ",blockLocalIndexEvidence=" + valueOrEmpty(blockLocalIndexEvidence)
+            + ",blockLocalIndexFailures=" + blockLocalIndexFailures);
       }
 
       private void addReplayedWal(String file) {
@@ -2346,7 +2453,12 @@ public class LDBFactory
         appendArray(builder, "tableFormats", tableFormats, true);
         appendField(builder, "legacyTables", Long.toString(legacyTables), false, true);
         appendField(builder, "v2Tables", Long.toString(v2Tables), false, true);
+        appendField(builder, "v3Tables", Long.toString(v3Tables), false, true);
         appendField(builder, "incompatibleTables", Long.toString(incompatibleTables), false, true);
+        appendField(builder, "blockLocalIndexTables", Long.toString(blockLocalIndexTables), false, true);
+        appendField(builder, "blockLocalIndexBytes", Long.toString(blockLocalIndexBytes), false, true);
+        appendField(builder, "blockLocalIndexCoveredBlocks",
+            Long.toString(blockLocalIndexCoveredBlocks), false, true);
         appendField(builder, "discardedWalBytes", Long.toString(discardedWalBytes), false, true);
         appendField(builder, "manifestFileNumber", Long.toString(manifestFileNumber), false, true);
         appendField(builder, "currentFile", currentFile == null ? "" : currentFile, true);
@@ -2363,7 +2475,11 @@ public class LDBFactory
         return "table={tables=" + tableFormats.size()
             + ",legacy=" + legacyTables
             + ",v2=" + v2Tables
+            + ",v3=" + v3Tables
             + ",incompatible=" + incompatibleTables
+            + ",blockLocalIndexTables=" + blockLocalIndexTables
+            + ",blockLocalIndexBytes=" + blockLocalIndexBytes
+            + ",blockLocalIndexCoveredBlocks=" + blockLocalIndexCoveredBlocks
             + "},wal=log-v1"
             + ",manifest=version-edit-log-v1"
             + ",current=text-manifest-pointer-v1"
@@ -2409,6 +2525,26 @@ public class LDBFactory
 
       private static String escape(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+      }
+
+      private static boolean hasBlockLocalIndex(TableProperties properties) {
+        return "true".equals(properties.get(TableProperties.BLOCK_LOCAL_INDEX_KEY))
+            || properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE);
+      }
+
+      private static long parseLong(String value) {
+        if (value == null || value.trim().isEmpty()) {
+          return 0;
+        }
+        return Long.parseLong(value.trim());
+      }
+
+      private static String valueOrEmpty(String value) {
+        return value == null ? "" : value;
+      }
+
+      private static String valueOrZero(String value) {
+        return value == null || value.trim().isEmpty() ? "0" : value;
       }
     }
 

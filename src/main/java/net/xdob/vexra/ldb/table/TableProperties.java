@@ -22,9 +22,17 @@ public final class TableProperties {
   public static final String FORMAT_VERSION_KEY = "ldb.format.table.version";
   public static final String COMPATIBLE_FEATURES_KEY = "ldb.format.compatible_features";
   public static final String INCOMPATIBLE_FEATURES_KEY = "ldb.format.incompatible_features";
+  public static final String BLOCK_LOCAL_INDEX_FEATURE = "block.local_index.v1";
+  public static final String BLOCK_LOCAL_INDEX_META_INDEX_KEY = "block_local_index";
+  public static final String BLOCK_LOCAL_INDEX_KEY = "ldb.table.block_local_index";
+  public static final String BLOCK_LOCAL_INDEX_VERSION_KEY = "ldb.table.block_local_index.version";
+  public static final String BLOCK_LOCAL_INDEX_POLICY_KEY = "ldb.table.block_local_index.policy";
+  public static final String BLOCK_LOCAL_INDEX_INTERVAL_KEY = "ldb.table.block_local_index.interval";
+  public static final String BLOCK_LOCAL_INDEX_BYTES_KEY = "ldb.table.block_local_index.bytes";
+  public static final String BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY = "ldb.table.block_local_index.covered_blocks";
 
   private static final int LEGACY_FORMAT_VERSION = 1;
-  private static final int CURRENT_FORMAT_VERSION = 2;
+  private static final int CURRENT_FORMAT_VERSION = 3;
 
   private final int formatVersion;
   private final boolean legacy;
@@ -122,9 +130,11 @@ public final class TableProperties {
           + " uses unsupported table format version " + formatVersion
           + ", current reader supports up to " + CURRENT_FORMAT_VERSION);
     }
-    if (!incompatibleFeatures.isEmpty()) {
+    LinkedHashSet<String> unsupportedFeatures = new LinkedHashSet<>(incompatibleFeatures);
+    unsupportedFeatures.remove(BLOCK_LOCAL_INDEX_FEATURE);
+    if (!unsupportedFeatures.isEmpty()) {
       throw new IllegalArgumentException("Table " + tableName
-          + " contains unsupported incompatible features: " + incompatibleFeatures);
+          + " contains unsupported incompatible features: " + unsupportedFeatures);
     }
   }
 

@@ -21,6 +21,8 @@ import static java.util.Objects.requireNonNull;
 import static net.xdob.vexra.ldb.impl.VersionSet.TARGET_FILE_SIZE;
 
 public class TableBuilder {
+  private static final int BLOCK_LOCAL_INDEX_MIN_ANCHORS = 2;
+
   /**
    * TABLE_MAGIC_NUMBER was picked by running
    * echo http://code.google.com/p/leveldb/ | sha1sum
@@ -43,6 +45,8 @@ public class TableBuilder {
 
   private long entryCount;
   private long dataBlockCount;
+  private long blockLocalIndexBytes;
+  private long blockLocalIndexCoveredBlocks;
 
   // Either Finish() or Abandon() has been called.
   private boolean closed;
@@ -65,6 +69,7 @@ public class TableBuilder {
   private final Set<Slice> filterKeySet = new HashSet<>();
   private final List<Slice> filterKeys = new ArrayList<>();
   private final Set<CompressionType> dataCompressionTypes = new LinkedHashSet<>();
+  private final List<BlockLocalIndexDirectoryEntry> blockLocalIndexDirectoryEntries = new ArrayList<>();
 
   public TableBuilder(Options options, FileChannel fileChannel, UserComparator userComparator) {
     requireNonNull(options, "options is null");
@@ -156,9 +161,15 @@ public class TableBuilder {
 
     checkState(!pendingIndexEntry, "Internal error: Table already has a pending index entry to flush");
 
-    pendingHandle = writeBlock(dataBlockBuilder);
+    Slice raw = dataBlockBuilder.finish();
+    pendingHandle = writeBlockContents(raw);
+    CompressionType dataBlockCompressionType = lastWrittenCompressionType;
+    if (options.writeBlockLocalIndex()) {
+      writeBlockLocalIndexBlock(pendingHandle, raw);
+    }
+    dataBlockBuilder.reset();
     dataBlockCount++;
-    dataCompressionTypes.add(lastWrittenCompressionType);
+    dataCompressionTypes.add(dataBlockCompressionType);
     pendingIndexEntry = true;
   }
 
@@ -166,7 +177,13 @@ public class TableBuilder {
       throws IOException {
     // close the block
     Slice raw = blockBuilder.finish();
+    BlockHandle blockHandle = writeBlockContents(raw);
+    blockBuilder.reset();
+    return blockHandle;
+  }
 
+  private BlockHandle writeBlockContents(Slice raw)
+      throws IOException {
     // attempt to compress the block
     Slice blockContents = raw;
     CompressionType blockCompressionType = CompressionType.NONE;
@@ -206,9 +223,6 @@ public class TableBuilder {
     // write data and trailer
     position += fileChannel.write(new ByteBuffer[]{blockContents.toByteBuffer(), trailer.toByteBuffer()});
 
-    // clean up state
-    blockBuilder.reset();
-
     return blockHandle;
   }
 
@@ -239,6 +253,9 @@ public class TableBuilder {
 
   public void finish() throws IOException {
     checkState(!closed, "table is finished");
+    if (options.writeBlockLocalIndex() && options.tableFormatVersion() < 3) {
+      throw new IllegalArgumentException("writeBlockLocalIndex requires tableFormatVersion >= 3");
+    }
 
     // flush current data block
     flush();
@@ -248,6 +265,7 @@ public class TableBuilder {
 
     // 先写 filter block（如果启用）
     BlockHandle filterBlockHandle = writeFilterBlockIfNeeded();
+    BlockHandle blockLocalIndexDirectoryHandle = writeBlockLocalIndexDirectoryIfNeeded();
 
     // 写 properties block（如果显式启用 table format v2）
     BlockHandle propertiesBlockHandle = writePropertiesBlockIfNeeded(filterBlockHandle);
@@ -256,6 +274,10 @@ public class TableBuilder {
     BlockBuilder metaIndexBlockBuilder =
         new BlockBuilder(256, blockRestartInterval, new BytewiseComparator());
 
+    if (blockLocalIndexDirectoryHandle != null) {
+      Slice handleEncoding = BlockHandle.writeBlockHandle(blockLocalIndexDirectoryHandle);
+      metaIndexBlockBuilder.add(Slices.utf8Slice(TableProperties.BLOCK_LOCAL_INDEX_META_INDEX_KEY), handleEncoding);
+    }
     if (filterBlockHandle != null) {
       String key = "filter." + filterPolicy.name();
       Slice handleEncoding = BlockHandle.writeBlockHandle(filterBlockHandle);
@@ -309,13 +331,28 @@ public class TableBuilder {
     if (options.tableFormatVersion() < 2 || !options.writeTableProperties()) {
       return null;
     }
-
+    boolean hasBlockLocalIndex = hasBlockLocalIndex();
     BlockBuilder propertiesBlockBuilder =
         new BlockBuilder(512, 1, new BytewiseComparator());
     addProperty(propertiesBlockBuilder, TableProperties.COMPATIBLE_FEATURES_KEY, compatibleFeatures(filterBlockHandle));
-    addProperty(propertiesBlockBuilder, "ldb.format.created_by", "vexra-ldb/0.8.0-SNAPSHOT");
-    addProperty(propertiesBlockBuilder, TableProperties.INCOMPATIBLE_FEATURES_KEY, "");
-    addProperty(propertiesBlockBuilder, TableProperties.FORMAT_VERSION_KEY, "2");
+    addProperty(propertiesBlockBuilder, "ldb.format.created_by", "vexra-ldb/0.10.0-SNAPSHOT");
+    addProperty(propertiesBlockBuilder, TableProperties.INCOMPATIBLE_FEATURES_KEY,
+        hasBlockLocalIndex ? TableProperties.BLOCK_LOCAL_INDEX_FEATURE : "");
+    addProperty(propertiesBlockBuilder, TableProperties.FORMAT_VERSION_KEY, Integer.toString(options.tableFormatVersion()));
+    if (options.tableFormatVersion() >= 3) {
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_KEY,
+          Boolean.toString(hasBlockLocalIndex));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY,
+          Long.toString(blockLocalIndexBytes));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY,
+          Long.toString(blockLocalIndexCoveredBlocks));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_INTERVAL_KEY,
+          Integer.toString(options.blockLocalIndexInterval()));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_POLICY_KEY,
+          hasBlockLocalIndex ? "restart-anchor" : "disabled");
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_VERSION_KEY,
+          hasBlockLocalIndex ? "1" : "");
+    }
     addProperty(propertiesBlockBuilder, "ldb.table.checksum", "crc32c-block-trailer");
     addProperty(propertiesBlockBuilder, "ldb.table.compression", compressionTypes());
     addProperty(propertiesBlockBuilder, "ldb.table.data_block_count", Long.toString(dataBlockCount));
@@ -328,8 +365,60 @@ public class TableBuilder {
     return writeBlock(propertiesBlockBuilder);
   }
 
+  private boolean hasBlockLocalIndex() {
+    return options.writeBlockLocalIndex() && blockLocalIndexCoveredBlocks > 0;
+  }
+
   private void addProperty(BlockBuilder propertiesBlockBuilder, String key, String value) {
     propertiesBlockBuilder.add(Slices.utf8Slice(key), Slices.utf8Slice(value == null ? "" : value));
+  }
+
+  private BlockHandle writeBlockLocalIndexDirectoryIfNeeded() throws IOException {
+    if (!options.writeBlockLocalIndex() || blockLocalIndexDirectoryEntries.isEmpty()) {
+      return null;
+    }
+    BlockBuilder directoryBlockBuilder =
+        new BlockBuilder(256, 1, new BytewiseComparator());
+    for (BlockLocalIndexDirectoryEntry entry : blockLocalIndexDirectoryEntries) {
+      directoryBlockBuilder.add(
+          Slices.utf8Slice(blockHandleDirectoryKey(entry.dataBlockHandle)),
+          BlockHandle.writeBlockHandle(entry.localIndexBlockHandle));
+    }
+    return writeBlock(directoryBlockBuilder);
+  }
+
+  private void writeBlockLocalIndexBlock(BlockHandle dataBlockHandle, Slice rawDataBlock) throws IOException {
+    Block dataBlock = new Block(rawDataBlock, userComparator);
+    int restartCount = dataBlock.restartCount();
+    if (restartCount == 0) {
+      return;
+    }
+
+    int interval = options.blockLocalIndexInterval();
+    int anchorCount = ((restartCount - 1) / interval) + 1;
+    if (anchorCount < BLOCK_LOCAL_INDEX_MIN_ANCHORS) {
+      return;
+    }
+
+    BlockBuilder localIndexBlockBuilder =
+        new BlockBuilder(Math.max(64, anchorCount * 24), 1, userComparator);
+    for (int restartIndex = 0; restartIndex < restartCount; restartIndex += interval) {
+      localIndexBlockBuilder.add(
+          dataBlock.restartKey(restartIndex),
+          Slices.utf8Slice(restartIndex + ":" + dataBlock.restartOffset(restartIndex)));
+    }
+
+    BlockHandle localIndexBlockHandle = writeBlock(localIndexBlockBuilder);
+    blockLocalIndexDirectoryEntries.add(
+        new BlockLocalIndexDirectoryEntry(dataBlockHandle, localIndexBlockHandle));
+    blockLocalIndexBytes += localIndexBlockHandle.getFullBlockSize();
+    blockLocalIndexCoveredBlocks++;
+  }
+
+  static String blockHandleDirectoryKey(BlockHandle blockHandle) {
+    return String.format(java.util.Locale.US, "%020d:%010d",
+        blockHandle.getOffset(),
+        blockHandle.getDataSize());
   }
 
   private String compatibleFeatures(BlockHandle filterBlockHandle) {
@@ -366,6 +455,16 @@ public class TableBuilder {
       builder.append(value);
     }
     return builder.toString();
+  }
+
+  private static final class BlockLocalIndexDirectoryEntry {
+    private final BlockHandle dataBlockHandle;
+    private final BlockHandle localIndexBlockHandle;
+
+    private BlockLocalIndexDirectoryEntry(BlockHandle dataBlockHandle, BlockHandle localIndexBlockHandle) {
+      this.dataBlockHandle = dataBlockHandle;
+      this.localIndexBlockHandle = localIndexBlockHandle;
+    }
   }
 
   private BlockHandle writeRawBlock(Slice blockContents) throws IOException {

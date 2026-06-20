@@ -762,6 +762,10 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
   File enReference = file("$rootDir/docs/storage-format.en.md")
   File zhDesign = file("$rootDir/docs/storage-format-0.8-design.md")
   File enDesign = file("$rootDir/docs/storage-format-0.8-design.en.md")
+  File zhBlockLocalIndexDesign = file("$rootDir/docs/storage-format-0.11-block-index-design.md")
+  File enBlockLocalIndexDesign = file("$rootDir/docs/storage-format-0.11-block-index-design.en.md")
+  File zhV3EvolutionDesign = file("$rootDir/docs/storage-format-v3-evolution-design.md")
+  File enV3EvolutionDesign = file("$rootDir/docs/storage-format-v3-evolution-design.en.md")
   File zhAcceptance = file("$rootDir/docs/storage-format-0.8-acceptance.md")
   File enAcceptance = file("$rootDir/docs/storage-format-0.8-acceptance.en.md")
   File zhReadme = file("$rootDir/README.md")
@@ -772,6 +776,14 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
   File enOperations = file("$rootDir/docs/operations.en.md")
   File optionsApi = file("$rootDir/src/main/java/net/xdob/vexra/ldb/Options.java")
   File optionsViewApi = file("$rootDir/src/main/java/net/xdob/vexra/ldb/OptionsView.java")
+  File tableApi = file("$rootDir/src/main/java/net/xdob/vexra/ldb/table/Table.java")
+  File tableCacheApi = file("$rootDir/src/main/java/net/xdob/vexra/ldb/impl/TableCache.java")
+  File ldbFactoryApi = file("$rootDir/src/main/java/net/xdob/vexra/ldb/impl/LDBFactory.java")
+  File tablePropertiesTest = file("$rootDir/src/test/java/net/xdob/vexra/ldb/table/TablePropertiesTest.java")
+  File verifyCheckTest = file("$rootDir/src/test/java/net/xdob/vexra/ldb/LdbVerifyCheckTest.java")
+  File repairTest = file("$rootDir/src/test/java/net/xdob/vexra/ldb/LdbRepairTest.java")
+  File dbBenchMain = file("$rootDir/ldb-longrun/src/main/java/net/xdob/vexra/ldb/longrun/bench/LdbDbBenchMain.java")
+  File dbBenchTest = file("$rootDir/ldb-longrun/src/test/java/net/xdob/vexra/ldb/longrun/bench/LdbDbBenchMainTest.java")
   boolean docsPresent = zhReference.isFile() && enReference.isFile() && zhDesign.isFile() && enDesign.isFile()
       && zhAcceptance.isFile() && enAcceptance.isFile()
       && zhReadme.isFile() && enReadme.isFile()
@@ -894,6 +906,47 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       && fileContains(optionsViewApi, 'default boolean allowLegacyTableFormat()')
       && fileContains(optionsViewApi, 'default boolean failOnUnknownTableFeature()')
       && fileContains(optionsViewApi, 'diagnostic-only')
+  boolean blockLocalIndexFormatCoverage = zhBlockLocalIndexDesign.isFile()
+      && enBlockLocalIndexDesign.isFile()
+      && zhV3EvolutionDesign.isFile()
+      && enV3EvolutionDesign.isFile()
+      && tableApi.isFile()
+      && ldbFactoryApi.isFile()
+      && tablePropertiesTest.isFile()
+      && verifyCheckTest.isFile()
+      && repairTest.isFile()
+      && fileContains(zhBlockLocalIndexDesign, 'block.local_index.v1')
+      && fileContains(enBlockLocalIndexDesign, 'block.local_index.v1')
+      && fileContains(zhV3EvolutionDesign, 'blockLocalIndexFormatCoverage')
+      && fileContains(enV3EvolutionDesign, 'blockLocalIndexFormatCoverage')
+      && fileContains(zhV3EvolutionDesign, 'BLOCK_LOCAL_INDEX_COVERAGE_MISMATCH')
+      && fileContains(enV3EvolutionDesign, 'BLOCK_LOCAL_INDEX_COVERAGE_MISMATCH')
+      && fileContains(tableApi, 'getBlockLocalIndexFormatEvidence')
+      && fileContains(tableApi, 'getBlockLocalIndexFormatFailures')
+      && fileContains(ldbFactoryApi, 'blockLocalIndexEvidence')
+      && fileContains(ldbFactoryApi, 'blockLocalIndexFailures')
+      && fileContains(tablePropertiesTest, 'BLOCK_LOCAL_INDEX_FEATURE')
+      && fileContains(verifyCheckTest, 'shouldIncludeV3BlockLocalIndexEvidenceInCheckReport')
+      && fileContains(repairTest, 'shouldReportV3BlockLocalIndexWhenRepairingFromReadableSst')
+  boolean blockLocalIndexBenchmarkEvidence = zhV3EvolutionDesign.isFile()
+      && enV3EvolutionDesign.isFile()
+      && dbBenchMain.isFile()
+      && dbBenchTest.isFile()
+      && tableCacheApi.isFile()
+      && fileContains(zhV3EvolutionDesign, 'blockLocalIndexBenchmarkEvidence')
+      && fileContains(enV3EvolutionDesign, 'blockLocalIndexBenchmarkEvidence')
+      && fileContains(zhV3EvolutionDesign, 'dense same-block MultiGet')
+      && fileContains(enV3EvolutionDesign, 'dense same-block MultiGet')
+      && fileContains(zhV3EvolutionDesign, 'scan 回归')
+      && fileContains(enV3EvolutionDesign, 'scan regression')
+      && fileContains(dbBenchMain, 'multiget_sameblock')
+      && fileContains(dbBenchMain, 'scan')
+      && fileContains(dbBenchMain, 'tableFormatVersion')
+      && fileContains(dbBenchMain, 'writeBlockLocalIndex')
+      && fileContains(tableCacheApi, 'blockLocalIndexSeekCount')
+      && fileContains(dbBenchTest, 'multiget_sameblock')
+      && fileContains(dbBenchTest, 'scan')
+      && fileContains(dbBenchTest, 'blockLocalIndexDirectoryLoadedTables')
   return [
       [
           name: 'storageFormatDocs',
@@ -948,6 +1001,18 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
           result: unitGate?.result ?: 'UNKNOWN',
           evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
           note: 'LdbObservabilityTest covers BloomFilterPolicy-backed SST filter block writes, mayContain false results, and filterSkips evidence for random missing-key reads'
+      ],
+      [
+          name: 'blockLocalIndexFormatCoverage',
+          result: blockLocalIndexFormatCoverage && unitGate?.result == 'PASSED' ? 'PASSED' : 'FAILED',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'V3 block-local index requires design docs, properties feature coverage, check/repair report evidence, and offline self-check classes before release'
+      ],
+      [
+          name: 'blockLocalIndexBenchmarkEvidence',
+          result: blockLocalIndexBenchmarkEvidence && unitGate?.result == 'PASSED' ? 'PASSED' : 'FAILED',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'Block-local index default-enable review requires db_bench entries for cold_readrandom, sparse MultiGet, dense same-block MultiGet, scan regression, and v3 opt-in parameters'
       ],
       [
           name: 'pluginOptionsViewCoverage',

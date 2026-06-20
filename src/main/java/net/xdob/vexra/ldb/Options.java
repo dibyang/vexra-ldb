@@ -27,7 +27,9 @@ public class Options implements OptionsView {
   private FilterPolicy filterPolicy;
   private boolean readOnly;
   private boolean cacheBlocks = true;
+  private boolean blockCacheWarmOnOpen;
   private int blockCacheSize = 4096;
+  private int blockCacheAdmissionMinReads = 1;
   private final List<LdbPlugin> plugins = new ArrayList<>();
   private long compactionSuspendTimeoutMillis = TimeUnit.SECONDS.toMillis(30);
   private long closeTimeoutMillis = TimeUnit.SECONDS.toMillis(30);
@@ -54,6 +56,8 @@ public class Options implements OptionsView {
   private boolean writeTableProperties = true;
   private boolean allowLegacyTableFormat = true;
   private boolean failOnUnknownTableFeature = true;
+  private boolean writeBlockLocalIndex;
+  private int blockLocalIndexInterval = 4;
 
   public boolean cacheBlocks() {
     return cacheBlocks;
@@ -61,6 +65,18 @@ public class Options implements OptionsView {
 
   public Options cacheBlocks(boolean cacheBlocks) {
     this.cacheBlocks = cacheBlocks;
+    return this;
+  }
+
+  public boolean blockCacheWarmOnOpen() {
+    return blockCacheWarmOnOpen;
+  }
+
+  /**
+   * 设置打开 SST 后是否预热 data block cache。
+   */
+  public Options blockCacheWarmOnOpen(boolean blockCacheWarmOnOpen) {
+    this.blockCacheWarmOnOpen = blockCacheWarmOnOpen;
     return this;
   }
 
@@ -73,6 +89,24 @@ public class Options implements OptionsView {
       throw new IllegalArgumentException("blockCacheSize must be > 0");
     }
     this.blockCacheSize = blockCacheSize;
+    return this;
+  }
+
+  public int blockCacheAdmissionMinReads() {
+    return blockCacheAdmissionMinReads;
+  }
+
+  /**
+   * 设置 data block 进入 block cache 前需要被 direct read 触达的最小次数。
+   *
+   * <p>默认值为 1，保持 miss 后立即缓存的历史行为。设置为 2 可以让冷随机读首次触达
+   * 只记录 admission 候选，避免一次性随机读污染 block cache；重复触达的热点块仍会进入缓存。</p>
+   */
+  public Options blockCacheAdmissionMinReads(int blockCacheAdmissionMinReads) {
+    if (blockCacheAdmissionMinReads <= 0) {
+      throw new IllegalArgumentException("blockCacheAdmissionMinReads must be > 0");
+    }
+    this.blockCacheAdmissionMinReads = blockCacheAdmissionMinReads;
     return this;
   }
 
@@ -131,8 +165,8 @@ public class Options implements OptionsView {
    * @throws IllegalArgumentException 当版本不在当前支持范围内时抛出。
    */
   public Options tableFormatVersion(int tableFormatVersion) {
-    if (tableFormatVersion < 1 || tableFormatVersion > 2) {
-      throw new IllegalArgumentException("tableFormatVersion must be 1 or 2");
+    if (tableFormatVersion < 1 || tableFormatVersion > 3) {
+      throw new IllegalArgumentException("tableFormatVersion must be 1, 2, or 3");
     }
     this.tableFormatVersion = tableFormatVersion;
     return this;
@@ -192,6 +226,39 @@ public class Options implements OptionsView {
    */
   public Options failOnUnknownTableFeature(boolean failOnUnknownTableFeature) {
     this.failOnUnknownTableFeature = failOnUnknownTableFeature;
+    return this;
+  }
+
+  public boolean writeBlockLocalIndex() {
+    return writeBlockLocalIndex;
+  }
+
+  /**
+   * 设置 v3 SST 是否写入 block-local index。
+   *
+   * <p>当前版本先暴露 API 与 v3 properties disabled 骨架；真正的 index block/directory writer
+   * 尚未接入，显式开启后写 SST 会 fail-fast，避免生成缺少真实索引却声明新格式 feature 的文件。
+   */
+  public Options writeBlockLocalIndex(boolean writeBlockLocalIndex) {
+    this.writeBlockLocalIndex = writeBlockLocalIndex;
+    return this;
+  }
+
+  public int blockLocalIndexInterval() {
+    return blockLocalIndexInterval;
+  }
+
+  /**
+   * 设置 block-local index 锚点间隔。
+   *
+   * <p>当前版本仅记录配置并写入 v3 properties 诊断字段；真正 writer 接入后，该值会控制每隔多少个
+   * restart 区间写入一个轻量锚点。
+   */
+  public Options blockLocalIndexInterval(int blockLocalIndexInterval) {
+    if (blockLocalIndexInterval <= 0) {
+      throw new IllegalArgumentException("blockLocalIndexInterval must be > 0");
+    }
+    this.blockLocalIndexInterval = blockLocalIndexInterval;
     return this;
   }
 

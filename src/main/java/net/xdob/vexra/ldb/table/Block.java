@@ -8,6 +8,9 @@ import net.xdob.vexra.ldb.util.Slices;
 import net.xdob.vexra.ldb.util.VariableLengthQuantity;
 
 import java.util.Comparator;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map.Entry;
 
 import static com.google.common.base.Preconditions.checkArgument;
@@ -57,6 +60,7 @@ public class Block
 
   private final Slice data;
   private final Slice restartPositions;
+  private final Slice[] restartKeys;
 
   public Block(Slice block, Comparator<Slice> comparator) {
     requireNonNull(block, "block is null");
@@ -82,9 +86,11 @@ public class Block
 
       // data starts at 0 and extends to the restart index
       data = block.slice(0, restartOffset);
+      restartKeys = readRestartKeys(data, restartPositions, restartCount);
     } else {
       data = Slices.EMPTY_SLICE;
       restartPositions = Slices.EMPTY_SLICE;
+      restartKeys = new Slice[0];
     }
   }
 
@@ -117,20 +123,9 @@ public class Block
     }
 
     SliceInput input = data.input();
-    int left = 0;
-    int right = restartCount - 1;
+    int restartPosition = restartIndexBefore(targetKey, restartCount);
+    input.setPosition(restartOffset(restartPosition, restartCount));
 
-    while (left < right) {
-      int mid = (left + right + 1) / 2;
-      BlockEntry restartEntry = readRestartEntry(input, mid, restartCount);
-      if (comparator.compare(restartEntry.getKey(), targetKey) < 0) {
-        left = mid;
-      } else {
-        right = mid - 1;
-      }
-    }
-
-    input.setPosition(restartOffset(left, restartCount));
     BlockEntry previousEntry = null;
     while (input.isReadable()) {
       BlockEntry entry = readEntry(input, previousEntry);
@@ -142,14 +137,128 @@ public class Block
     return null;
   }
 
-  private BlockEntry readRestartEntry(SliceInput input, int restartPosition, int restartCount) {
+  Entry<Slice, Slice> seekFromOffset(Slice targetKey, int offset) {
+    checkPositionIndex(offset, data.length(), "offset");
+    SliceInput input = data.input();
+    input.setPosition(offset);
+
+    BlockEntry previousEntry = null;
+    while (input.isReadable()) {
+      BlockEntry entry = readEntry(input, previousEntry);
+      if (comparator.compare(entry.getKey(), targetKey) >= 0) {
+        return entry;
+      }
+      previousEntry = entry;
+    }
+    return null;
+  }
+
+  Entry<Slice, Slice> floor(Slice targetKey) {
+    int restartCount = restartPositions.length() / SIZE_OF_INT;
+    if (restartCount == 0) {
+      return null;
+    }
+
+    SliceInput input = data.input();
+    int restartPosition = restartIndexBefore(targetKey, restartCount);
     input.setPosition(restartOffset(restartPosition, restartCount));
-    return readEntry(input, null);
+
+    BlockEntry previousEntry = null;
+    while (input.isReadable()) {
+      BlockEntry entry = readEntry(input, previousEntry);
+      if (comparator.compare(entry.getKey(), targetKey) > 0) {
+        return previousEntry;
+      }
+      previousEntry = entry;
+    }
+    return previousEntry;
+  }
+
+  /**
+   * 对同一个 data block 内的多个目标 key 执行批量 seek。
+   *
+   * <p>调用方必须按 block comparator 对目标 key 升序排序。方法会从第一个目标 key 所在的 restart 区间开始
+   * 顺序解码 entry，并把每个目标 key 映射到第一个大于等于它的候选 entry。这样 MultiGet 命中同一 data block 时，
+   * 可以避免为每个 key 重复执行 restart 二分和区间内线性扫描。</p>
+   *
+   * @param sortedTargetKeys 已按 internal key 升序排列的目标 key
+   * @return 与输入顺序一致的候选 entry 列表；没有候选时对应位置为 null
+   */
+  public List<Entry<Slice, Slice>> seekAll(List<Slice> sortedTargetKeys) {
+    List<Entry<Slice, Slice>> results = new ArrayList<Entry<Slice, Slice>>(
+        Collections.nCopies(sortedTargetKeys.size(), (Entry<Slice, Slice>) null));
+    if (sortedTargetKeys.isEmpty()) {
+      return results;
+    }
+
+    int restartCount = restartPositions.length() / SIZE_OF_INT;
+    if (restartCount == 0) {
+      return results;
+    }
+
+    SliceInput input = data.input();
+    int restartPosition = restartIndexBefore(sortedTargetKeys.get(0), restartCount);
+    input.setPosition(restartOffset(restartPosition, restartCount));
+
+    int targetIndex = 0;
+    BlockEntry previousEntry = null;
+    while (input.isReadable() && targetIndex < sortedTargetKeys.size()) {
+      BlockEntry entry = readEntry(input, previousEntry);
+      if (comparator.compare(entry.getKey(), sortedTargetKeys.get(targetIndex)) < 0) {
+        previousEntry = entry;
+        continue;
+      }
+
+      while (targetIndex < sortedTargetKeys.size()
+          && comparator.compare(entry.getKey(), sortedTargetKeys.get(targetIndex)) >= 0) {
+        results.set(targetIndex, entry);
+        targetIndex++;
+      }
+      previousEntry = entry;
+    }
+    return results;
+  }
+
+  private int restartIndexBefore(Slice targetKey, int restartCount) {
+    int left = 0;
+    int right = restartCount - 1;
+    while (left < right) {
+      int mid = (left + right + 1) / 2;
+      if (comparator.compare(restartKeys[mid], targetKey) < 0) {
+        left = mid;
+      } else {
+        right = mid - 1;
+      }
+    }
+    return left;
   }
 
   private int restartOffset(int restartPosition, int restartCount) {
     checkPositionIndex(restartPosition, restartCount, "restartPosition");
     return restartPositions.getInt(restartPosition * SIZE_OF_INT);
+  }
+
+  int restartCount() {
+    return restartPositions.length() / SIZE_OF_INT;
+  }
+
+  Slice restartKey(int restartPosition) {
+    checkPositionIndex(restartPosition, restartCount(), "restartPosition");
+    return restartKeys[restartPosition];
+  }
+
+  int restartOffset(int restartPosition) {
+    return restartOffset(restartPosition, restartCount());
+  }
+
+  private static Slice[] readRestartKeys(Slice data, Slice restartPositions, int restartCount) {
+    Slice[] keys = new Slice[restartCount];
+    SliceInput input = data.input();
+    for (int i = 0; i < restartCount; i++) {
+      input.setPosition(restartPositions.getInt(i * SIZE_OF_INT));
+      keys[i] = readEntry(input, null).getKey();
+    }
+    return keys;
   }
 
   private static BlockEntry readEntry(SliceInput input, BlockEntry previousEntry) {

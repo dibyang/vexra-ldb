@@ -2,6 +2,7 @@ package net.xdob.vexra.ldb.longrun.bench;
 
 import net.xdob.vexra.ldb.LDB;
 import net.xdob.vexra.ldb.Options;
+import net.xdob.vexra.ldb.SnapshotCursor;
 import net.xdob.vexra.ldb.WriteOptions;
 import net.xdob.vexra.ldb.impl.BloomFilterPolicy;
 import net.xdob.vexra.ldb.impl.LDBFactory;
@@ -91,6 +92,10 @@ public final class LdbDbBenchMain {
         results.add(coldReadRandom(config, dbDir));
       } else if ("multiget_random".equals(benchmark)) {
         results.add(multiGetRandom(config, dbDir));
+      } else if ("multiget_sameblock".equals(benchmark)) {
+        results.add(multiGetSameBlock(config, dbDir));
+      } else if ("scan".equals(benchmark)) {
+        results.add(scan(config, dbDir));
       } else if ("overwrite".equals(benchmark)) {
         results.add(overwrite(config, dbDir));
       } else if ("readwhilewriting".equals(benchmark)) {
@@ -171,6 +176,55 @@ public final class LdbDbBenchMain {
         operations += batchSize;
       }
       return Result.of("multiget_random", operations, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result multiGetSameBlock(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    long operations = 0;
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+      db.compactRange(key(0), key(config.num));
+      long start = System.nanoTime();
+      while (operations < config.reads) {
+        int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
+        int maxBase = Math.max(1, config.num - batchSize);
+        int base = random.nextInt(maxBase);
+        List<byte[]> keys = new ArrayList<>(batchSize);
+        for (int i = 0; i < batchSize; i++) {
+          keys.add(key(base + i));
+        }
+        List<byte[]> values = db.get(keys);
+        for (byte[] value : values) {
+          if (value != null) {
+            hits++;
+          }
+        }
+        operations += batchSize;
+      }
+      return Result.of("multiget_sameblock", operations, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result scan(Config config, File dbDir) throws Exception {
+    long operations = 0;
+    long hits = 0;
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+      db.compactRange(key(0), key(config.num));
+      long start = System.nanoTime();
+      try (SnapshotCursor cursor = db.newSnapshotCursor()) {
+        cursor.seekToFirst();
+        while (cursor.isValid() && operations < config.reads) {
+          if (cursor.value() != null) {
+            hits++;
+          }
+          operations++;
+          cursor.next();
+        }
+      }
+      return Result.of("scan", operations, hits, start, System.nanoTime(), db);
     }
   }
 
@@ -255,17 +309,24 @@ public final class LdbDbBenchMain {
     Options options = new Options()
         .createIfMissing(true)
         .writeBufferSize(config.writeBufferSizeMb << 20)
-        .groupCommitEnabled(config.groupCommit);
+        .groupCommitEnabled(config.groupCommit)
+        .tableFormatVersion(config.tableFormatVersion)
+        .writeTableProperties(config.writeTableProperties)
+        .writeBlockLocalIndex(config.writeBlockLocalIndex)
+        .blockLocalIndexInterval(config.blockLocalIndexInterval);
     if ("read_optimized".equals(config.readProfile)) {
       options
           .filterPolicy(new BloomFilterPolicy(10))
           .cacheBlocks(true)
+          .blockCacheWarmOnOpen(config.blockCacheWarmOnOpen)
           .blockCacheSize(config.blockCacheSize)
+          .blockCacheAdmissionMinReads(config.blockCacheAdmissionMinReads)
           .verifyChecksums(false);
     } else if ("default".equals(config.readProfile)) {
       options
           .cacheBlocks(config.cacheBlocks)
           .blockCacheSize(config.blockCacheSize)
+          .blockCacheAdmissionMinReads(config.blockCacheAdmissionMinReads)
           .verifyChecksums(config.verifyChecksums);
     } else {
       throw new IllegalArgumentException("Unsupported read_profile: " + config.readProfile);
@@ -318,7 +379,13 @@ public final class LdbDbBenchMain {
       field(writer, "writeBufferSizeMb", config.writeBufferSizeMb, true);
       field(writer, "readProfile", config.readProfile, true);
       field(writer, "cacheBlocks", "read_optimized".equals(config.readProfile) || config.cacheBlocks, true);
+      field(writer, "blockCacheWarmOnOpen", config.blockCacheWarmOnOpen, true);
       field(writer, "blockCacheSize", config.blockCacheSize, true);
+      field(writer, "blockCacheAdmissionMinReads", config.blockCacheAdmissionMinReads, true);
+      field(writer, "tableFormatVersion", config.tableFormatVersion, true);
+      field(writer, "writeTableProperties", config.writeTableProperties, true);
+      field(writer, "writeBlockLocalIndex", config.writeBlockLocalIndex, true);
+      field(writer, "blockLocalIndexInterval", config.blockLocalIndexInterval, true);
       field(writer, "verifyChecksums", "read_optimized".equals(config.readProfile) ? false : config.verifyChecksums, true);
       field(writer, "batchSize", config.batchSize, true);
       writer.write("  \"results\": [\n");
@@ -346,13 +413,15 @@ public final class LdbDbBenchMain {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "ldb-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,batchSize,sstReadStats,blockCacheStats\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,batchSize,sstReadStats,blockCacheStats\n");
       for (Result result : results) {
         writer.write("ldb," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
             + config.num + "," + config.reads + "," + config.valueSize + ","
             + config.sync + "," + config.groupCommit + "," + config.writeBufferSizeMb + ","
-            + config.readProfile + "," + config.batchSize + ","
+            + config.readProfile + "," + config.blockCacheWarmOnOpen + "," + config.blockCacheAdmissionMinReads + ","
+            + config.tableFormatVersion + "," + config.writeBlockLocalIndex + ","
+            + config.blockLocalIndexInterval + "," + config.batchSize + ","
             + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + "\n");
       }
     }
@@ -413,7 +482,13 @@ public final class LdbDbBenchMain {
     private final int writeBufferSizeMb;
     private final String readProfile;
     private final boolean cacheBlocks;
+    private final boolean blockCacheWarmOnOpen;
     private final int blockCacheSize;
+    private final int blockCacheAdmissionMinReads;
+    private final int tableFormatVersion;
+    private final boolean writeTableProperties;
+    private final boolean writeBlockLocalIndex;
+    private final int blockLocalIndexInterval;
     private final boolean verifyChecksums;
     private final int batchSize;
     private final long seed;
@@ -430,13 +505,23 @@ public final class LdbDbBenchMain {
       this.writeBufferSizeMb = integer(values, "write_buffer_size_mb", 512);
       this.readProfile = values.getOrDefault("read_profile", "default");
       this.cacheBlocks = bool(values, "cache_blocks", true);
+      this.blockCacheWarmOnOpen = bool(values, "block_cache_warm_on_open", false);
       this.blockCacheSize = integer(values, "block_cache_size", 4096);
+      this.blockCacheAdmissionMinReads = integer(values, "block_cache_admission_min_reads", 1);
+      this.tableFormatVersion = integer(values, "table_format_version", 1);
+      this.writeTableProperties = bool(values, "write_table_properties", true);
+      this.writeBlockLocalIndex = bool(values, "write_block_local_index", false);
+      this.blockLocalIndexInterval = integer(values, "block_local_index_interval", 4);
       this.verifyChecksums = bool(values, "verify_checksums", true);
       this.batchSize = integer(values, "batch_size", 64);
       this.seed = longValue(values, "seed", 20260619L);
       if (num <= 0 || reads <= 0 || valueSize <= 0 || writeBufferSizeMb <= 0
-          || blockCacheSize <= 0 || batchSize <= 0) {
-        throw new IllegalArgumentException("num, reads, value_size, write_buffer_size_mb, block_cache_size and batch_size must be > 0");
+          || blockCacheSize <= 0 || blockCacheAdmissionMinReads <= 0
+          || blockLocalIndexInterval <= 0 || batchSize <= 0) {
+        throw new IllegalArgumentException("num, reads, value_size, write_buffer_size_mb, block_cache_size, block_cache_admission_min_reads, block_local_index_interval and batch_size must be > 0");
+      }
+      if (writeBlockLocalIndex && tableFormatVersion < 3) {
+        throw new IllegalArgumentException("write_block_local_index requires table_format_version >= 3");
       }
     }
 

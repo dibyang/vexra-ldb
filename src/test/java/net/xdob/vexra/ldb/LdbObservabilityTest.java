@@ -239,10 +239,14 @@ class LdbObservabilityTest {
       assertPropertyContains(db, "ldb.sstReadStats", "directGetRequests=");
       assertPropertyContains(db, "ldb.sstReadStats", "directGetHits=");
       assertPropertyContains(db, "ldb.sstReadStats", "directGetMisses=");
+      assertPropertyContains(db, "ldb.sstReadStats", "directGetBatchRequests=");
+      assertPropertyContains(db, "ldb.sstReadStats", "directGetBatchKeys=");
       assertPropertyContains(db, "ldb.sstReadStats", "mayContainRequests=");
       String stats = db.getProperty("ldb.sstReadStats");
       assertStatAtLeast(stats, "directGetRequests", 1);
       assertStatAtLeast(stats, "directGetHits", 1);
+      assertStatAtLeast(stats, "directGetBatchRequests", 1);
+      assertStatAtLeast(stats, "directGetBatchKeys", 1);
       assertStatAtLeast(stats, "filterSkips", 1);
       assertStatAtLeast(stats, "mayContainRequests", 1);
       assertStatAtLeast(stats, "mayContainFalse", 1);

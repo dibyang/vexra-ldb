@@ -102,6 +102,43 @@ class LdbVerifyCheckTest {
   }
 
   @Test
+  void shouldIncludeV3BlockLocalIndexEvidenceInCheckReport() throws Exception {
+    File dbDir = new File(tempDir, "v3-block-local-index-check-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options()
+            .createIfMissing(true)
+            .writeBufferSize(256)
+            .forceSstOnFlush(true)
+            .tableFormatVersion(3)
+            .writeTableProperties(true)
+            .writeBlockLocalIndex(true)
+            .blockLocalIndexInterval(1))) {
+      for (int i = 0; i < 40; i++) {
+        db.put(bytes(String.format("v3%03d", i)), bytes("value-" + i));
+      }
+      db.compactRange(bytes("v3000"), bytes("v3999"));
+    }
+
+    LDBFactory.CheckReport report = LDBFactory.factory.check(dbDir, new Options().createIfMissing(false));
+    assertTrue(report.isOk(), report.toString());
+    assertTrue(report.getTableFormats().stream().anyMatch(value -> value.contains("formatVersion=3")
+            && value.contains("blockLocalIndex=true")
+            && value.contains("blockLocalIndexPolicy=restart-anchor")
+            && value.contains("coverageMatches=true")
+            && value.contains("handlesInRange=true")
+            && value.contains("blocksReadable=true")),
+        report.toString());
+
+    String json = report.toJson();
+    assertTrue(json.contains("\"v3Tables\""), json);
+    assertTrue(json.contains("\"blockLocalIndexTables\""), json);
+    assertTrue(json.matches("(?s).*\"blockLocalIndexTables\": [1-9][0-9]*.*"), json);
+    assertTrue(json.matches("(?s).*\"blockLocalIndexCoveredBlocks\": [1-9][0-9]*.*"), json);
+    assertTrue(json.contains("block.local_index.v1"), json);
+  }
+
+  @Test
   void shouldReportCorruptSst() throws Exception {
     File dbDir = new File(tempDir, "corrupt-sst-check-db");
 

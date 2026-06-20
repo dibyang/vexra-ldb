@@ -64,10 +64,14 @@ public final class BlockCache {
 
   private final int maxEntries;
   private final LinkedHashMap<Key, Block> lru;
+  private final LinkedHashMap<Key, Integer> admission;
   private final AtomicLong hitCount = new AtomicLong();
   private final AtomicLong missCount = new AtomicLong();
   private final AtomicLong putCount = new AtomicLong();
   private final AtomicLong evictionCount = new AtomicLong();
+  private final AtomicLong admissionRequestCount = new AtomicLong();
+  private final AtomicLong admissionSkipCount = new AtomicLong();
+  private final AtomicLong admissionAdmitCount = new AtomicLong();
 
   public BlockCache(int maxEntries) {
     if (maxEntries <= 0) {
@@ -82,6 +86,12 @@ public final class BlockCache {
           evictionCount.incrementAndGet();
         }
         return evict;
+      }
+    };
+    this.admission = new LinkedHashMap<Key, Integer>(16, 0.75f, true) {
+      @Override
+      protected boolean removeEldestEntry(Map.Entry<Key, Integer> eldest) {
+        return size() > BlockCache.this.maxEntries * 2;
       }
     };
   }
@@ -101,19 +111,44 @@ public final class BlockCache {
   public void put(Key key, Block block) {
     synchronized (lru) {
       lru.put(key, block);
+      admission.remove(key);
       putCount.incrementAndGet();
+    }
+  }
+
+  public boolean putIfAdmitted(Key key, Block block, int minReads) {
+    if (minReads <= 1) {
+      put(key, block);
+      return true;
+    }
+    synchronized (lru) {
+      admissionRequestCount.incrementAndGet();
+      Integer previous = admission.get(key);
+      int reads = previous == null ? 1 : previous + 1;
+      if (reads < minReads) {
+        admission.put(key, reads);
+        admissionSkipCount.incrementAndGet();
+        return false;
+      }
+      admission.remove(key);
+      lru.put(key, block);
+      putCount.incrementAndGet();
+      admissionAdmitCount.incrementAndGet();
+      return true;
     }
   }
 
   public void invalidateTable(String tableName) {
     synchronized (lru) {
       lru.entrySet().removeIf(e -> e.getKey().getTableName().equals(tableName));
+      admission.entrySet().removeIf(e -> e.getKey().getTableName().equals(tableName));
     }
   }
 
   public void invalidateAll() {
     synchronized (lru) {
       lru.clear();
+      admission.clear();
     }
   }
 
@@ -143,6 +178,18 @@ public final class BlockCache {
     return evictionCount.get();
   }
 
+  public long admissionRequestCount() {
+    return admissionRequestCount.get();
+  }
+
+  public long admissionSkipCount() {
+    return admissionSkipCount.get();
+  }
+
+  public long admissionAdmitCount() {
+    return admissionAdmitCount.get();
+  }
+
   public String stats() {
     return "enabled=true"
         + ",maxEntries=" + maxEntries()
@@ -150,6 +197,9 @@ public final class BlockCache {
         + ",hits=" + hitCount()
         + ",misses=" + missCount()
         + ",puts=" + putCount()
-        + ",evictions=" + evictionCount();
+        + ",evictions=" + evictionCount()
+        + ",admissionRequests=" + admissionRequestCount()
+        + ",admissionSkips=" + admissionSkipCount()
+        + ",admissionAdmits=" + admissionAdmitCount();
   }
 }

@@ -830,10 +830,13 @@ public class LDbImpl implements LDB {
     private final FilterPolicy filterPolicy;
     private final boolean readOnly;
     private final boolean cacheBlocks;
+    private final boolean blockCacheWarmOnOpen;
     private final int tableFormatVersion;
     private final boolean writeTableProperties;
     private final boolean allowLegacyTableFormat;
     private final boolean failOnUnknownTableFeature;
+    private final boolean writeBlockLocalIndex;
+    private final int blockLocalIndexInterval;
     private final int blockCacheSize;
     private final long compactionSuspendTimeoutMillis;
     private final long closeTimeoutMillis;
@@ -867,10 +870,13 @@ public class LDbImpl implements LDB {
       this.filterPolicy = options.filterPolicy();
       this.readOnly = options.readOnly();
       this.cacheBlocks = options.cacheBlocks();
+      this.blockCacheWarmOnOpen = options.blockCacheWarmOnOpen();
       this.tableFormatVersion = options.tableFormatVersion();
       this.writeTableProperties = options.writeTableProperties();
       this.allowLegacyTableFormat = options.allowLegacyTableFormat();
       this.failOnUnknownTableFeature = options.failOnUnknownTableFeature();
+      this.writeBlockLocalIndex = options.writeBlockLocalIndex();
+      this.blockLocalIndexInterval = options.blockLocalIndexInterval();
       this.blockCacheSize = options.blockCacheSize();
       this.compactionSuspendTimeoutMillis = options.compactionSuspendTimeoutMillis();
       this.closeTimeoutMillis = options.closeTimeoutMillis();
@@ -973,6 +979,11 @@ public class LDbImpl implements LDB {
     }
 
     @Override
+    public boolean blockCacheWarmOnOpen() {
+      return blockCacheWarmOnOpen;
+    }
+
+    @Override
     public int tableFormatVersion() {
       return tableFormatVersion;
     }
@@ -990,6 +1001,16 @@ public class LDbImpl implements LDB {
     @Override
     public boolean failOnUnknownTableFeature() {
       return failOnUnknownTableFeature;
+    }
+
+    @Override
+    public boolean writeBlockLocalIndex() {
+      return writeBlockLocalIndex;
+    }
+
+    @Override
+    public int blockLocalIndexInterval() {
+      return blockLocalIndexInterval;
     }
 
     @Override
@@ -1901,6 +1922,13 @@ public class LDbImpl implements LDB {
           + ",filterPolicy=supported"
           + ",cacheSize=supported"
           + ",cacheBlocks=supported"
+          + ",blockCacheWarmOnOpen=supported"
+          + ",tableFormatVersion=supported"
+          + ",writeTableProperties=supported"
+          + ",allowLegacyTableFormat=supported"
+          + ",failOnUnknownTableFeature=supported"
+          + ",writeBlockLocalIndex=supported"
+          + ",blockLocalIndexInterval=supported"
           + ",blockCacheSize=supported"
           + ",readOnly=supported"
           + ",columnFamilies=supported"
@@ -1933,22 +1961,32 @@ public class LDbImpl implements LDB {
   }
 
   private String tableFormatPolicy() {
-    boolean v2Writes = options.tableFormatVersion() == 2;
+    int tableFormatVersion = options.tableFormatVersion();
+    boolean selfDescribingWrites = tableFormatVersion >= 2 && options.writeTableProperties();
     String newWrites;
-    if (!v2Writes) {
+    if (tableFormatVersion == 1) {
       newWrites = "v1";
     }
-    else if (options.writeTableProperties()) {
+    else if (!options.writeTableProperties()) {
+      newWrites = "v" + tableFormatVersion + "-without-properties-diagnostic";
+    }
+    else if (tableFormatVersion == 2) {
       newWrites = "v2-properties";
     }
-    else {
-      newWrites = "v2-without-properties-diagnostic";
+    else if (options.writeBlockLocalIndex()) {
+      newWrites = "v3-block-local-index";
     }
-    String productionState = v2Writes ? "explicit-v2" : "default-legacy";
+    else {
+      newWrites = "v3-properties-block-local-index-disabled";
+    }
+    String productionState = selfDescribingWrites ? "explicit-v" + tableFormatVersion : "default-legacy";
     String unknownFeaturePolicy = options.failOnUnknownTableFeature() ? "fail-fast" : "diagnostic-only";
     return "newWrites=" + newWrites
-        + ",configuredTableFormatVersion=" + options.tableFormatVersion()
+        + ",configuredTableFormatVersion=" + tableFormatVersion
         + ",writeTableProperties=" + options.writeTableProperties()
+        + ",writeBlockLocalIndex=" + options.writeBlockLocalIndex()
+        + ",blockLocalIndexInterval=" + options.blockLocalIndexInterval()
+        + ",blockLocalIndexState=" + (options.writeBlockLocalIndex() ? "writer-opt-in" : "disabled")
         + ",legacyReads=" + (options.allowLegacyTableFormat() ? "allowed" : "rejected")
         + ",unknownFeaturePolicy=" + unknownFeaturePolicy
         + ",futureVersionPolicy=" + unknownFeaturePolicy
@@ -1971,6 +2009,13 @@ public class LDbImpl implements LDB {
         + ",filterPolicy=" + (options.filterPolicy() == null ? "none" : options.filterPolicy().getClass().getName())
         + ",cacheSize=" + options.cacheSize()
         + ",cacheBlocks=" + options.cacheBlocks()
+        + ",blockCacheWarmOnOpen=" + options.blockCacheWarmOnOpen()
+        + ",tableFormatVersion=" + options.tableFormatVersion()
+        + ",writeTableProperties=" + options.writeTableProperties()
+        + ",allowLegacyTableFormat=" + options.allowLegacyTableFormat()
+        + ",failOnUnknownTableFeature=" + options.failOnUnknownTableFeature()
+        + ",writeBlockLocalIndex=" + options.writeBlockLocalIndex()
+        + ",blockLocalIndexInterval=" + options.blockLocalIndexInterval()
         + ",blockCacheSize=" + options.blockCacheSize()
         + ",readOnly=" + options.readOnly()
         + ",columnFamilyCount=" + cfs.size()
@@ -2001,6 +2046,7 @@ public class LDbImpl implements LDB {
         + ",comparator=" + (options.comparator() == null ? "bytewise" : "custom")
         + ",filterPolicy=" + (options.filterPolicy() == null ? "none" : options.filterPolicy().getClass().getName())
         + ",cacheBlocks=" + options.cacheBlocks()
+        + ",blockCacheWarmOnOpen=" + options.blockCacheWarmOnOpen()
         + ",blockCacheSize=" + options.blockCacheSize()
         + ",requiredBeforeEnable=keyEncodingContract|comparatorPrefixOrder|rangeDeleteSemantics|snapshotVisibility|misconfigurationFailFast"
         + ",risk=missedReadsIfMisconfigured";

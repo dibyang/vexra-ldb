@@ -72,6 +72,91 @@ class TablePropertiesTest {
   }
 
   @Test
+  void shouldWriteAndReadV3PropertiesSkeletonWhenOptedIn() throws Exception {
+    File tableFile = new File(tempDir, "v3-disabled.sst");
+
+    writeTable(tableFile, new Options().tableFormatVersion(3).blockLocalIndexInterval(4));
+
+    Table table = openTable(tableFile, new Options());
+    try {
+      TableProperties properties = table.getProperties();
+      Map<String, String> values = properties.getValues();
+
+      assertFalse(properties.isLegacy());
+      assertEquals(3, properties.getFormatVersion());
+      assertTrue(properties.getCompatibleFeatures().contains("table.properties"));
+      assertTrue(properties.getIncompatibleFeatures().isEmpty());
+      assertEquals("3", values.get(TableProperties.FORMAT_VERSION_KEY));
+      assertEquals("false", values.get(TableProperties.BLOCK_LOCAL_INDEX_KEY));
+      assertEquals("", values.get(TableProperties.BLOCK_LOCAL_INDEX_VERSION_KEY));
+      assertEquals("disabled", values.get(TableProperties.BLOCK_LOCAL_INDEX_POLICY_KEY));
+      assertEquals("4", values.get(TableProperties.BLOCK_LOCAL_INDEX_INTERVAL_KEY));
+      assertEquals("0", values.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY));
+      assertEquals("0", values.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
+      assertDoesNotThrow(() -> properties.validateReadable(true, "v3-disabled.sst"));
+    } finally {
+      table.closer().call();
+    }
+  }
+
+  @Test
+  void shouldWriteAndReadV3BlockLocalIndexDirectoryWhenOptedIn() throws Exception {
+    File tableFile = new File(tempDir, "v3-enabled.sst");
+
+    writeDenseTable(tableFile, new Options()
+        .blockRestartInterval(1)
+        .tableFormatVersion(3)
+        .writeBlockLocalIndex(true)
+        .blockLocalIndexInterval(1));
+
+    Table table = openTable(tableFile, new Options());
+    try {
+      TableProperties properties = table.getProperties();
+      Map<String, String> values = properties.getValues();
+
+      assertEquals(3, properties.getFormatVersion());
+      assertTrue(properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE));
+      assertEquals("true", values.get(TableProperties.BLOCK_LOCAL_INDEX_KEY));
+      assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_VERSION_KEY));
+      assertEquals("restart-anchor", values.get(TableProperties.BLOCK_LOCAL_INDEX_POLICY_KEY));
+      assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_INTERVAL_KEY));
+      assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
+      assertFalse(table.getBlockLocalIndexDirectory().isEmpty());
+
+      BlockHandle localIndexHandle = table.getBlockLocalIndexDirectory().values().iterator().next();
+      Block localIndexBlock = table.openBlock(localIndexHandle);
+      BlockIterator iterator = localIndexBlock.iterator();
+      assertTrue(iterator.hasNext());
+      BlockEntry firstAnchor = iterator.next();
+      assertTrue(new String(firstAnchor.getValue().getBytes(), java.nio.charset.StandardCharsets.UTF_8).contains(":"));
+      assertEquals(internalKey("k000", 1), table.get(internalKey("k000", 1)).getKey());
+      assertEquals(internalKey("k001", 1), table.get(internalKey("k001", 1)).getKey());
+      assertEquals(2, table.get(java.util.Arrays.asList(internalKey("k000", 1), internalKey("k001", 1))).size());
+      assertEquals(internalKey("k000", 1),
+          table.get(java.util.Arrays.asList(internalKey("k000", 1), internalKey("k001", 1))).get(0).getKey());
+      assertEquals(internalKey("k001", 1),
+          table.get(java.util.Arrays.asList(internalKey("k000", 1), internalKey("k001", 1))).get(1).getKey());
+      String stats = table.getBlockLocalIndexStats();
+      assertTrue(stats.contains("directoryEntries=1"));
+      assertTrue(stats.contains("seekCount="));
+      assertTrue(stats.contains("hitCount="));
+      assertTrue(stats.contains("seekCount=0"));
+      assertTrue(stats.contains("hitCount=0"));
+
+      java.util.List<net.xdob.vexra.ldb.util.Slice> denseLookup = new java.util.ArrayList<>();
+      for (int i = 0; i < 8; i++) {
+        denseLookup.add(internalKey(String.format(java.util.Locale.ROOT, "k%03d", i), 1));
+      }
+      assertEquals(8, table.get(denseLookup).size());
+      String denseStats = table.getBlockLocalIndexStats();
+      assertTrue(denseStats.contains("seekCount=8"));
+      assertTrue(denseStats.contains("hitCount=8"));
+    } finally {
+      table.closer().call();
+    }
+  }
+
+  @Test
   void shouldFailFastForUnknownIncompatibleFeature() {
     BlockBuilder builder = new BlockBuilder(256, 1, new BytewiseComparator());
     builder.add(Slices.utf8Slice(TableProperties.COMPATIBLE_FEATURES_KEY), Slices.utf8Slice("table.properties"));
@@ -91,14 +176,14 @@ class TablePropertiesTest {
     BlockBuilder builder = new BlockBuilder(256, 1, new BytewiseComparator());
     builder.add(Slices.utf8Slice(TableProperties.COMPATIBLE_FEATURES_KEY), Slices.utf8Slice("table.properties"));
     builder.add(Slices.utf8Slice(TableProperties.INCOMPATIBLE_FEATURES_KEY), Slices.utf8Slice(""));
-    builder.add(Slices.utf8Slice(TableProperties.FORMAT_VERSION_KEY), Slices.utf8Slice("3"));
+    builder.add(Slices.utf8Slice(TableProperties.FORMAT_VERSION_KEY), Slices.utf8Slice("4"));
 
     TableProperties properties = TableProperties.read(new Block(builder.finish(), new BytewiseComparator()));
 
     IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-        () -> properties.validateReadable(true, "v3.sst"));
-    assertTrue(error.getMessage().contains("unsupported table format version 3"));
-    assertDoesNotThrow(() -> properties.validateReadable(false, "v3.sst"));
+        () -> properties.validateReadable(true, "v4.sst"));
+    assertTrue(error.getMessage().contains("unsupported table format version 4"));
+    assertDoesNotThrow(() -> properties.validateReadable(false, "v4.sst"));
   }
 
   @Test
@@ -130,8 +215,10 @@ class TablePropertiesTest {
   @Test
   void shouldRejectUnsupportedTableFormatVersionOption() {
     assertThrows(IllegalArgumentException.class, () -> new Options().tableFormatVersion(0));
-    assertThrows(IllegalArgumentException.class, () -> new Options().tableFormatVersion(3));
+    assertThrows(IllegalArgumentException.class, () -> new Options().tableFormatVersion(4));
     assertEquals(2, new Options().tableFormatVersion(2).tableFormatVersion());
+    assertEquals(3, new Options().tableFormatVersion(3).tableFormatVersion());
+    assertThrows(IllegalArgumentException.class, () -> new Options().blockLocalIndexInterval(0));
   }
 
   private static void writeTable(File tableFile, Options options) throws Exception {
@@ -140,6 +227,18 @@ class TablePropertiesTest {
       TableBuilder builder = new TableBuilder(options, channel, new BytewiseComparator());
       builder.add(internalKey("a", 2), Slices.utf8Slice("value-a"));
       builder.add(internalKey("b", 1), Slices.utf8Slice("value-b"));
+      builder.finish();
+    }
+  }
+
+  private static void writeDenseTable(File tableFile, Options options) throws Exception {
+    try (RandomAccessFile file = new RandomAccessFile(tableFile, "rw");
+         FileChannel channel = file.getChannel()) {
+      TableBuilder builder = new TableBuilder(options, channel, new BytewiseComparator());
+      for (int i = 0; i < 32; i++) {
+        String key = String.format(java.util.Locale.ROOT, "k%03d", i);
+        builder.add(internalKey(key, 1), Slices.utf8Slice("value-" + i));
+      }
       builder.finish();
     }
   }

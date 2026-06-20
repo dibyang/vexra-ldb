@@ -180,15 +180,50 @@ public class Level
       }
       FileMetaData fileMetaData = files.get(fileIndex);
       readStats.recordTableRead();
+      List<LookupKey> fileKeys = new ArrayList<LookupKey>(keyIndexes.size());
+      List<InternalKey> internalKeys = new ArrayList<InternalKey>(keyIndexes.size());
       for (Integer keyIndex : keyIndexes) {
-        LookupResult lookupResult = getFromTable(fileMetaData, keys.get(keyIndex));
+        LookupKey key = keys.get(keyIndex);
+        fileKeys.add(key);
+        internalKeys.add(key.getInternalKey());
+      }
+
+      List<Entry<Slice, Slice>> entries = tableCache.get(fileMetaData, internalKeys);
+      for (int i = 0; i < fileKeys.size(); i++) {
+        LookupResult lookupResult = getFromTableEntry(fileMetaData, fileKeys.get(i), entries.get(i));
         if (lookupResult != null) {
-          results.set(keyIndex, lookupResult);
+          results.set(keyIndexes.get(i), lookupResult);
         }
       }
     }
 
     return results;
+  }
+
+  private LookupResult getFromTableEntry(FileMetaData fileMetaData, LookupKey key, Entry<Slice, Slice> entry) {
+    LookupResult pointResult = null;
+    long pointSequence = -1;
+    if (entry != null) {
+      InternalKey internalKey = new InternalKey(entry.getKey());
+      checkState(internalKey != null, "Corrupt key for %s", key.getUserKey().toString(UTF_8));
+      if (key.getUserKey().equals(internalKey.getUserKey())) {
+        if (internalKey.getValueType() == ValueType.DELETION) {
+          pointResult = LookupResult.deleted(key, internalKey.getSequenceNumber());
+          pointSequence = internalKey.getSequenceNumber();
+        } else if (internalKey.getValueType() == VALUE) {
+          pointResult = LookupResult.ok(key, entry.getValue(), internalKey.getSequenceNumber());
+          pointSequence = internalKey.getSequenceNumber();
+        }
+      }
+    }
+
+    long rangeDeleteSequence = fileMetaData.hasRangeDeletes()
+        ? newestCoveringRangeDelete(fileMetaData, key, pointSequence)
+        : -1;
+    if (rangeDeleteSequence >= 0) {
+      return LookupResult.deleted(key, rangeDeleteSequence);
+    }
+    return pointResult;
   }
 
   private LookupResult getFromTable(FileMetaData fileMetaData, LookupKey key) {

@@ -17,6 +17,9 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
@@ -35,6 +38,10 @@ public class TableCache {
   private final AtomicLong directGetRequestCount = new AtomicLong();
   private final AtomicLong directGetHitCount = new AtomicLong();
   private final AtomicLong directGetMissCount = new AtomicLong();
+  private final AtomicLong directGetBatchRequestCount = new AtomicLong();
+  private final AtomicLong directGetBatchKeyCount = new AtomicLong();
+  private final AtomicLong blockCacheWarmupTableCount = new AtomicLong();
+  private final AtomicLong blockCacheWarmupBlockCount = new AtomicLong();
   private final AtomicLong mayContainRequestCount = new AtomicLong();
   private final AtomicLong mayContainTrueCount = new AtomicLong();
   private final AtomicLong mayContainFalseCount = new AtomicLong();
@@ -65,7 +72,7 @@ public class TableCache {
           @Override
           public TableAndFile load(Long fileNumber) throws IOException {
             tableLoadCount.incrementAndGet();
-            return new TableAndFile(
+            TableAndFile tableAndFile = new TableAndFile(
                 databaseDir,
                 fileNumber,
                 userComparator,
@@ -73,6 +80,12 @@ public class TableCache {
                 options,
                 blockCache
             );
+            if (blockCache != null && options.blockCacheWarmOnOpen()) {
+              int warmed = tableAndFile.getTable().warmDataBlocks();
+              blockCacheWarmupTableCount.incrementAndGet();
+              blockCacheWarmupBlockCount.addAndGet(warmed);
+            }
+            return tableAndFile;
           }
         });
   }
@@ -110,6 +123,37 @@ public class TableCache {
     return result;
   }
 
+  /**
+   * 通过 table 层 batch direct get 读取一批内部 key。
+   *
+   * <p>该入口服务 MultiGet：table 层会把 key 按 data block handle 分组，减少同一 SST/data block
+   * 内的重复 block 打开和重复 seek 成本。返回顺序与输入 key 顺序一致。</p>
+   */
+  public List<Entry<Slice, Slice>> get(FileMetaData file, List<InternalKey> internalKeys) {
+    if (internalKeys.isEmpty()) {
+      return Collections.emptyList();
+    }
+
+    directGetBatchRequestCount.incrementAndGet();
+    directGetBatchKeyCount.addAndGet(internalKeys.size());
+    directGetRequestCount.addAndGet(internalKeys.size());
+
+    List<Slice> encodedKeys = new ArrayList<Slice>(internalKeys.size());
+    for (InternalKey internalKey : internalKeys) {
+      encodedKeys.add(internalKey.encode());
+    }
+
+    List<Entry<Slice, Slice>> results = getTable(file.getNumber()).get(encodedKeys);
+    for (Entry<Slice, Slice> result : results) {
+      if (result == null) {
+        directGetMissCount.incrementAndGet();
+      } else {
+        directGetHitCount.incrementAndGet();
+      }
+    }
+    return results;
+  }
+
   public long getApproximateOffsetOf(FileMetaData file, Slice key) {
     approximateOffsetRequestCount.incrementAndGet();
     return getTable(file.getNumber()).getApproximateOffsetOf(key);
@@ -134,6 +178,22 @@ public class TableCache {
    */
   public TableProperties getTableProperties(long number) {
     return getTable(number).getProperties();
+  }
+
+  /**
+   * 返回指定 SST 的 block-local index 离线格式证据。
+   *
+   * <p>该入口只服务 check/repair/report，不参与普通读热路径。</p>
+   */
+  public String getBlockLocalIndexFormatEvidence(long number) {
+    return getTable(number).getBlockLocalIndexFormatEvidence();
+  }
+
+  /**
+   * 返回指定 SST 的 block-local index 离线损坏分类。
+   */
+  public List<String> getBlockLocalIndexFormatFailures(long number) {
+    return getTable(number).getBlockLocalIndexFormatFailures();
   }
 
   private Table getTable(long number) {
@@ -167,16 +227,54 @@ public class TableCache {
   }
 
   public String readStats() {
+    BlockLocalIndexStats blockLocalIndexStats = blockLocalIndexStats();
     return "tableRequests=" + tableRequestCount.get()
         + ",tableLoads=" + tableLoadCount.get()
         + ",iteratorRequests=" + iteratorRequestCount.get()
         + ",directGetRequests=" + directGetRequestCount.get()
         + ",directGetHits=" + directGetHitCount.get()
         + ",directGetMisses=" + directGetMissCount.get()
+        + ",directGetBatchRequests=" + directGetBatchRequestCount.get()
+        + ",directGetBatchKeys=" + directGetBatchKeyCount.get()
+        + ",blockCacheWarmupTables=" + blockCacheWarmupTableCount.get()
+        + ",blockCacheWarmupBlocks=" + blockCacheWarmupBlockCount.get()
         + ",mayContainRequests=" + mayContainRequestCount.get()
         + ",mayContainTrue=" + mayContainTrueCount.get()
         + ",mayContainFalse=" + mayContainFalseCount.get()
-        + ",approximateOffsetRequests=" + approximateOffsetRequestCount.get();
+        + ",approximateOffsetRequests=" + approximateOffsetRequestCount.get()
+        + ",blockLocalIndexTables=" + blockLocalIndexStats.declaredTables
+        + ",blockLocalIndexDirectoryLoadedTables=" + blockLocalIndexStats.directoryLoadedTables
+        + ",blockLocalIndexDirectoryEntries=" + blockLocalIndexStats.directoryEntries
+        + ",blockLocalIndexSeekCount=" + blockLocalIndexStats.seekCount
+        + ",blockLocalIndexHitCount=" + blockLocalIndexStats.hitCount
+        + ",blockLocalIndexFallbackCount=" + blockLocalIndexStats.fallbackCount;
+  }
+
+  private BlockLocalIndexStats blockLocalIndexStats() {
+    BlockLocalIndexStats stats = new BlockLocalIndexStats();
+    for (TableAndFile tableAndFile : cache.asMap().values()) {
+      Table table = tableAndFile.getTable();
+      if (table.isBlockLocalIndexDeclaredForStats()) {
+        stats.declaredTables++;
+      }
+      if (table.isBlockLocalIndexDirectoryLoadedForStats()) {
+        stats.directoryLoadedTables++;
+      }
+      stats.directoryEntries += table.getBlockLocalIndexDirectoryEntriesForStats();
+      stats.seekCount += table.getBlockLocalIndexSeekCountForStats();
+      stats.hitCount += table.getBlockLocalIndexHitCountForStats();
+      stats.fallbackCount += table.getBlockLocalIndexFallbackCountForStats();
+    }
+    return stats;
+  }
+
+  private static final class BlockLocalIndexStats {
+    private long declaredTables;
+    private long directoryLoadedTables;
+    private long directoryEntries;
+    private long seekCount;
+    private long hitCount;
+    private long fallbackCount;
   }
 
   private static final class TableAndFile {

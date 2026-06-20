@@ -9,7 +9,12 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.Callable;
 
@@ -17,6 +22,8 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 public abstract class Table implements SeekingIterable<Slice, Slice> {
+  private static final int BLOCK_LOCAL_INDEX_MIN_LOOKUPS = 8;
+
   protected final String name;
   protected final FileChannel fileChannel;
   protected final Comparator<Slice> comparator;
@@ -26,8 +33,14 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   protected final FilterPolicy filterPolicy;
   protected final Slice filterBlock;
   protected final TableProperties properties;
+  private final BlockHandle blockLocalIndexDirectoryHandle;
+  private volatile Map<BlockHandle, BlockHandle> blockLocalIndexDirectory;
+  private long blockLocalIndexSeekCount;
+  private long blockLocalIndexHitCount;
+  private long blockLocalIndexFallbackCount;
 
   protected final BlockCache blockCache;
+  private final Options options;
 
   public Table(String name,
                FileChannel fileChannel,
@@ -48,6 +61,7 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     this.verifyChecksums = verifyChecksums;
     this.comparator = comparator;
     this.filterPolicy = options == null ? null : options.filterPolicy();
+    this.options = options;
 
     this.blockCache = blockCache;
 
@@ -55,12 +69,15 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     BlockHandle loadedMetaindexBlockHandle;
     Slice loadedFilterBlock;
     TableProperties loadedProperties;
+    BlockHandle loadedBlockLocalIndexDirectoryHandle;
     try {
       Footer footer = init();
       loadedIndexBlock = openBlock(footer.getIndexBlockHandle());
       loadedMetaindexBlockHandle = footer.getMetaindexBlockHandle();
       loadedFilterBlock = readFilterBlock(loadedMetaindexBlockHandle);
       loadedProperties = readPropertiesBlock(loadedMetaindexBlockHandle);
+      loadedBlockLocalIndexDirectoryHandle =
+          readBlockLocalIndexDirectoryHandle(loadedMetaindexBlockHandle, loadedProperties);
       if (loadedProperties.isLegacy()
           && options != null
           && !options.allowLegacyTableFormat()) {
@@ -81,6 +98,8 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     this.metaindexBlockHandle = loadedMetaindexBlockHandle;
     this.filterBlock = loadedFilterBlock;
     this.properties = loadedProperties;
+    this.blockLocalIndexDirectoryHandle = loadedBlockLocalIndexDirectoryHandle;
+    this.blockLocalIndexDirectory = null;
   }
 
   /**
@@ -159,6 +178,69 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     return TableProperties.legacy();
   }
 
+  private BlockHandle readBlockLocalIndexDirectoryHandle(
+      BlockHandle metaindexBlockHandle,
+      TableProperties properties) throws IOException {
+    boolean declared = "true".equals(properties.get(TableProperties.BLOCK_LOCAL_INDEX_KEY))
+        || properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE);
+    if (!declared) {
+      return null;
+    }
+
+    Block metaIndexBlock = openBlock(metaindexBlockHandle);
+    BlockIterator iterator = metaIndexBlock.iterator();
+    Slice target = Slices.utf8Slice(TableProperties.BLOCK_LOCAL_INDEX_META_INDEX_KEY);
+
+    while (iterator.hasNext()) {
+      BlockEntry entry = iterator.next();
+      if (entry.getKey().equals(target)) {
+        return BlockHandle.readBlockHandle(entry.getValue().input());
+      }
+    }
+    throw new IOException("Table " + name
+        + " declares " + TableProperties.BLOCK_LOCAL_INDEX_FEATURE
+        + " but metaindex entry " + TableProperties.BLOCK_LOCAL_INDEX_META_INDEX_KEY
+        + " is missing: BLOCK_LOCAL_INDEX_DIRECTORY_MISSING");
+  }
+
+  private BlockHandle parseBlockHandleDirectoryKey(Slice key) {
+    String value = new String(key.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    int separator = value.indexOf(':');
+    if (separator <= 0 || separator == value.length() - 1) {
+      throw new IllegalArgumentException("Invalid block-local index directory key: " + value);
+    }
+    long offset = Long.parseLong(value.substring(0, separator));
+    int dataSize = Integer.parseInt(value.substring(separator + 1));
+    return new BlockHandle(offset, dataSize);
+  }
+
+  private Map<BlockHandle, BlockHandle> loadBlockLocalIndexDirectory() {
+    if (blockLocalIndexDirectoryHandle == null) {
+      return Collections.emptyMap();
+    }
+    Map<BlockHandle, BlockHandle> directory = blockLocalIndexDirectory;
+    if (directory != null) {
+      return directory;
+    }
+    synchronized (this) {
+      directory = blockLocalIndexDirectory;
+      if (directory == null) {
+        Block directoryBlock = openBlock(blockLocalIndexDirectoryHandle);
+        Map<BlockHandle, BlockHandle> loaded = new LinkedHashMap<BlockHandle, BlockHandle>();
+        BlockIterator directoryIterator = directoryBlock.iterator();
+        while (directoryIterator.hasNext()) {
+          BlockEntry directoryEntry = directoryIterator.next();
+          loaded.put(
+              parseBlockHandleDirectoryKey(directoryEntry.getKey()),
+              BlockHandle.readBlockHandle(directoryEntry.getValue().input()));
+        }
+        directory = Collections.unmodifiableMap(loaded);
+        blockLocalIndexDirectory = directory;
+      }
+      return directory;
+    }
+  }
+
   protected abstract Slice readRawBlock(BlockHandle blockHandle) throws IOException;
 
   public boolean mayContain(Slice userKey) {
@@ -182,7 +264,8 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     if (indexEntry == null) {
       return null;
     }
-    Block dataBlock = openBlock(indexEntry.getValue());
+    BlockHandle blockHandle = BlockHandle.readBlockHandle(indexEntry.getValue().input());
+    Block dataBlock = openBlockForDirectRead(blockHandle);
     Entry<Slice, Slice> candidate = dataBlock.seek(internalKey);
     if (candidate == null) {
       return null;
@@ -191,6 +274,113 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       return null;
     }
     return candidate;
+  }
+
+  /**
+   * 按内部 key 批量执行 SST 点查。
+   *
+   * <p>该方法先通过 index block 把 key 分组到 data block handle，再对同一个 data block 执行批量 seek。
+   * 返回值顺序与输入 key 顺序一致，LSM 语义仍由 impl 层判断。</p>
+   */
+  public List<Entry<Slice, Slice>> get(List<Slice> internalKeys) {
+    List<Entry<Slice, Slice>> results = new ArrayList<Entry<Slice, Slice>>(
+        Collections.nCopies(internalKeys.size(), (Entry<Slice, Slice>) null));
+    if (internalKeys.isEmpty()) {
+      return results;
+    }
+
+    Map<BlockHandle, List<TableLookup>> blockLookups = new LinkedHashMap<BlockHandle, List<TableLookup>>();
+    for (int i = 0; i < internalKeys.size(); i++) {
+      Slice internalKey = internalKeys.get(i);
+      Entry<Slice, Slice> indexEntry = indexBlock.seek(internalKey);
+      if (indexEntry == null) {
+        continue;
+      }
+      BlockHandle blockHandle = BlockHandle.readBlockHandle(indexEntry.getValue().input());
+      List<TableLookup> lookups = blockLookups.get(blockHandle);
+      if (lookups == null) {
+        lookups = new ArrayList<TableLookup>();
+        blockLookups.put(blockHandle, lookups);
+      }
+      lookups.add(new TableLookup(i, internalKey));
+    }
+
+    for (Entry<BlockHandle, List<TableLookup>> group : blockLookups.entrySet()) {
+      Block dataBlock = openBlockForDirectRead(group.getKey());
+      for (TableLookup lookup : group.getValue()) {
+        Entry<Slice, Slice> candidate = seekDataBlock(
+            group.getKey(),
+            dataBlock,
+            lookup.internalKey,
+            group.getValue().size() >= BLOCK_LOCAL_INDEX_MIN_LOOKUPS);
+        if (candidate != null
+            && comparator.compare(candidate.getKey(), lookup.internalKey) >= 0) {
+          results.set(lookup.index, candidate);
+        }
+      }
+    }
+    return results;
+  }
+
+  private Entry<Slice, Slice> seekDataBlock(
+      BlockHandle dataBlockHandle,
+      Block dataBlock,
+      Slice internalKey,
+      boolean allowLocalIndex) {
+    if (!allowLocalIndex) {
+      blockLocalIndexFallbackCount++;
+      return dataBlock.seek(internalKey);
+    }
+    BlockHandle localIndexHandle = loadBlockLocalIndexDirectory().get(dataBlockHandle);
+    if (localIndexHandle == null) {
+      blockLocalIndexFallbackCount++;
+      return dataBlock.seek(internalKey);
+    }
+
+    blockLocalIndexSeekCount++;
+    Block localIndexBlock = openBlock(localIndexHandle);
+    Entry<Slice, Slice> anchor = localIndexBlock.floor(internalKey);
+    if (anchor == null) {
+      blockLocalIndexFallbackCount++;
+      return dataBlock.seek(internalKey);
+    }
+    blockLocalIndexHitCount++;
+    return dataBlock.seekFromOffset(internalKey, parseBlockLocalIndexAnchorOffset(anchor.getValue()));
+  }
+
+  private int parseBlockLocalIndexAnchorOffset(Slice value) {
+    String text = new String(value.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    int separator = text.indexOf(':');
+    if (separator <= 0 || separator == text.length() - 1) {
+      throw new IllegalArgumentException("Invalid block-local index anchor value: " + text);
+    }
+    return Integer.parseInt(text.substring(separator + 1));
+  }
+
+  /**
+   * 对同一 data block 内足够密集的 key 预留顺序批量 seek 能力。
+   */
+  private void seekDenseBlock(Block dataBlock, List<TableLookup> lookups, List<Entry<Slice, Slice>> results) {
+    Collections.sort(lookups, new Comparator<TableLookup>() {
+      @Override
+      public int compare(TableLookup left, TableLookup right) {
+        return comparator.compare(left.internalKey, right.internalKey);
+      }
+    });
+
+    List<Slice> sortedKeys = new ArrayList<Slice>(lookups.size());
+      for (TableLookup lookup : lookups) {
+        sortedKeys.add(lookup.internalKey);
+      }
+
+    List<Entry<Slice, Slice>> candidates = dataBlock.seekAll(sortedKeys);
+    for (int i = 0; i < candidates.size(); i++) {
+      Entry<Slice, Slice> candidate = candidates.get(i);
+      if (candidate != null
+          && comparator.compare(candidate.getKey(), lookups.get(i).internalKey) >= 0) {
+        results.set(lookups.get(i).index, candidate);
+      }
+    }
   }
 
   protected abstract Footer init() throws IOException;
@@ -204,12 +394,136 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     return properties;
   }
 
+  public Map<BlockHandle, BlockHandle> getBlockLocalIndexDirectory() {
+    return loadBlockLocalIndexDirectory();
+  }
+
+  /**
+   * 生成离线 check/repair 使用的 block-local index 格式证据。
+   *
+   * <p>该方法只在诊断路径调用，会检查 directory 覆盖数、handle 边界和 local index block
+   * 可读性；普通 get/iterator 不调用它，避免把自检成本带入热路径。</p>
+   */
+  public String getBlockLocalIndexFormatEvidence() {
+    boolean declared = isBlockLocalIndexDeclared();
+    Map<BlockHandle, BlockHandle> directory = loadBlockLocalIndexDirectory();
+    long expectedCoveredBlocks = parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
+    long expectedBytes = parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY));
+    List<String> failures = getBlockLocalIndexFormatFailures();
+    return "declared=" + declared
+        + ",directoryPresent=" + (!declared || !directory.isEmpty())
+        + ",directoryEntries=" + directory.size()
+        + ",expectedCoveredBlocks=" + expectedCoveredBlocks
+        + ",expectedBytes=" + expectedBytes
+        + ",coverageMatches=" + (!declared || expectedCoveredBlocks == directory.size())
+        + ",handlesInRange=" + !containsFailure(failures, "BLOCK_LOCAL_INDEX_HANDLE_OUT_OF_RANGE")
+        + ",blocksReadable=" + !containsFailure(failures, "BLOCK_LOCAL_INDEX_BLOCK_CORRUPT")
+        + ",failureCount=" + failures.size();
+  }
+
+  /**
+   * 返回离线格式自检发现的 block-local index 损坏分类。
+   */
+  public List<String> getBlockLocalIndexFormatFailures() {
+    if (!isBlockLocalIndexDeclared()) {
+      return Collections.emptyList();
+    }
+    Map<BlockHandle, BlockHandle> directory = loadBlockLocalIndexDirectory();
+    List<String> failures = new ArrayList<String>();
+    long expectedCoveredBlocks = parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
+    if (directory.isEmpty()) {
+      failures.add("BLOCK_LOCAL_INDEX_DIRECTORY_MISSING");
+    }
+    if (expectedCoveredBlocks != directory.size()) {
+      failures.add("BLOCK_LOCAL_INDEX_COVERAGE_MISMATCH expected=" + expectedCoveredBlocks
+          + " actual=" + directory.size());
+    }
+    long fileSize;
+    try {
+      fileSize = fileChannel.size();
+    } catch (IOException e) {
+      failures.add("BLOCK_LOCAL_INDEX_FILE_SIZE_UNREADABLE " + e.getMessage());
+      return Collections.unmodifiableList(failures);
+    }
+    for (BlockHandle handle : directory.values()) {
+      if (!isBlockHandleInRange(handle, fileSize)) {
+        failures.add("BLOCK_LOCAL_INDEX_HANDLE_OUT_OF_RANGE offset=" + handle.getOffset()
+            + " size=" + handle.getDataSize());
+        continue;
+      }
+      try {
+        openBlock(handle);
+      } catch (RuntimeException e) {
+        failures.add("BLOCK_LOCAL_INDEX_BLOCK_CORRUPT offset=" + handle.getOffset()
+            + " size=" + handle.getDataSize());
+      }
+    }
+    return Collections.unmodifiableList(failures);
+  }
+
+  public String getBlockLocalIndexStats() {
+    return "declared=" + isBlockLocalIndexDeclared()
+        + ",directoryHandlePresent=" + (blockLocalIndexDirectoryHandle != null)
+        + ",directoryLoaded=" + (blockLocalIndexDirectory != null)
+        + ",directoryEntries=" + (blockLocalIndexDirectory == null ? 0 : blockLocalIndexDirectory.size())
+        + ",seekCount=" + blockLocalIndexSeekCount
+        + ",hitCount=" + blockLocalIndexHitCount
+        + ",fallbackCount=" + blockLocalIndexFallbackCount;
+  }
+
+  public boolean isBlockLocalIndexDeclaredForStats() {
+    return isBlockLocalIndexDeclared();
+  }
+
+  public boolean isBlockLocalIndexDirectoryLoadedForStats() {
+    return blockLocalIndexDirectory != null;
+  }
+
+  public int getBlockLocalIndexDirectoryEntriesForStats() {
+    return blockLocalIndexDirectory == null ? 0 : blockLocalIndexDirectory.size();
+  }
+
+  public long getBlockLocalIndexSeekCountForStats() {
+    return blockLocalIndexSeekCount;
+  }
+
+  public long getBlockLocalIndexHitCountForStats() {
+    return blockLocalIndexHitCount;
+  }
+
+  public long getBlockLocalIndexFallbackCountForStats() {
+    return blockLocalIndexFallbackCount;
+  }
+
+  /**
+   * 预热当前 table 的所有 data block。
+   */
+  public int warmDataBlocks() {
+    int warmed = 0;
+    BlockIterator iterator = indexBlock.iterator();
+    while (iterator.hasNext()) {
+      BlockEntry entry = iterator.next();
+      BlockHandle blockHandle = BlockHandle.readBlockHandle(entry.getValue().input());
+      openBlock(blockHandle);
+      warmed++;
+    }
+    return warmed;
+  }
+
   public Block openBlock(Slice blockEntry) {
     BlockHandle blockHandle = BlockHandle.readBlockHandle(blockEntry.input());
     return openBlock(blockHandle);
   }
 
   public Block openBlock(BlockHandle blockHandle) {
+    return openBlock(blockHandle, true);
+  }
+
+  private Block openBlockForDirectRead(BlockHandle blockHandle) {
+    return openBlock(blockHandle, false);
+  }
+
+  private Block openBlock(BlockHandle blockHandle, boolean forceCacheOnMiss) {
     try {
       if (blockCache == null) {
         return readBlock(blockHandle);
@@ -226,11 +540,19 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       }
 
       Block block = readBlock(blockHandle);
-      blockCache.put(key, block);
+      if (forceCacheOnMiss) {
+        blockCache.put(key, block);
+      } else {
+        blockCache.putIfAdmitted(key, block, blockCacheAdmissionMinReads());
+      }
       return block;
     } catch (IOException e) {
       throw new RuntimeException("Failed to open block " + blockHandle + " in " + name, e);
     }
+  }
+
+  private int blockCacheAdmissionMinReads() {
+    return options == null ? 1 : options.blockCacheAdmissionMinReads();
   }
 
   protected abstract Block readBlock(BlockHandle blockHandle) throws IOException;
@@ -247,6 +569,35 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       return blockHandle.getOffset();
     }
     return metaindexBlockHandle.getOffset();
+  }
+
+  private boolean isBlockLocalIndexDeclared() {
+    return "true".equals(properties.get(TableProperties.BLOCK_LOCAL_INDEX_KEY))
+        || properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE);
+  }
+
+  private boolean isBlockHandleInRange(BlockHandle handle, long fileSize) {
+    if (handle.getOffset() < 0 || handle.getDataSize() < 0) {
+      return false;
+    }
+    long end = handle.getOffset() + handle.getFullBlockSize();
+    return end >= handle.getOffset() && end <= fileSize;
+  }
+
+  private static long parseLong(String value) {
+    if (value == null || value.trim().isEmpty()) {
+      return 0;
+    }
+    return Long.parseLong(value.trim());
+  }
+
+  private static boolean containsFailure(List<String> failures, String marker) {
+    for (String failure : failures) {
+      if (failure.contains(marker)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override
@@ -280,6 +631,16 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       }
       Closeables.closeQuietly(closeable);
       return null;
+    }
+  }
+
+  private static final class TableLookup {
+    private final int index;
+    private final Slice internalKey;
+
+    private TableLookup(int index, Slice internalKey) {
+      this.index = index;
+      this.internalKey = internalKey;
     }
   }
 }

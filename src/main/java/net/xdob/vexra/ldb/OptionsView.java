@@ -42,6 +42,10 @@ public interface OptionsView {
 
   boolean cacheBlocks();
 
+  default boolean blockCacheWarmOnOpen() {
+    return false;
+  }
+
   /**
    * 返回新写 SST/table 文件的格式版本。
    *
@@ -81,7 +85,25 @@ public interface OptionsView {
     return true;
   }
 
+  /**
+   * 返回新写 v3 SST 时是否启用 block-local index。
+   */
+  default boolean writeBlockLocalIndex() {
+    return false;
+  }
+
+  /**
+   * 返回 block-local index 锚点间隔。
+   */
+  default int blockLocalIndexInterval() {
+    return 4;
+  }
+
   int blockCacheSize();
+
+  default int blockCacheAdmissionMinReads() {
+    return 1;
+  }
 
   long compactionSuspendTimeoutMillis();
 

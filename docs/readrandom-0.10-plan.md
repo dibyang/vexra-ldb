@@ -126,7 +126,62 @@
 
 补充结论：warm readrandom 已经达标，cold readrandom 和 MultiGet 仍有深层 SST/block/cache 优化空间。下一阶段优先继续压缩 SST data block 解码、range 内线性扫描和 MultiGet 批量定位成本。
 
+## Batch block seek 优化范围
+
+本轮继续推进 MultiGet 批量定位优化，不修改 SST 文件格式：
+
+- `Table` 按 index block 定位结果把内部 key 分组到同一个 data block handle。
+- 同一个 data block 只打开一次，避免 MultiGet 中同一 block 的重复 `openBlock`。
+- 默认随机 MultiGet 仍对同一 block 内每个 key 执行 `Block.seek`，避免稀疏随机 key 使用顺序扫描时从最小 key 解码到最大 key 造成额外成本。
+- `Block.seekAll` 作为后续密集批量场景能力保留；只有目标 key 在同一 block 内足够密集时才适合启用。
+- `Level` / `Level0` 的 MultiGet 使用 table cache batch direct get；单 key get 保持原 direct get 路径。
+- 不改变 range delete、snapshot、sequence、value type、user key 匹配语义；有 range delete 的文件仍沿用现有覆盖检查。
+
+200k read-optimized `multiget_random` batch block reuse 实测：
+
+| 指标 | ops/s | 说明 |
+| --- | ---: | --- |
+| 上一轮 LDB baseline | 216,561.966 | `rocksdbjni-comparison-random-suite-010` 对应 LDB 结果 |
+| 本轮 LDB block reuse | 221,373.672 | `ldb-longrun/build/reports/ldb-db-bench-read-optimized-blockreuse-010/ldb-db-bench-summary.json` |
+| LDB 自身提升 | 2.22% | `(221373.672 - 216561.966) / 216561.966` |
+| 本轮 RocksDB JNI | 392,500.955 | `build/reports/rocksdbjni-comparison-blockreuse-010/comparison.csv` |
+| 本轮 LDB/RocksDB JNI | 56.40% | `221373.672 / 392500.955` |
+
+结论：同 block 复用打开是低风险正收益，但随机 MultiGet 的主瓶颈仍不在重复 `openBlock`，而在 SST/index/data block 定位、key 解码和 RocksDB JNI 本轮波动带来的对照口径差异。`Block.seekAll` 的顺序扫描策略在稀疏随机 key 下会退化，默认不启用，只保留给后续密集 batch 场景。
+
+## 随机读 block cache 预热策略
+
+为冷启动随机读增加显式 opt-in 的 `Options.blockCacheWarmOnOpen(true)`：
+
+- 默认关闭，避免普通打开库被迫预读所有 data block。
+- 仅在 `cacheBlocks=true` 时生效。
+- 打开 SST 后枚举 index block 中的 data block handle，并调用 `openBlock` 放入 block cache。
+- `ldb.sstReadStats` 新增 `blockCacheWarmupTables` 和 `blockCacheWarmupBlocks`，用于发布前确认预热是否实际发生。
+- `ldbDbBenchReport` 通过 `-Pldb.dbBench.blockCacheWarmOnOpen=true` 显式启用该选项，用于衡量随机读场景把首次 block 加载前移到 open 阶段后的收益；默认保持关闭，避免 MultiGet 稀疏随机批量读被预热成本误伤。
+
+200k read-optimized `cold_readrandom` 预热实测：
+
+| 指标 | ops/s | 说明 |
+| --- | ---: | --- |
+| 上一轮 LDB baseline | 184,805.871 | `rocksdbjni-comparison-random-suite-010` 对应 LDB 结果 |
+| 本轮 LDB warm-on-open | 199,464.617 | `ldb-longrun/build/reports/ldb-db-bench-read-optimized-warmopen-010/ldb-db-bench-summary.json` |
+| LDB 自身提升 | 7.93% | `(199464.617 - 184805.871) / 184805.871` |
+| 本轮 RocksDB JNI | 300,707.294 | `build/reports/rocksdbjni-comparison-warmopen-010/comparison.csv` |
+| 本轮 LDB/RocksDB JNI | 66.33% | `199464.617 / 300707.294` |
+
+结论：显式 block cache open-time warmup 对 cold_readrandom 有正收益，但仍未达到 70%+；后续需要继续减少 data block key 解码和 block 内定位成本，或在文件格式版本中引入更轻量的 block-local index。
+
+## Restart key 内存索引
+
+在不修改 SST 文件格式的前提下，`Block` 构造时缓存每个 restart point 的完整 key：
+
+- `Block.seek` 的 restart 二分直接比较 `restartKeys[mid]`，不再为了二分定位反复解码 restart entry。
+- `Block.seekAll` 也复用同一 restart key cache。
+- 代价是每个打开的 block 多持有一组 restart key slice；在 `blockCacheWarmOnOpen=true` 时，该成本前移到打开/预热阶段。
+- 该策略为后续文件格式版本中的 block-local index 提供低风险内存侧验证。
+
 ## 后续版本候选
+- 下一阶段文件格式设计已落入 `docs/storage-format-0.11-block-index-design.md` 及英文副本，重点转向持久化紧凑 block-local index，而不是 full-entry 内存索引。
 
 - 文件格式增强：block-level key index、filter/layout metadata、format version capability。
 - 更深层块内查找优化：减少 restart 区间线性扫描。
