@@ -7,6 +7,7 @@ import net.xdob.vexra.ldb.util.Slice;
 
 import java.util.Map.Entry;
 import java.util.NavigableMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -17,6 +18,7 @@ public class MemTable
     implements SeekingIterable<InternalKey, Slice> {
   private final InternalKeyComparator internalKeyComparator;
   private final ConcurrentSkipListMap<InternalKey, Slice> table;
+  private final ConcurrentHashMap<Slice, PointEntry> latestPointEntries;
   private final ConcurrentSkipListMap<InternalKey, Slice> rangeTombstones;
   private final AtomicLong approximateMemoryUsage = new AtomicLong();
   private final AtomicLong rangeTombstoneCount = new AtomicLong();
@@ -24,6 +26,7 @@ public class MemTable
   public MemTable(InternalKeyComparator internalKeyComparator) {
     this.internalKeyComparator = internalKeyComparator;
     table = new ConcurrentSkipListMap<>(internalKeyComparator);
+    latestPointEntries = new ConcurrentHashMap<Slice, PointEntry>();
     rangeTombstones = new ConcurrentSkipListMap<>(internalKeyComparator);
   }
 
@@ -42,6 +45,9 @@ public class MemTable
 
     InternalKey internalKey = new InternalKey(key, sequenceNumber, valueType);
     table.put(internalKey, value);
+    if (valueType == ValueType.VALUE || valueType == ValueType.DELETION) {
+      latestPointEntries.put(key, new PointEntry(internalKey, value));
+    }
     if (valueType == ValueType.DELETE_RANGE) {
       rangeTombstones.put(internalKey, value);
       rangeTombstoneCount.incrementAndGet();
@@ -52,6 +58,11 @@ public class MemTable
 
   public LookupResult get(LookupKey key) {
     requireNonNull(key, "key is null");
+
+    LookupResult fastResult = getLatestPointEntry(key);
+    if (fastResult != null) {
+      return fastResult;
+    }
 
     InternalKey internalKey = key.getInternalKey();
     Entry<InternalKey, Slice> pointEntry = null;
@@ -83,6 +94,26 @@ public class MemTable
       return LookupResult.deleted(key, entryKey.getSequenceNumber());
     }
     return LookupResult.ok(key, pointEntry.getValue(), entryKey.getSequenceNumber());
+  }
+
+  private LookupResult getLatestPointEntry(LookupKey key) {
+    if (rangeTombstoneCount.get() != 0) {
+      return null;
+    }
+
+    PointEntry pointEntry = latestPointEntries.get(key.getUserKey());
+    if (pointEntry == null) {
+      return null;
+    }
+
+    InternalKey entryKey = pointEntry.internalKey;
+    if (entryKey.getSequenceNumber() > key.getInternalKey().getSequenceNumber()) {
+      return null;
+    }
+    if (entryKey.getValueType() == ValueType.DELETION) {
+      return LookupResult.deleted(key, entryKey.getSequenceNumber());
+    }
+    return LookupResult.ok(key, pointEntry.value, entryKey.getSequenceNumber());
   }
 
   private long newestCoveringRangeDelete(LookupKey key, long newerThanSequence) {
@@ -157,6 +188,16 @@ public class MemTable
     @Override
     public void remove() {
       throw new UnsupportedOperationException();
+    }
+  }
+
+  private static final class PointEntry {
+    private final InternalKey internalKey;
+    private final Slice value;
+
+    private PointEntry(InternalKey internalKey, Slice value) {
+      this.internalKey = internalKey;
+      this.value = value;
     }
   }
 }

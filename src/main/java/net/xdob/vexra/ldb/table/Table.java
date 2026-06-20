@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Comparator;
+import java.util.Map.Entry;
 import java.util.concurrent.Callable;
 
 import static com.google.common.base.Preconditions.checkArgument;
@@ -165,6 +166,31 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       return true;
     }
     return filterPolicy.keyMayMatch(userKey, filterBlock);
+  }
+
+  /**
+   * 按内部 key 执行 SST 点查。
+   *
+   * <p>该方法只负责在 table 层定位 index block 和 data block，并返回 data block 中 seek 到的候选 entry。
+   * sequence、value type、user key 是否匹配等 LSM 语义仍由 impl 层判断，避免 table 包依赖更高层读取语义。</p>
+   *
+   * @param internalKey 已编码的内部 key
+   * @return seek 到的候选 entry；如果目标 key 超出 table/block 范围则返回 null
+   */
+  public Entry<Slice, Slice> get(Slice internalKey) {
+    Entry<Slice, Slice> indexEntry = indexBlock.seek(internalKey);
+    if (indexEntry == null) {
+      return null;
+    }
+    Block dataBlock = openBlock(indexEntry.getValue());
+    Entry<Slice, Slice> candidate = dataBlock.seek(internalKey);
+    if (candidate == null) {
+      return null;
+    }
+    if (comparator.compare(candidate.getKey(), internalKey) < 0) {
+      return null;
+    }
+    return candidate;
   }
 
   protected abstract Footer init() throws IOException;

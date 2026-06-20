@@ -17,6 +17,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.util.Map.Entry;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -31,6 +32,9 @@ public class TableCache {
   private final AtomicLong tableRequestCount = new AtomicLong();
   private final AtomicLong tableLoadCount = new AtomicLong();
   private final AtomicLong iteratorRequestCount = new AtomicLong();
+  private final AtomicLong directGetRequestCount = new AtomicLong();
+  private final AtomicLong directGetHitCount = new AtomicLong();
+  private final AtomicLong directGetMissCount = new AtomicLong();
   private final AtomicLong mayContainRequestCount = new AtomicLong();
   private final AtomicLong mayContainTrueCount = new AtomicLong();
   private final AtomicLong mayContainFalseCount = new AtomicLong();
@@ -80,6 +84,30 @@ public class TableCache {
   public InternalTableIterator newIterator(long number) {
     iteratorRequestCount.incrementAndGet();
     return new InternalTableIterator(getTable(number).iterator());
+  }
+
+  /**
+   * 通过 table 层 direct get 读取单个内部 key。
+   *
+   * <p>该入口用于随机点查和 MultiGet，避免创建完整的 table/internal iterator 链。返回值仍是 SST 中 seek 到的候选 entry，
+   * 上层负责判断 user key、sequence 和 value type 语义。</p>
+   */
+  public Entry<Slice, Slice> get(FileMetaData file, InternalKey internalKey) {
+    return get(file.getNumber(), internalKey);
+  }
+
+  /**
+   * 通过 table 层 direct get 读取单个内部 key。
+   */
+  public Entry<Slice, Slice> get(long number, InternalKey internalKey) {
+    directGetRequestCount.incrementAndGet();
+    Entry<Slice, Slice> result = getTable(number).get(internalKey.encode());
+    if (result == null) {
+      directGetMissCount.incrementAndGet();
+    } else {
+      directGetHitCount.incrementAndGet();
+    }
+    return result;
   }
 
   public long getApproximateOffsetOf(FileMetaData file, Slice key) {
@@ -142,6 +170,9 @@ public class TableCache {
     return "tableRequests=" + tableRequestCount.get()
         + ",tableLoads=" + tableLoadCount.get()
         + ",iteratorRequests=" + iteratorRequestCount.get()
+        + ",directGetRequests=" + directGetRequestCount.get()
+        + ",directGetHits=" + directGetHitCount.get()
+        + ",directGetMisses=" + directGetMissCount.get()
         + ",mayContainRequests=" + mayContainRequestCount.get()
         + ",mayContainTrue=" + mayContainTrueCount.get()
         + ",mayContainFalse=" + mayContainFalseCount.get()

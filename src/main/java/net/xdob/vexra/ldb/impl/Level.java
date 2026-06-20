@@ -107,19 +107,14 @@ public class Level
       lastFileRead = fileMetaData;
       lastFileReadLevel = levelNumber;
 
-      // open the iterator
       readStats.recordTableRead();
-      InternalTableIterator iterator = tableCache.newIterator(fileMetaData);
-
-      // seek to the key
-      iterator.seek(key.getInternalKey());
 
       LookupResult pointResult = null;
       long pointSequence = -1;
-      if (iterator.hasNext()) {
+      Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key.getInternalKey());
+      if (entry != null) {
         // parse the key in the block
-        Entry<InternalKey, Slice> entry = iterator.next();
-        InternalKey internalKey = entry.getKey();
+        InternalKey internalKey = new InternalKey(entry.getKey());
         checkState(internalKey != null, "Corrupt key for %s", key.getUserKey().toString(UTF_8));
 
         // if this is a value key (not a delete) and the keys match, return the value
@@ -185,9 +180,8 @@ public class Level
       }
       FileMetaData fileMetaData = files.get(fileIndex);
       readStats.recordTableRead();
-      InternalTableIterator iterator = tableCache.newIterator(fileMetaData);
       for (Integer keyIndex : keyIndexes) {
-        LookupResult lookupResult = getFromIterator(fileMetaData, iterator, keys.get(keyIndex));
+        LookupResult lookupResult = getFromTable(fileMetaData, keys.get(keyIndex));
         if (lookupResult != null) {
           results.set(keyIndex, lookupResult);
         }
@@ -197,14 +191,12 @@ public class Level
     return results;
   }
 
-  private LookupResult getFromIterator(FileMetaData fileMetaData, InternalTableIterator iterator, LookupKey key) {
-    iterator.seek(key.getInternalKey());
-
+  private LookupResult getFromTable(FileMetaData fileMetaData, LookupKey key) {
     LookupResult pointResult = null;
     long pointSequence = -1;
-    if (iterator.hasNext()) {
-      Entry<InternalKey, Slice> entry = iterator.next();
-      InternalKey internalKey = entry.getKey();
+    Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key.getInternalKey());
+    if (entry != null) {
+      InternalKey internalKey = new InternalKey(entry.getKey());
       checkState(internalKey != null, "Corrupt key for %s", key.getUserKey().toString(UTF_8));
       if (key.getUserKey().equals(internalKey.getUserKey())) {
         if (internalKey.getValueType() == ValueType.DELETION) {
