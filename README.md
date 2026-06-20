@@ -132,6 +132,10 @@ ldb checkpoint <db> <targetDir>
 - `ldb.api.supportedFeatures`
 - `ldb.api.unsupportedFeatures`
 - `ldb.api.rocksdbGapPlan`
+- `ldb.tableFormat`
+- `ldb.storageFormat`
+- `ldb.tableFormatPolicy`
+- `ldb.sstReadStats`：启用 `BloomFilterPolicy` 后应能看到 `filterSkips`、`mayContainRequests`、`mayContainFalse`，用于归档随机 miss 是否被 SST filter block 短路。
 
 ## 重要边界
 
@@ -149,6 +153,9 @@ ldb checkpoint <db> <targetDir>
 - `CODE_OF_CONDUCT.md`：社区行为准则，提供英文副本和中英切换。
 - `CHANGELOG.md`：版本变更记录，提供英文副本和中英切换。
 - `docs/release.md`：发布流程说明，提供英文副本和中英切换。
+- `docs/storage-format.md`：当前 WAL、SST/table、MANIFEST、backup metadata 和 check/repair 文件格式参考，提供英文副本。
+- `docs/storage-format-0.8-design.md`：0.8.0 文件格式演进设计，覆盖 SST/table v2 properties、兼容策略和迁移/回滚边界，提供英文副本。
+- `docs/storage-format-0.8-acceptance.md`：0.8.0 文件格式发布验收矩阵，索引 `storageFormatGates` 证据，提供英文副本。
 - `docs/quick-start.md`：首次使用快速入门，提供英文副本和中英切换。
 - `docs/user-manual.md`：应用接入、运维和故障排查用户手册，提供英文副本和中英切换。
 - `docs/operations.md`：生产前验证、备份恢复、升级、check/repair 和故障处置 Runbook。

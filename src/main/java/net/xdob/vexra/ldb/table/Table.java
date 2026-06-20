@@ -24,6 +24,7 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   protected final BlockHandle metaindexBlockHandle;
   protected final FilterPolicy filterPolicy;
   protected final Slice filterBlock;
+  protected final TableProperties properties;
 
   protected final BlockCache blockCache;
 
@@ -52,11 +53,21 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     Block loadedIndexBlock;
     BlockHandle loadedMetaindexBlockHandle;
     Slice loadedFilterBlock;
+    TableProperties loadedProperties;
     try {
       Footer footer = init();
       loadedIndexBlock = openBlock(footer.getIndexBlockHandle());
       loadedMetaindexBlockHandle = footer.getMetaindexBlockHandle();
       loadedFilterBlock = readFilterBlock(loadedMetaindexBlockHandle);
+      loadedProperties = readPropertiesBlock(loadedMetaindexBlockHandle);
+      if (loadedProperties.isLegacy()
+          && options != null
+          && !options.allowLegacyTableFormat()) {
+        throw new IOException("Legacy table format is not allowed: " + name);
+      }
+      loadedProperties.validateReadable(
+          options == null || options.failOnUnknownTableFeature(),
+          name);
     } catch (IOException e) {
       closeAfterConstructorFailure();
       throw e;
@@ -68,6 +79,7 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     this.indexBlock = loadedIndexBlock;
     this.metaindexBlockHandle = loadedMetaindexBlockHandle;
     this.filterBlock = loadedFilterBlock;
+    this.properties = loadedProperties;
   }
 
   /**
@@ -125,6 +137,27 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     return null;
   }
 
+  /**
+   * 从 metaindex 中读取 table properties block。
+   *
+   * 旧格式 SST 没有 `properties` entry，此时返回 v1 legacy 视图；新格式 SST
+   * 则在打开 table 阶段解析属性并执行 feature set 校验，避免热路径重复解码。
+   */
+  private TableProperties readPropertiesBlock(BlockHandle metaindexBlockHandle) throws IOException {
+    Block metaIndexBlock = openBlock(metaindexBlockHandle);
+    BlockIterator iterator = metaIndexBlock.iterator();
+    Slice target = Slices.utf8Slice(TableProperties.META_INDEX_KEY);
+
+    while (iterator.hasNext()) {
+      BlockEntry entry = iterator.next();
+      if (entry.getKey().equals(target)) {
+        BlockHandle handle = BlockHandle.readBlockHandle(entry.getValue().input());
+        return TableProperties.read(openBlock(handle));
+      }
+    }
+    return TableProperties.legacy();
+  }
+
   protected abstract Slice readRawBlock(BlockHandle blockHandle) throws IOException;
 
   public boolean mayContain(Slice userKey) {
@@ -139,6 +172,10 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   @Override
   public TableIterator iterator() {
     return new TableIterator(this, indexBlock.iterator());
+  }
+
+  public TableProperties getProperties() {
+    return properties;
   }
 
   public Block openBlock(Slice blockEntry) {

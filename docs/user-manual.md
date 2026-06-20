@@ -68,6 +68,10 @@ try (LDB db = LDBFactory.factory.open(new File("data/app.ldb"), options)) {
 | `compactionRateLimitBytesPerSecond` | compaction 限速 | 避免后台 IO 挤占业务 |
 | `checkpointCopyRateLimitBytesPerSecond` | checkpoint 复制限速 | 硬链接失败或跨文件系统复制时限制带宽 |
 | `groupCommitEnabled` | 同步写合并提交 | 同步写多时建议灰度开启 |
+| `tableFormatVersion` | 新写 SST/table 的格式版本 | 默认 `1`；仅在明确需要 v2 properties block 时设置为 `2` |
+| `writeTableProperties` | 是否写入 v2 table properties | 默认开启，但只有 `tableFormatVersion=2` 时才落盘 |
+| `allowLegacyTableFormat` | 是否允许读取缺少 properties block 的旧 SST | 默认允许，保障旧库兼容 |
+| `failOnUnknownTableFeature` | 遇到未知不兼容 feature、未来 table format version 或损坏版本字段时 fail-fast | 生产默认保持开启；关闭只用于诊断性读取，不作为回滚策略 |
 
 插件相关配置见 [插件文档入口](ldb-plugin-docs-index.md)。
 
@@ -175,17 +179,19 @@ db.compactRange(cf, beginKey, endKey);
 
 - `ldb.recoveryEvidence`：记录当前库的 WAL、MANIFEST、check/repair 入口和 repair 报告状态。
 - `ldb.backupEvidence`：记录 checkpoint、backup、restore、对象仓库和清理 dry-run 的证据约定。
+- `ldb.tableFormat`：记录 SST/table format version、v1 legacy/v2 数量和 feature set 摘要。
+- `ldb.storageFormat`：记录 WAL、MANIFEST、CURRENT、COLUMN-FAMILIES、backup metadata 和 table format 的整体格式摘要。
 
 命令：
 
 ```bash
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool properties data/app.ldb
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool scan data/app.ldb 20
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool backup data/app.ldb backups
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool incremental-backup data/app.ldb backups
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check-backup backups/backup-000001
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool restore backups/backup-000001 restored.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool properties data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool scan data/app.ldb 20
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool backup data/app.ldb backups
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool incremental-backup data/app.ldb backups
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check-backup backups/backup-000001
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool restore backups/backup-000001 restored.ldb
 ```
 
 `scan` 只读打开默认列族，按 key 顺序输出 JSON。默认 limit 为 100，显式 limit 必须为正整数；key/value 使用 base64，适合脚本排查小样本，不适合替代业务级导出。
@@ -193,7 +199,7 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 `checkpoint` 适合生成本地一致性副本。实现会在临时目录中构建，校验通过后再发布到目标目录；失败时会清理临时目录，成功报告会包含复制、硬链接、字节数和耗时统计。
 
 ```bash
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool checkpoint data/app.ldb checkpoints/app-001
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool checkpoint data/app.ldb checkpoints/app-001
 ```
 
 目标目录必须不存在或为空。大库或跨文件系统场景下，如果 SST 硬链接失败会退化为文件复制，可通过 `Options#checkpointCopyRateLimitBytesPerSecond(long)` 限制复制带宽。
@@ -205,8 +211,8 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 只读诊断：
 
 ```bash
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool repair-plan data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool repair-plan data/app.ldb
 ```
 
 执行 repair 前必须：
@@ -219,7 +225,7 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 执行 repair：
 
 ```bash
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool repair data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool repair data/app.ldb
 ```
 
 ## 插件
@@ -276,7 +282,7 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 升级后：
 
 - 保留旧版本 jar、备份和报告。
-- 观察 `ldb.api.compatibility`、`ldb.operationStats`、`ldb.compactionStats` 和 `ldb.writeStallStats`。
+- 观察 `ldb.api.compatibility`、`ldb.operationStats`、`ldb.compactionStats`、`ldb.writeStallStats`、`ldb.tableFormat` 和 `ldb.storageFormat`。
 - 出现异常时先停止写入，再按 [运维 Runbook](operations.md) 处理。
 
 ## 常见问题
@@ -306,7 +312,17 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 - [快速入门](quick-start.md)
 - [运维 Runbook](operations.md)
 - [发布流程](release.md)
+- [文件格式参考](storage-format.md)
+- [0.8 文件格式设计](storage-format-0.8-design.md)
+- [0.8 文件格式验收矩阵](storage-format-0.8-acceptance.md)
 - [项目设计](ldb-project-design.md)
 - [生产级发布规划](ldb-production-readiness-plan.md)
 - [RocksDB 差距与下一版本规划](ldb-rocksdb-gap-next-version-plan.md)
 - [对外承诺和验收边界](vexra-ldb-external-commitment.md)
+## 0.9.0-SNAPSHOT SF-06：table format 策略观测
+
+应用启用 v2 写入前，建议先读取 `ldb.tableFormatPolicy`。默认应为 `newWrites=v1,productionState=default-legacy`；显式设置 `Options.tableFormatVersion(2)` 后应为 `newWrites=v2-properties,productionState=explicit-v2`。如需停止新写 v2，恢复 `tableFormatVersion=1` 即可阻止后续 SST 继续写入 v2；已有 v2 SST 仍由当前版本读取。
+
+## Bloom filter 随机读观测
+
+对 readrandom miss 较多的工作负载，可以通过 `Options.filterPolicy(new BloomFilterPolicy(bitsPerKey))` 启用 SST full-key Bloom filter。发布前建议归档 `ldb.sstReadStats`：`mayContainRequests` 表示候选 SST filter 判断次数，`mayContainFalse` 表示 Bloom 判定一定不存在，`filterSkips` 表示因此跳过 table iterator 的次数。若未配置 filter policy 或打开旧 SST 时没有匹配 filter block，读路径会保守回退到 may-contain=true。

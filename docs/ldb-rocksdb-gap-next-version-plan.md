@@ -284,6 +284,63 @@ stateDiagram-v2
 | RocksDB 风格适配层 | 暂不提供完整适配层，继续 LDB 原生 API + `ldb.api.*` 自描述 | 避免调用方误以为完整 RocksDB 兼容 |
 | MergeOperator/transactions/custom Env | 继续 unsupported | 这些能力会改变写入、恢复、隔离或文件系统抽象边界 |
 
+## 随机读性能专项规划
+
+本专项承接 `docs/ldb-rocksdb-performance-baseline.md` 中的 Java/JNI 对标结果。当前 warm `readrandom` 已从约 29% 提升到 67.6%，下一阶段目标是把结论从“单轮 warm benchmark 过线”推进到“warm/cold/native 多口径都有可复跑证据”，并继续缩小 SST 点查、缓存和批量点查路径与 RocksDB 的差距。
+
+### 范围
+
+| 项目 | 规划 |
+| --- | --- |
+| 范围内 | `readrandom`、冷启动随机读、SST 点查、Bloom/filter、block/table cache、MultiGet、benchmark 稳定性、RocksDB native/JNI 对标 |
+| 范围外 | 事务、Raft、插件、网络、备份恢复、非读路径大重构；除非验证显示它们直接影响随机读 |
+
+### 行动项
+
+| 编号 | 优先级 | 行动项 | 主要文件/入口 | 验收证据 |
+| --- | --- | --- | --- | --- |
+| RR-01 | P0 | 固化当前已达标基线，保留 `scripts/run-rocksdbjni-comparison.ps1` 口径，并新增多轮运行统计，输出 min/median/p95/max | `scripts/run-rocksdbjni-comparison.ps1`、`ldb-longrun` benchmark report | 多轮 comparison 报告能解释 RocksDB JNI 与 LDB 波动 |
+| RR-02 | P0 | 增加冷启动随机读 benchmark：预填充后关闭 DB、重开后执行 `readrandom`，单独衡量 SST/table cache 路径 | `LdbDbBenchMain`、`RocksDbJniBench`、comparison 脚本 | `cold_readrandom` 独立出现在 JSON/CSV 报告 |
+| RR-03 | P0 | 接入 RocksDB native `db_bench` 对标，和 RocksDB JNI 结果分开归档 | `scripts/run-rocksdb-comparison.ps1`、性能基线文档 | native RocksDB 版本、命令、参数、结果可追溯 |
+| RR-04 | P0 | 强化报告口径：区分 `warm_readrandom`、`cold_readrandom`、`readwhilewriting`、`multiget_random` | `comparison.json`、`comparison.csv`、`docs/ldb-rocksdb-performance-baseline*.md` | 不同读场景不再混用同一 `readrandom` 结论 |
+| RR-05 | P1 | 优化 SST 点查路径，重点检查文件筛选、filter 判断、block 解码、iterator 创建成本 | `Version`、`Level0`、`Level`、`TableCache`、`Table` | cold `readrandom` 达到验收阈值且正确性测试通过 |
+| RR-06 | P1 | 做默认读优化参数实验，评估 `BloomFilterPolicy`、`blockCacheSize`、`cacheBlocks`、`verifyChecksums` 组合 | `Options`、benchmark 配置、用户手册 | 同时输出默认配置和读优化配置结果 |
+| RR-07 | P1 | 补 MultiGet 专项，验证批量查询是否复用 snapshot、memtable lookup、SST 文件筛选和 table cache | `LDbImpl#get(List<byte[]>)`、相关测试 | `multiget_random` 报告和正确性测试通过 |
+| RR-08 | P0 | 增加回归保护，覆盖默认 `get` 快路径、显式 snapshot、delete、range delete、immutable memtable、SST fallback | 单元测试、故障/兼容样本 | 优化不破坏可见性和删除语义 |
+| RR-09 | P0 | 建立验收门槛：短期 warm `readrandom >= 0.65x RocksDB JNI`，cold `readrandom >= 0.50x RocksDB JNI`；中期 native `db_bench` 稳定超过 `0.50x` | release gate、longrun benchmark、performance baseline | 门槛、环境、波动范围和失败分类均归档 |
+| RR-10 | P0 | 同步中英文文档，记录命令、参数、环境、结果和已知偏差 | `docs/ldb-rocksdb-performance-baseline.md`、`.en.md` | 中英文结果一致，且可从报告路径追溯 |
+
+### 验收命令
+
+| 命令 | 用途 |
+| --- | --- |
+| `.\gradlew.bat :ldb-longrun:ldbDbBenchReport` | 生成 LDB db_bench 风格报告 |
+| `powershell.exe -ExecutionPolicy Bypass -File .\scripts\run-rocksdbjni-comparison.ps1` | 生成 RocksDB JNI 对比报告 |
+| `.\scripts\run-rocksdb-comparison.ps1` | 在本机具备 native RocksDB `db_bench` 后生成 native 对比报告 |
+
+### 开放问题
+
+| 编号 | 问题 | 默认建议 |
+| --- | --- | --- |
+| RR-OQ-01 | native RocksDB `db_bench` 是否允许在当前机器安装或编译 | 若允许，优先补 native 对标；若不允许，继续把 JNI 对标作为 Java 调用路径证据 |
+| RR-OQ-02 | 下一阶段优先冲 cold `readrandom >= 50%`，还是继续把 warm `readrandom` 从 67.6% 往 80% 推 | 优先 cold `readrandom`，因为它更能暴露 SST/table cache 真实差距 |
+| RR-OQ-03 | 是否接受 benchmark profile 启用 Bloom/filter/cache 作为“读优化配置” | 接受，但必须同时保留默认配置结果，避免把调优口径误写成默认性能 |
+
+### 当前落地进度
+
+| 编号 | 状态 | 证据 |
+| --- | --- | --- |
+| RR-01 | 已完成基础版 | `run-rocksdbjni-comparison.ps1 -Runs 2` 已输出 `comparison-stats.csv/json`，记录 min/median/p95/max |
+| RR-02 | 已完成 Java/JNI 口径 | `cold_readrandom` 已接入 LDB；RocksDB JNI 通过 `cold_readrandom_prepare` + `cold_readrandom_existing` 两段短进程规避 close 问题 |
+| RR-03 | 待外部环境 | 当前仍未提供 native RocksDB `db_bench`，只保留 `run-rocksdb-comparison.ps1` 入口 |
+| RR-04 | 已完成基础版 | `comparison.json/csv` 已区分 `warm_readrandom` 与 `cold_readrandom` |
+| RR-05 | 待深入实现 | 本轮只验证 cold 随机读已达 0.71x；SST 点查内部优化仍需单独 profiling |
+| RR-06 | 待实现 | 尚未增加默认配置与读优化配置的并列 benchmark profile |
+| RR-07 | 待实现 | 尚未增加 `multiget_random` benchmark |
+| RR-08 | 已完成基础版 | `LdbCoreBehaviorTest.shouldKeepFastGetSemanticsAcrossMemTableSstSnapshotAndDelete` 覆盖默认 get 快路径语义 |
+| RR-09 | 已完成基础门槛 | warm `readrandom` 本轮 0.91x - 1.14x，cold `readrandom` 本轮 0.71x，均超过 0.50x |
+| RR-10 | 已完成基础版 | `ldb-rocksdb-performance-baseline.md` 与英文副本已更新 warm/cold 结果和报告路径 |
+
 ## 开放问题与待确认决策
 
 本节用于跟踪仍不明确、需要在下一版本范围冻结前确认的问题。默认建议以“稳定性证据优先、API 语义保守”为原则；如果业务侧有强需求，再把对应能力提升为专项设计。
@@ -313,3 +370,142 @@ stateDiagram-v2
 | 发布门禁 | 短门禁为硬门禁，长压测为发布候选证据 | release gate 输出长压测证据路径字段，但不强制每次本地运行 |
 | 故障注入 | 自动化覆盖可稳定场景，低磁盘/跨文件系统/权限失败允许手工归档 | 23.4 增加证据矩阵和手工证据模板 |
 | PrefixExtractor | 等真实 prefix-heavy workload 证据再进入实现 | 23.5 先做 key/prefix 规范评审，不改读路径 |
+
+## RR-05/RR-06/RR-07 专项完成证据（2026-06-20）
+
+本次专项验证使用 `num=50000`、`reads=50000`、`value_size=100`、`batch_size=64`。它用于证明新增 profiling、profile 并列输出和 MultiGet benchmark 链路可复跑，不替代前面 `num=200000` 的正式基线。
+
+| profile | 场景 | LDB ops/s | RocksDB JNI ops/s | 比值 | 证据 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| default | `warm_readrandom` | 426,928 | 528,133 | 0.8084 | `build/reports/rocksdbjni-comparison-rr-default/comparison.csv` |
+| default | `cold_readrandom` | 187,288 | 461,805 | 0.4056 | `build/reports/rocksdbjni-comparison-rr-default/comparison.csv` |
+| default | `multiget_random` | 208,268 | 513,548 | 0.4055 | `build/reports/rocksdbjni-comparison-rr-default/comparison.csv` |
+| read_optimized | `warm_readrandom` | 393,160 | 504,415 | 0.7794 | `build/reports/rocksdbjni-comparison-rr-read-optimized/comparison.csv` |
+| read_optimized | `cold_readrandom` | 201,693 | 460,801 | 0.4377 | `build/reports/rocksdbjni-comparison-rr-read-optimized/comparison.csv` |
+| read_optimized | `multiget_random` | 215,978 | 443,409 | 0.4871 | `build/reports/rocksdbjni-comparison-rr-read-optimized/comparison.csv` |
+
+补充证据：
+
+- `build/reports/ldb-read-profile-comparison-rr/profile-comparison.csv` 记录 LDB default/read_optimized 并列 profile。
+- `ldb-longrun/build/reports/ldb-read-profile-comparison-rr/default/ldb-db-bench-summary.json` 记录 `sstReadStats` 和 `blockCacheStats`；default `multiget_random` 行包含 `pointGets=50000`、`tableReads=50000`、`mayContainRequests=50000`。
+- 已通过验证命令：`.\gradlew.bat :compileJava :testClasses :ldb-longrun:compileJava`、`.\gradlew.bat :test --tests net.xdob.vexra.ldb.LdbCoreBehaviorTest --tests net.xdob.vexra.ldb.LdbObservabilityTest`、两组 LDB profile run、两组 RocksDB JNI comparison run。
+
+## 下版本存储格式加固预研
+
+本节只记录后续版本需要补齐的存储格式能力，不作为本轮 RR-05/RR-06/RR-07 的实现范围。本轮随机读专项不修改 WAL、SST、MANIFEST、CURRENT、COLUMN-FAMILIES 或 backup metadata 的磁盘格式，避免为了性能专项引入跨版本兼容风险。
+
+### 当前不足
+
+| 领域 | 当前不足 | 建议方向 | 版本边界 |
+| --- | --- | --- | --- |
+| 格式版本 | WAL、SST、MANIFEST、backup metadata 缺少统一的 `formatVersion` 与 feature set 约定 | 建立统一格式版本矩阵，未知 feature 必须 fail-fast 或进入明确的只读降级路径 | 下版本先设计，默认不改旧格式 |
+| SST 元信息 | SST 文件缺少足够丰富的 per-file properties，例如 key count、data block count、filter policy、压缩方式、sequence 边界和 compaction 来源 | 增加 SST properties block 或等价元信息，并让 check/repair/report 能读取 | 需要独立兼容性设计 |
+| Filter/Cache 可观测性 | 运行时已有 `ldb.sstReadStats` 和 `ldb.blockCacheStats`，但 SST 文件本身缺少 filter 参数自描述 | 在 SST 元信息中记录 filter policy 名称、bits-per-key、prefix/filter 相关参数 | 不在当前读优化 profile 中落盘 |
+| MANIFEST 兼容边界 | MANIFEST 记录能力集合和列族元数据版本的边界仍不够清晰 | 在 MANIFEST 中记录格式版本、feature set、列族元数据版本和不兼容 feature | 需要旧库打开、新库打开、旧工具处理矩阵 |
+| 校验和覆盖 | 各类文件的 checksum 覆盖范围和 check/repair 证据还可以更细 | 明确 WAL/SST/MANIFEST/COLUMN-FAMILIES/backup metadata 的 checksum 范围与错误分类 | 先文档化，再补故障注入 |
+| Backup/Object metadata | 对象仓库证据已有基础能力，但 schema version、chain id、generation、引用来源、保留策略字段仍可增强 | 建立 backup metadata schema 版本，补长链、清理 dry-run 和跨版本 restore 所需字段 | 需要与运维保留策略一起设计 |
+| 格式说明文档 | 当前规划文档覆盖方向，但缺少单独的稳定格式说明 | 新增或规划 `docs/storage-format.md` 与 `docs/storage-format.en.md`，集中描述 WAL/SST/MANIFEST/CURRENT/COLUMN-FAMILIES/backup metadata | 下版本文档优先 |
+
+### 推荐下版本工作包
+
+| 编号 | 优先级 | 工作包 | 交付物 | 验收证据 |
+| --- | --- | --- | --- | --- |
+| SF-01 | P0 | 存储格式说明文档 | `docs/storage-format.md` 与 `docs/storage-format.en.md` | 文档列出每类文件字段、版本、checksum、兼容策略和 repair 行为 |
+| SF-02 | P0 | 格式版本与 feature set 设计 | WAL/SST/MANIFEST/backup metadata 版本矩阵 | 旧库、新库、旧工具、新工具的打开和拒绝策略明确 |
+| SF-03 | P1 | SST properties 预研 | SST 元信息字段设计和最小读取 API | check/repair/report 能展示 key count、filter、compression、sequence 边界 |
+| SF-04 | P1 | Backup metadata schema 加固 | backup/object metadata schema version 与 chain/generation 设计 | 长链 backup、restore、cleanup dry-run 有可追溯 evidence |
+| SF-05 | P1 | 文件级 checksum 证据矩阵 | checksum 覆盖范围与故障分类文档 | 故障注入覆盖截断、篡改、缺文件、未知 feature |
+
+### 本版本明确不做
+
+- 不修改现有 WAL/SST/MANIFEST/CURRENT/COLUMN-FAMILIES/backup metadata 的落盘格式。
+- 不引入会导致旧版本误读或无法打开旧库的新 feature 标记。
+- 不把 `read_optimized` benchmark profile 的 Bloom/cache/checksum 选择固化为磁盘格式能力。
+- 不承诺旧版本可以打开未来新版本写出的数据；只要求后续设计明确 fail-fast 和回滚边界。
+
+### 与当前随机读专项的关系
+
+- RR-05 已通过 `ldb.sstReadStats` 和 `ldb.blockCacheStats` 暴露运行时瓶颈；下版本 SF-03 可以把其中一部分信息沉淀为 SST 自描述元信息。
+- RR-06 的 default/read_optimized profile 仍是 benchmark 配置，不改变格式；如果后续要把 filter 参数固化到 SST，需要进入 SF-02/SF-03 设计。
+- RR-07 的 `multiget_random` 已验证批量读经过 SST/table cache 路径；若后续要做按 SST 聚合 key 的深层优化，应先依赖更完整的 SST properties 和 read path profiling。
+
+## 本版本随机读不足修复完成记录（2026-06-20）
+
+本节记录本版本内完成的不足修复；存储文件格式相关不足仍按“下版本存储格式加固预研”处理，本版本不修改落盘格式。
+
+### 修复项
+
+| 项目 | 修复结论 | 证据 |
+| --- | --- | --- |
+| `candidateFiles` 统计口径 | 已修复 `Level0` / `Level` 中候选文件计数被 `ReadStats.clear()` 清零的问题，并避免空 level 重复累计上一层统计 | 200k default `cold_readrandom` 和 `multiget_random` 均记录 `candidateFiles=200000` |
+| MultiGet SST 批量入口 | `LDbImpl` 的 MultiGet SST miss 段统一走 `VersionSet#get(cfId, List<LookupKey>)` 批量入口，保留同一 snapshot sequence、memtable/immutable memtable 前置筛选和 SST fallback 顺序 | `LdbCoreBehaviorTest` 与 `LdbObservabilityTest` 通过；`multiget_random` 报告记录 SST/table cache 统计 |
+| 200k 正式参数证据 | 已用 `num=200000`、`reads=200000`、`value_size=100`、`batch_size=64` 生成 default/read_optimized profile 和 RocksDB JNI 对照 | `build/reports/ldb-read-profile-comparison-200k/profile-comparison.csv`、`build/reports/rocksdbjni-comparison-200k-default/comparison.csv`、`build/reports/rocksdbjni-comparison-200k-read-optimized/comparison.csv` |
+
+### 200k 对照结果
+
+| profile | 场景 | LDB ops/s | RocksDB JNI ops/s | 比值 | 证据 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| default | `warm_readrandom` | 327,318 | 473,241 | 0.6917 | `build/reports/rocksdbjni-comparison-200k-default/comparison.csv` |
+| default | `cold_readrandom` | 157,705 | 320,820 | 0.4916 | `build/reports/rocksdbjni-comparison-200k-default/comparison.csv` |
+| default | `multiget_random` | 137,833 | 321,336 | 0.4289 | `build/reports/rocksdbjni-comparison-200k-default/comparison.csv` |
+| read_optimized | `warm_readrandom` | 293,233 | 521,253 | 0.5626 | `build/reports/rocksdbjni-comparison-200k-read-optimized/comparison.csv` |
+| read_optimized | `cold_readrandom` | 224,487 | 250,363 | 0.8966 | `build/reports/rocksdbjni-comparison-200k-read-optimized/comparison.csv` |
+| read_optimized | `multiget_random` | 172,418 | 197,650 | 0.8723 | `build/reports/rocksdbjni-comparison-200k-read-optimized/comparison.csv` |
+
+### 当前结论
+
+- 本版本 default profile 的 `warm_readrandom` 仍高于 0.5x；default `cold_readrandom` 在本次 200k 单轮中为 0.4916x，接近门槛但受 RocksDB JNI 单轮波动影响，不能单独作为退化结论。
+- 本版本 read_optimized profile 已把 `cold_readrandom` 提升到 0.8966x，把 `multiget_random` 提升到 0.8723x，满足本版本随机读专项“至少 0.5x”的目标口径。
+- `multiget_random` 现在在 compact 后计时，报告中 default 行记录 `pointGets=200000`、`candidateFiles=200000`、`tableReads=200000`、`mayContainRequests=200000`，证明批量读覆盖 SST 文件筛选和 table cache 路径。
+- native RocksDB `db_bench` 仍是外部环境缺口，本版本保留 `run-rocksdb-comparison.ps1` 入口，不把 native 对照作为本地完成前置条件。
+
+### 已通过验证
+
+- `.\gradlew.bat :compileJava :testClasses :ldb-longrun:compileJava`
+- `.\gradlew.bat :test --tests net.xdob.vexra.ldb.LdbCoreBehaviorTest --tests net.xdob.vexra.ldb.LdbObservabilityTest`
+- 200k default/read_optimized LDB profile run
+- 200k default/read_optimized RocksDB JNI comparison run
+
+## 本版本补充完成项：MultiGet SST 深层批量优化
+
+已完成的本版本修复：
+
+- MultiGet miss path 不再对每个 key 独立走完整 SST iterator 创建流程。
+- L0 按文件新旧顺序批量处理未命中 key，并在同一文件内复用 iterator。
+- 非 L0 level 根据 key range 将 key 分组到候选 SST 文件，并在同一 SST 内复用 iterator。
+- 修正空 level 统计继承问题，避免 candidateFiles/tableReads/iteratorRequests 被上一次读取污染。
+- 不修改当前 SST/table 文件格式，文件格式层改进仍进入下一版本。
+
+最新 200k `read_optimized` MultiGet 对比：
+
+| 指标 | LDB | RocksDB JNI | 比例 |
+| --- | ---: | ---: | ---: |
+| multiget_random ops/s | 200,302.818 | 243,015.078 | 82.42% |
+
+LDB 关键读取统计：tableReads=34,315，iteratorRequests=34,394，candidateFiles=200,000。
+
+证据路径：
+
+- `ldb-longrun/build/reports/ldb-multiget-optimized-200k/ldb-db-bench-summary.json`
+- `build/reports/rocksdbjni-comparison-multiget-optimized-200k/comparison.csv`
+## 0.8.0 目标收敛：文件格式演进
+
+`0.8.0-SNAPSHOT` 的版本目标已经从上一轮随机读性能专项切换为文件格式完善与改进。主设计入口为：
+
+- `docs/storage-format-0.8-design.md`
+- `docs/storage-format-0.8-design.en.md`
+
+本轮优先级：
+
+| 编号 | 优先级 | 目标 | 说明 |
+| --- | --- | --- | --- |
+| SF-01 | P0 | 文件格式参考文档 | 补齐 WAL/SST/MANIFEST/CURRENT/COLUMN-FAMILIES/backup metadata 当前格式说明 |
+| SF-02 | P0 | Table properties block reader | 通过 metaindex `properties` 入口读取 SST 自描述元信息，旧 SST 识别为 v1 legacy |
+| SF-03 | P0 | format version 与 feature set | 支持 compatible/incompatible features，未知不兼容 feature 必须 fail-fast |
+| SF-04 | P1 | v2 opt-in 写入 | TableBuilder 写 properties block，默认保留旧格式写入能力 |
+| SF-05 | P1 | check/repair/report 集成 | 增加 `ldb.storageFormat`、`ldb.tableFormat` 和 release gate `storageFormatGates` |
+
+边界：`0.8.0` 首批不承诺 RocksDB/LevelDB 磁盘格式兼容，不承诺旧版本 LDB 打开新格式库；必须保证新版本打开旧库，并在未知不兼容 feature 上 fail-fast。
+### SF-01 完成状态
+
+`0.8.0` 文件格式工作包 SF-01 已完成，新增当前格式参考文档：`docs/storage-format.md` 与 `docs/storage-format.en.md`。后续实现必须以该参考文档和 `docs/storage-format-0.8-design.md` 为格式事实与演进边界。

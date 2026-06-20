@@ -7,6 +7,7 @@ import net.xdob.vexra.ldb.util.*;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
@@ -32,6 +33,12 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
   private FileMetaData fileToCompact;
   private int fileToCompactLevel;
   private int fileToCompactCfId = -1;
+  private final AtomicLong pointGetCount = new AtomicLong();
+  private final AtomicLong level0GetCount = new AtomicLong();
+  private final AtomicLong levelGetCount = new AtomicLong();
+  private final AtomicLong candidateFileCount = new AtomicLong();
+  private final AtomicLong filterSkipCount = new AtomicLong();
+  private final AtomicLong tableReadCount = new AtomicLong();
 
   public Version(VersionSet versionSet) {
     this.versionSet = versionSet;
@@ -141,11 +148,16 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
       return null;
     }
 
+    pointGetCount.incrementAndGet();
     ReadStats readStats = new ReadStats();
+    level0GetCount.incrementAndGet();
     LookupResult lookupResult = cfLevels.level0.get(key, readStats);
+    recordSstReadStats(readStats);
     if (lookupResult == null) {
       for (Level level : cfLevels.levels) {
+        levelGetCount.incrementAndGet();
         lookupResult = level.get(key, readStats);
+        recordSstReadStats(readStats);
         if (lookupResult != null) {
           break;
         }
@@ -153,6 +165,79 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
     }
     updateStats(cfId, readStats.getSeekFileLevel(), readStats.getSeekFile());
     return lookupResult;
+  }
+
+  public List<LookupResult> get(int cfId, List<LookupKey> keys) {
+    requireNonNull(keys, "keys is null");
+    CfVersionLevels cfLevels = findCfLevels(cfId);
+    List<LookupResult> results = new ArrayList<LookupResult>(Collections.nCopies(keys.size(), (LookupResult) null));
+    if (cfLevels == null || keys.isEmpty()) {
+      return results;
+    }
+
+    pointGetCount.addAndGet(keys.size());
+    ReadStats readStats = new ReadStats();
+    level0GetCount.addAndGet(keys.size());
+    List<LookupResult> levelResults = cfLevels.level0.get(keys, readStats);
+    recordSstReadStats(readStats);
+    mergeBatchResults(results, levelResults);
+
+    for (Level level : cfLevels.levels) {
+      List<Integer> missedIndexes = unresolvedIndexes(results);
+      if (missedIndexes.isEmpty()) {
+        break;
+      }
+      List<LookupKey> missedKeys = new ArrayList<LookupKey>(missedIndexes.size());
+      for (Integer missedIndex : missedIndexes) {
+        missedKeys.add(keys.get(missedIndex));
+      }
+      levelGetCount.addAndGet(missedKeys.size());
+      levelResults = level.get(missedKeys, readStats);
+      recordSstReadStats(readStats);
+      for (int i = 0; i < levelResults.size(); i++) {
+        LookupResult lookupResult = levelResults.get(i);
+        if (lookupResult != null) {
+          results.set(missedIndexes.get(i), lookupResult);
+        }
+      }
+    }
+
+    updateStats(cfId, readStats.getSeekFileLevel(), readStats.getSeekFile());
+    return results;
+  }
+
+  private static void mergeBatchResults(List<LookupResult> target, List<LookupResult> source) {
+    for (int i = 0; i < source.size(); i++) {
+      LookupResult lookupResult = source.get(i);
+      if (lookupResult != null) {
+        target.set(i, lookupResult);
+      }
+    }
+  }
+
+  private static List<Integer> unresolvedIndexes(List<LookupResult> results) {
+    List<Integer> indexes = new ArrayList<Integer>();
+    for (int i = 0; i < results.size(); i++) {
+      if (results.get(i) == null) {
+        indexes.add(i);
+      }
+    }
+    return indexes;
+  }
+
+  private void recordSstReadStats(ReadStats readStats) {
+    candidateFileCount.addAndGet(readStats.getCandidateFiles());
+    filterSkipCount.addAndGet(readStats.getFilterSkips());
+    tableReadCount.addAndGet(readStats.getTableReads());
+  }
+
+  public String sstReadStats() {
+    return "pointGets=" + pointGetCount.get()
+        + ",level0Gets=" + level0GetCount.get()
+        + ",levelGets=" + levelGetCount.get()
+        + ",candidateFiles=" + candidateFileCount.get()
+        + ",filterSkips=" + filterSkipCount.get()
+        + ",tableReads=" + tableReadCount.get();
   }
 
   int pickLevelForMemTableOutput(int cfId, Slice smallestUserKey, Slice largestUserKey) {

@@ -132,6 +132,10 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `ldb.api.supportedFeatures`
 - `ldb.api.unsupportedFeatures`
 - `ldb.api.rocksdbGapPlan`
+- `ldb.tableFormat`
+- `ldb.storageFormat`
+- `ldb.tableFormatPolicy`
+- `ldb.sstReadStats`: with `BloomFilterPolicy` enabled, operators should observe `filterSkips`, `mayContainRequests`, and `mayContainFalse` as evidence that random misses are short-circuited by SST filter blocks.
 
 ## Important Boundaries
 
@@ -149,6 +153,9 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 - `CODE_OF_CONDUCT.md`: community code of conduct, with English copy and language switch.
 - `CHANGELOG.md`: release changelog, with English copy and language switch.
 - `docs/release.md`: release process, with English copy and language switch.
+- `docs/storage-format.md`: current WAL, SST/table, MANIFEST, backup metadata, and check/repair file-format reference, with English copy.
+- `docs/storage-format-0.8-design.md`: 0.8.0 storage-format evolution design covering SST/table v2 properties, compatibility policy, and migration/rollback boundaries, with English copy.
+- `docs/storage-format-0.8-acceptance.md`: 0.8.0 storage-format release acceptance matrix indexing `storageFormatGates` evidence, with English copy.
 - `docs/quick-start.md`: quick start for first-time users, with English copy and language switch.
 - `docs/user-manual.md`: user manual for application integration, operations, and troubleshooting, with English copy and language switch.
 - `docs/operations.md`: runbook for production-readiness validation, backup/restore, upgrade, check/repair, and incident handling.

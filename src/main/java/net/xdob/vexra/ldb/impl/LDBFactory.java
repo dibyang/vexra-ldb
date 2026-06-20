@@ -12,6 +12,7 @@ import net.xdob.vexra.ldb.table.BlockCache;
 import net.xdob.vexra.ldb.table.CustomUserComparator;
 import net.xdob.vexra.ldb.table.FileChannelTable;
 import net.xdob.vexra.ldb.table.TableBuilder;
+import net.xdob.vexra.ldb.table.TableProperties;
 import net.xdob.vexra.ldb.table.UserComparator;
 import net.xdob.vexra.ldb.util.FileUtils;
 import net.xdob.vexra.ldb.util.InternalTableIterator;
@@ -188,9 +189,13 @@ public class LDBFactory
     private boolean ok = true;
     private final List<String> checkedFiles = new ArrayList<>();
     private final List<String> failures = new ArrayList<>();
+    private final List<String> tableFormats = new ArrayList<>();
     private long manifestRecords;
     private long walRecords;
     private long sstEntries;
+    private long legacyTables;
+    private long v2Tables;
+    private long incompatibleTables;
 
     private void setDatabaseDir(File databaseDir) {
       this.databaseDir = databaseDir;
@@ -220,6 +225,23 @@ public class LDBFactory
 
     private void addSstEntry() {
       sstEntries++;
+    }
+
+    private void addTableFormat(File file, TableProperties properties) {
+      if (properties.isLegacy()) {
+        legacyTables++;
+      }
+      if (properties.getFormatVersion() == 2) {
+        v2Tables++;
+      }
+      if (!properties.getIncompatibleFeatures().isEmpty()) {
+        incompatibleTables++;
+      }
+      tableFormats.add(file.getName()
+          + ":formatVersion=" + properties.getFormatVersion()
+          + ",legacy=" + properties.isLegacy()
+          + ",compatible=" + properties.getCompatibleFeatures()
+          + ",incompatible=" + properties.getIncompatibleFeatures());
     }
 
     /**
@@ -271,6 +293,13 @@ public class LDBFactory
       return sstEntries;
     }
 
+    /**
+     * 返回每个 SST 的格式摘要，供 check/report/release gate 跟踪新旧格式混合状态。
+     */
+    public List<String> getTableFormats() {
+      return Collections.unmodifiableList(tableFormats);
+    }
+
     @Override
     public String toString() {
       return "CheckReport{"
@@ -278,9 +307,13 @@ public class LDBFactory
           + ", ok=" + ok
           + ", checkedFiles=" + checkedFiles
           + ", failures=" + failures
+          + ", tableFormats=" + tableFormats
           + ", manifestRecords=" + manifestRecords
           + ", walRecords=" + walRecords
           + ", sstEntries=" + sstEntries
+          + ", legacyTables=" + legacyTables
+          + ", v2Tables=" + v2Tables
+          + ", incompatibleTables=" + incompatibleTables
           + '}';
     }
 
@@ -291,11 +324,28 @@ public class LDBFactory
       appendJsonField(builder, "ok", ok, true);
       appendJsonField(builder, "checkedFiles", checkedFiles, true);
       appendJsonField(builder, "failures", failures, true);
+      appendJsonField(builder, "storageFormat", storageFormatSummary(), true);
+      appendJsonField(builder, "tableFormats", tableFormats, true);
       appendJsonField(builder, "manifestRecords", manifestRecords, true);
       appendJsonField(builder, "walRecords", walRecords, true);
-      appendJsonField(builder, "sstEntries", sstEntries, false);
+      appendJsonField(builder, "sstEntries", sstEntries, true);
+      appendJsonField(builder, "legacyTables", legacyTables, true);
+      appendJsonField(builder, "v2Tables", v2Tables, true);
+      appendJsonField(builder, "incompatibleTables", incompatibleTables, false);
       builder.append("\n}\n");
       return builder.toString();
+    }
+
+    private String storageFormatSummary() {
+      return "table={tables=" + tableFormats.size()
+          + ",legacy=" + legacyTables
+          + ",v2=" + v2Tables
+          + ",incompatible=" + incompatibleTables
+          + "},wal=log-v1"
+          + ",manifest=version-edit-log-v1"
+          + ",current=text-manifest-pointer-v1"
+          + ",columnFamilies=text-registry-v1"
+          + ",backupMetadata=json-v1+schema-v2";
     }
 
     private static void appendJsonField(StringBuilder builder, String name, Object value, boolean comma) {
@@ -480,6 +530,7 @@ public class LDBFactory
             options,
             options.cacheBlocks() ? new BlockCache(options.blockCacheSize()) : null);
         try {
+          report.addTableFormat(tableFile, table.getProperties());
           InternalTableIterator iterator = new InternalTableIterator(table.iterator());
           iterator.seekToFirst();
           while (iterator.hasNext()) {
@@ -863,6 +914,8 @@ public class LDBFactory
     private static final String BACKUP_MANIFEST_FILE = "BACKUP-MANIFEST.json";
     private static final String OBJECT_REFS_FILE = "OBJECT-REFS.json";
     private static final String OBJECTS_DIR = "objects";
+    private static final String BACKUP_METADATA_SCHEMA_VERSION = "backup-metadata-v2";
+    private static final String BACKUP_OBJECT_REFS_SCHEMA_VERSION = "backup-object-refs-v2";
 
     private final File sourceDir;
     private final File targetRoot;
@@ -1116,7 +1169,10 @@ public class LDBFactory
         StringBuilder builder = new StringBuilder();
         builder.append("{\n");
         appendManifestField(builder, "formatVersion", 1, true);
+        appendManifestField(builder, "schemaVersion", BACKUP_METADATA_SCHEMA_VERSION, true);
         appendManifestField(builder, "backupId", backupDir.getName(), true);
+        appendManifestField(builder, "chainId", backupChainId(backupDir, parentBackup), true);
+        appendManifestField(builder, "generation", backupGeneration(backupDir), true);
         appendManifestField(builder, "parentBackupId", parentBackup == null ? "" : parentBackup.getName(), true);
         appendManifestField(builder, "action", report.getAction(), true);
         appendManifestField(builder, "copiedFiles", report.getCopiedFiles(), true);
@@ -1187,6 +1243,10 @@ public class LDBFactory
       if (!refsText.contains("\"formatVersion\"") || !refsText.contains("\"objects\"")) {
         report.addFailure(refsFile, "Malformed backup object refs");
       }
+      String objectRefsSchemaVersion = readJsonString(refsText, "schemaVersion");
+      if (objectRefsSchemaVersion != null && !BACKUP_OBJECT_REFS_SCHEMA_VERSION.equals(objectRefsSchemaVersion)) {
+        report.addFailure(refsFile, "Unsupported backup object refs schemaVersion: " + objectRefsSchemaVersion);
+      }
       for (Entry<String, Set<String>> entry : expectedRefs.entrySet()) {
         String objectId = entry.getKey();
         File objectFile = new File(objectsDir, objectId);
@@ -1232,6 +1292,14 @@ public class LDBFactory
             || !text.contains("\"backupId\": \"" + CheckReport.escape(backupDir.getName()) + "\"")
             || !text.contains("\"published\": true")) {
           report.addFailure(manifest, "Malformed backup manifest");
+        }
+        String schemaVersion = readJsonString(text, "schemaVersion");
+        if (schemaVersion != null && !BACKUP_METADATA_SCHEMA_VERSION.equals(schemaVersion)) {
+          report.addFailure(manifest, "Unsupported backup manifest schemaVersion: " + schemaVersion);
+        }
+        String chainId = readJsonString(text, "chainId");
+        if (schemaVersion != null && (chainId == null || chainId.isEmpty())) {
+          report.addFailure(manifest, "Missing backup manifest chainId");
         }
       } catch (IOException e) {
         report.addFailure(manifest, rootMessage(e));
@@ -1351,6 +1419,9 @@ public class LDBFactory
         StringBuilder builder = new StringBuilder();
         builder.append("{\n");
         builder.append("  \"formatVersion\": 1,\n");
+        builder.append("  \"schemaVersion\": \"").append(BACKUP_OBJECT_REFS_SCHEMA_VERSION).append("\",\n");
+        builder.append("  \"objectStoreVersion\": 1,\n");
+        builder.append("  \"generatedBy\": \"vexra-ldb\",\n");
         builder.append("  \"objects\": [\n");
         int index = 0;
         for (Entry<String, Set<String>> entry : refs.entrySet()) {
@@ -1373,6 +1444,68 @@ public class LDBFactory
 
     private static final class ObjectStoreRebuild {
       private final List<String> deletedObjects = new ArrayList<>();
+    }
+
+    private static String backupChainId(File backupDir, File parentBackup) {
+      if (parentBackup != null) {
+        File parentManifest = new File(parentBackup, BACKUP_MANIFEST_FILE);
+        if (parentManifest.isFile()) {
+          try {
+            String json = new String(java.nio.file.Files.readAllBytes(parentManifest.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+            String chainId = readJsonString(json, "chainId");
+            if (chainId != null && !chainId.isEmpty()) {
+              return chainId;
+            }
+          } catch (IOException ignored) {
+            // 父备份清单不可读时退化为父备份目录名，避免影响旧备份链检查和恢复。
+          }
+        }
+        return "chain:" + parentBackup.getName();
+      }
+      return "chain:" + backupDir.getName();
+    }
+
+    private static int backupGeneration(File backupDir) {
+      String name = backupDir.getName();
+      if (name.startsWith("backup-")) {
+        try {
+          return Integer.parseInt(name.substring("backup-".length()));
+        } catch (NumberFormatException ignored) {
+        }
+      }
+      return 0;
+    }
+
+    private static String readJsonString(String json, String fieldName) {
+      String marker = "\"" + fieldName + "\"";
+      int fieldIndex = json.indexOf(marker);
+      if (fieldIndex < 0) {
+        return null;
+      }
+      int colonIndex = json.indexOf(':', fieldIndex + marker.length());
+      if (colonIndex < 0) {
+        return null;
+      }
+      int startQuote = json.indexOf('"', colonIndex + 1);
+      if (startQuote < 0) {
+        return null;
+      }
+      StringBuilder value = new StringBuilder();
+      boolean escaped = false;
+      for (int i = startQuote + 1; i < json.length(); i++) {
+        char c = json.charAt(i);
+        if (escaped) {
+          value.append(c);
+          escaped = false;
+        } else if (c == '\\') {
+          escaped = true;
+        } else if (c == '"') {
+          return value.toString();
+        } else {
+          value.append(c);
+        }
+      }
+      return null;
     }
 
     private static void appendManifestField(StringBuilder builder, String name, Object value, boolean comma) {
@@ -1481,6 +1614,7 @@ public class LDBFactory
             FileMetaData metaData = readTableMetadata(info.getFileNumber());
             liveTables.add(metaData);
             report.addRecoveredSst(file.getName());
+            recordRepairTableFormat(report, info.getFileNumber());
             maxSequence = Math.max(maxSequence, metaData.getLargest().getSequenceNumber());
           } catch (RuntimeException e) {
             corruptFiles.add(file);
@@ -1496,6 +1630,9 @@ public class LDBFactory
       long nextFileNumber = maxFileNumber + 1;
       WalReplayResult walReplayResult = replayWalLogs(logs, liveTables, nextFileNumber);
       liveTables.addAll(walReplayResult.getTables());
+      for (FileMetaData table : walReplayResult.getTables()) {
+        recordRepairTableFormat(report, table.getNumber());
+      }
       maxSequence = Math.max(maxSequence, walReplayResult.getMaxSequence());
       nextFileNumber = walReplayResult.getNextFileNumber();
       corruptFiles.addAll(walReplayResult.getCorruptLogs());
@@ -1544,6 +1681,7 @@ public class LDBFactory
           try {
             FileMetaData metaData = readTableMetadata(info.getFileNumber());
             report.addRecoveredSst(file.getName());
+            recordRepairTableFormat(report, info.getFileNumber());
             maxSequence = Math.max(maxSequence, metaData.getLargest().getSequenceNumber());
             hasRecoverableInput = true;
           } catch (RuntimeException e) {
@@ -1617,6 +1755,30 @@ public class LDBFactory
             tableFile.length(),
             smallest,
             largest);
+      } finally {
+        tableCache.close();
+      }
+    }
+
+    /**
+     * 记录 repair 过程中可恢复 SST 的格式证据，不修改原始 SST 内容。
+     */
+    private void recordRepairTableFormat(RepairReport report, long fileNumber) throws IOException {
+      report.addTableFormat(new File(databaseDir, Filename.tableFileName(fileNumber)), readTableProperties(fileNumber));
+    }
+
+    /**
+     * 读取指定 SST 的 table properties，用于 repair/report 解释新旧 table 格式。
+     */
+    private TableProperties readTableProperties(long fileNumber) throws IOException {
+      TableCache tableCache = new TableCache(
+          databaseDir,
+          Math.max(16, options.maxOpenFiles() - 10),
+          new InternalUserComparator(internalKeyComparator),
+          options.verifyChecksums(),
+          options);
+      try {
+        return tableCache.getTableProperties(fileNumber);
       } finally {
         tableCache.close();
       }
@@ -2085,12 +2247,16 @@ public class LDBFactory
       private final List<String> recoveredSstFiles = new ArrayList<>();
       private final List<String> replayedWalFiles = new ArrayList<>();
       private final List<String> quarantinedFiles = new ArrayList<>();
+      private final List<String> tableFormats = new ArrayList<>();
       private boolean dryRun;
       private long discardedWalBytes;
       private long manifestFileNumber;
       private String currentFile;
       private long lastSequence;
       private long nextFileNumber;
+      private long legacyTables;
+      private long v2Tables;
+      private long incompatibleTables;
 
       private void setDatabaseDir(File databaseDir) {
         this.databaseDir = databaseDir;
@@ -2102,6 +2268,26 @@ public class LDBFactory
 
       private void addRecoveredSst(String file) {
         recoveredSstFiles.add(file);
+      }
+
+      /**
+       * 追加单个 SST 的格式摘要，并维护 v1/v2/incompatible 计数。
+       */
+      private void addTableFormat(File file, TableProperties properties) {
+        if (properties.isLegacy()) {
+          legacyTables++;
+        }
+        if (properties.getFormatVersion() == 2) {
+          v2Tables++;
+        }
+        if (!properties.getIncompatibleFeatures().isEmpty()) {
+          incompatibleTables++;
+        }
+        tableFormats.add(file.getName()
+            + ":formatVersion=" + properties.getFormatVersion()
+            + ",legacy=" + properties.isLegacy()
+            + ",compatible=" + properties.getCompatibleFeatures()
+            + ",incompatible=" + properties.getIncompatibleFeatures());
       }
 
       private void addReplayedWal(String file) {
@@ -2156,6 +2342,11 @@ public class LDBFactory
         appendArray(builder, "recoveredSstFiles", recoveredSstFiles, true);
         appendArray(builder, "replayedWalFiles", replayedWalFiles, true);
         appendArray(builder, "quarantinedFiles", quarantinedFiles, true);
+        appendField(builder, "storageFormat", storageFormatSummary(), true);
+        appendArray(builder, "tableFormats", tableFormats, true);
+        appendField(builder, "legacyTables", Long.toString(legacyTables), false, true);
+        appendField(builder, "v2Tables", Long.toString(v2Tables), false, true);
+        appendField(builder, "incompatibleTables", Long.toString(incompatibleTables), false, true);
         appendField(builder, "discardedWalBytes", Long.toString(discardedWalBytes), false, true);
         appendField(builder, "manifestFileNumber", Long.toString(manifestFileNumber), false, true);
         appendField(builder, "currentFile", currentFile == null ? "" : currentFile, true);
@@ -2163,6 +2354,21 @@ public class LDBFactory
         appendField(builder, "nextFileNumber", Long.toString(nextFileNumber), false, false);
         builder.append("}\n");
         return builder.toString();
+      }
+
+      /**
+       * 汇总 repair 报告中的跨文件类型格式策略，供发布门禁和人工诊断读取。
+       */
+      private String storageFormatSummary() {
+        return "table={tables=" + tableFormats.size()
+            + ",legacy=" + legacyTables
+            + ",v2=" + v2Tables
+            + ",incompatible=" + incompatibleTables
+            + "},wal=log-v1"
+            + ",manifest=version-edit-log-v1"
+            + ",current=text-manifest-pointer-v1"
+            + ",columnFamilies=text-registry-v1"
+            + ",backupMetadata=json-v1+schema-v2";
       }
 
       private static void appendField(StringBuilder builder, String name, String value, boolean quote) {

@@ -6,6 +6,7 @@ import net.xdob.vexra.ldb.table.BlockCache;
 import net.xdob.vexra.ldb.table.FileChannelTable;
 import net.xdob.vexra.ldb.table.MMapTable;
 import net.xdob.vexra.ldb.table.Table;
+import net.xdob.vexra.ldb.table.TableProperties;
 import net.xdob.vexra.ldb.table.UserComparator;
 import net.xdob.vexra.ldb.util.Closeables;
 import net.xdob.vexra.ldb.util.Finalizer;
@@ -17,6 +18,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static java.util.Objects.requireNonNull;
 
@@ -26,6 +28,13 @@ public class TableCache {
 
   // 新增：全局共享 block cache
   private final BlockCache blockCache;
+  private final AtomicLong tableRequestCount = new AtomicLong();
+  private final AtomicLong tableLoadCount = new AtomicLong();
+  private final AtomicLong iteratorRequestCount = new AtomicLong();
+  private final AtomicLong mayContainRequestCount = new AtomicLong();
+  private final AtomicLong mayContainTrueCount = new AtomicLong();
+  private final AtomicLong mayContainFalseCount = new AtomicLong();
+  private final AtomicLong approximateOffsetRequestCount = new AtomicLong();
 
   public TableCache(final File databaseDir,
                     int tableCacheSize,
@@ -51,6 +60,7 @@ public class TableCache {
         .build(new CacheLoader<Long, TableAndFile>() {
           @Override
           public TableAndFile load(Long fileNumber) throws IOException {
+            tableLoadCount.incrementAndGet();
             return new TableAndFile(
                 databaseDir,
                 fileNumber,
@@ -68,18 +78,38 @@ public class TableCache {
   }
 
   public InternalTableIterator newIterator(long number) {
+    iteratorRequestCount.incrementAndGet();
     return new InternalTableIterator(getTable(number).iterator());
   }
 
   public long getApproximateOffsetOf(FileMetaData file, Slice key) {
+    approximateOffsetRequestCount.incrementAndGet();
     return getTable(file.getNumber()).getApproximateOffsetOf(key);
   }
 
   public boolean mayContain(FileMetaData fileMetaData, Slice userKey) {
-    return getTable(fileMetaData.getNumber()).mayContain(userKey);
+    mayContainRequestCount.incrementAndGet();
+    boolean result = getTable(fileMetaData.getNumber()).mayContain(userKey);
+    if (result) {
+      mayContainTrueCount.incrementAndGet();
+    } else {
+      mayContainFalseCount.incrementAndGet();
+    }
+    return result;
+  }
+
+  /**
+   * 返回指定 SST 的 table properties。
+   *
+   * 该入口服务 0.8.0 文件格式演进中的 check/repair/report，不参与普通 get
+   * 热路径；旧格式 SST 会返回 v1 legacy 属性视图。
+   */
+  public TableProperties getTableProperties(long number) {
+    return getTable(number).getProperties();
   }
 
   private Table getTable(long number) {
+    tableRequestCount.incrementAndGet();
     try {
       return cache.get(number).getTable();
     } catch (ExecutionException e) {
@@ -106,6 +136,16 @@ public class TableCache {
       return "enabled=false";
     }
     return blockCache.stats();
+  }
+
+  public String readStats() {
+    return "tableRequests=" + tableRequestCount.get()
+        + ",tableLoads=" + tableLoadCount.get()
+        + ",iteratorRequests=" + iteratorRequestCount.get()
+        + ",mayContainRequests=" + mayContainRequestCount.get()
+        + ",mayContainTrue=" + mayContainTrueCount.get()
+        + ",mayContainFalse=" + mayContainFalseCount.get()
+        + ",approximateOffsetRequests=" + approximateOffsetRequestCount.get();
   }
 
   private static final class TableAndFile {

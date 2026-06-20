@@ -55,7 +55,8 @@ public class MemTable
 
     InternalKey internalKey = key.getInternalKey();
     Entry<InternalKey, Slice> pointEntry = null;
-    for (Entry<InternalKey, Slice> entry : table.tailMap(internalKey).entrySet()) {
+    Entry<InternalKey, Slice> entry = table.ceilingEntry(internalKey);
+    while (entry != null) {
       InternalKey entryKey = entry.getKey();
       if (!entryKey.getUserKey().equals(key.getUserKey())) {
         break;
@@ -64,6 +65,7 @@ public class MemTable
         pointEntry = entry;
         break;
       }
+      entry = table.higherEntry(entryKey);
     }
 
     long pointSequence = pointEntry == null ? -1 : pointEntry.getKey().getSequenceNumber();

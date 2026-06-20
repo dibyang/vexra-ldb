@@ -1,13 +1,11 @@
 package net.xdob.vexra.ldb.impl;
 
-import com.google.common.collect.Lists;
 import net.xdob.vexra.ldb.table.UserComparator;
 import net.xdob.vexra.ldb.util.InternalTableIterator;
 import net.xdob.vexra.ldb.util.LevelIterator;
 import net.xdob.vexra.ldb.util.Slice;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map.Entry;
@@ -58,6 +56,7 @@ public class Level
   }
 
   public LookupResult get(LookupKey key, ReadStats readStats) {
+    readStats.clear();
     if (files.isEmpty()) {
       return null;
     }
@@ -68,11 +67,12 @@ public class Level
         if (internalKeyComparator.getUserComparator().compare(key.getUserKey(), fileMetaData.getSmallest().getUserKey()) >= 0 &&
             internalKeyComparator.getUserComparator().compare(key.getUserKey(), fileMetaData.getLargest().getUserKey()) <= 0) {
           fileMetaDataList.add(fileMetaData);
+          readStats.recordCandidateFile();
         }
       }
     } else {
       // Binary search to find earliest index whose largest key >= ikey.
-      int index = ceilingEntryIndex(Lists.transform(files, FileMetaData::getLargest), key.getInternalKey(), internalKeyComparator);
+      int index = ceilingFileIndex(files, key.getInternalKey(), internalKeyComparator);
 
       // did we find any files that could contain the key?
       if (index >= files.size()) {
@@ -87,14 +87,15 @@ public class Level
 
       // search this file
       fileMetaDataList.add(fileMetaData);
+      readStats.recordCandidateFile();
     }
 
     FileMetaData lastFileRead = null;
     int lastFileReadLevel = -1;
-    readStats.clear();
     Slice userKey = key.getUserKey();
     for (FileMetaData fileMetaData : fileMetaDataList) {
       if (!tableCache.mayContain(fileMetaData, userKey)) {
+        readStats.recordFilterSkip();
         continue; // 这个 table 一定没有这个 userKey
       }
       if (lastFileRead != null && readStats.getSeekFile() == null) {
@@ -107,6 +108,7 @@ public class Level
       lastFileReadLevel = levelNumber;
 
       // open the iterator
+      readStats.recordTableRead();
       InternalTableIterator iterator = tableCache.newIterator(fileMetaData);
 
       // seek to the key
@@ -146,6 +148,84 @@ public class Level
     return null;
   }
 
+  public List<LookupResult> get(List<LookupKey> keys, ReadStats readStats) {
+    readStats.clear();
+    List<LookupResult> results = new ArrayList<LookupResult>(java.util.Collections.nCopies(keys.size(), (LookupResult) null));
+    if (files.isEmpty() || keys.isEmpty()) {
+      return results;
+    }
+
+    List<List<Integer>> fileToKeyIndexes = new ArrayList<List<Integer>>(files.size());
+    for (int i = 0; i < files.size(); i++) {
+      fileToKeyIndexes.add(new ArrayList<Integer>());
+    }
+    UserComparator userComparator = internalKeyComparator.getUserComparator();
+    for (int i = 0; i < keys.size(); i++) {
+      LookupKey key = keys.get(i);
+      int index = ceilingFileIndex(files, key.getInternalKey(), internalKeyComparator);
+      if (index >= files.size()) {
+        continue;
+      }
+      FileMetaData fileMetaData = files.get(index);
+      if (userComparator.compare(key.getUserKey(), fileMetaData.getSmallest().getUserKey()) < 0) {
+        continue;
+      }
+      readStats.recordCandidateFile();
+      if (tableCache.mayContain(fileMetaData, key.getUserKey())) {
+        fileToKeyIndexes.get(index).add(i);
+      } else {
+        readStats.recordFilterSkip();
+      }
+    }
+
+    for (int fileIndex = 0; fileIndex < fileToKeyIndexes.size(); fileIndex++) {
+      List<Integer> keyIndexes = fileToKeyIndexes.get(fileIndex);
+      if (keyIndexes.isEmpty()) {
+        continue;
+      }
+      FileMetaData fileMetaData = files.get(fileIndex);
+      readStats.recordTableRead();
+      InternalTableIterator iterator = tableCache.newIterator(fileMetaData);
+      for (Integer keyIndex : keyIndexes) {
+        LookupResult lookupResult = getFromIterator(fileMetaData, iterator, keys.get(keyIndex));
+        if (lookupResult != null) {
+          results.set(keyIndex, lookupResult);
+        }
+      }
+    }
+
+    return results;
+  }
+
+  private LookupResult getFromIterator(FileMetaData fileMetaData, InternalTableIterator iterator, LookupKey key) {
+    iterator.seek(key.getInternalKey());
+
+    LookupResult pointResult = null;
+    long pointSequence = -1;
+    if (iterator.hasNext()) {
+      Entry<InternalKey, Slice> entry = iterator.next();
+      InternalKey internalKey = entry.getKey();
+      checkState(internalKey != null, "Corrupt key for %s", key.getUserKey().toString(UTF_8));
+      if (key.getUserKey().equals(internalKey.getUserKey())) {
+        if (internalKey.getValueType() == ValueType.DELETION) {
+          pointResult = LookupResult.deleted(key, internalKey.getSequenceNumber());
+          pointSequence = internalKey.getSequenceNumber();
+        } else if (internalKey.getValueType() == VALUE) {
+          pointResult = LookupResult.ok(key, entry.getValue(), internalKey.getSequenceNumber());
+          pointSequence = internalKey.getSequenceNumber();
+        }
+      }
+    }
+
+    long rangeDeleteSequence = fileMetaData.hasRangeDeletes()
+        ? newestCoveringRangeDelete(fileMetaData, key, pointSequence)
+        : -1;
+    if (rangeDeleteSequence >= 0) {
+      return LookupResult.deleted(key, rangeDeleteSequence);
+    }
+    return pointResult;
+  }
+
   private long newestCoveringRangeDelete(FileMetaData fileMetaData, LookupKey key, long newerThanSequence) {
     InternalTableIterator iterator = tableCache.newIterator(fileMetaData);
     iterator.seekToFirst();
@@ -174,12 +254,18 @@ public class Level
         && userComparator.compare(userKey, endKey) < 0;
   }
 
-  private static <T> int ceilingEntryIndex(List<T> list, T key, Comparator<T> comparator) {
-    int insertionPoint = Collections.binarySearch(list, key, comparator);
-    if (insertionPoint < 0) {
-      insertionPoint = -(insertionPoint + 1);
+  private static int ceilingFileIndex(List<FileMetaData> files, InternalKey key, Comparator<InternalKey> comparator) {
+    int left = 0;
+    int right = files.size();
+    while (left < right) {
+      int mid = (left + right) >>> 1;
+      if (comparator.compare(files.get(mid).getLargest(), key) < 0) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
     }
-    return insertionPoint;
+    return left;
   }
 
   public boolean someFileOverlapsRange(Slice smallestUserKey, Slice largestUserKey) {

@@ -44,6 +44,64 @@ class LdbVerifyCheckTest {
   }
 
   @Test
+  void shouldIncludeStorageFormatEvidenceInCheckReport() throws Exception {
+    File dbDir = new File(tempDir, "storage-format-check-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options().createIfMissing(true).writeBufferSize(256).tableFormatVersion(2))) {
+      for (int i = 0; i < 20; i++) {
+        db.put(bytes(String.format("fmt%03d", i)), bytes("value-" + i));
+      }
+      db.compactRange(bytes("fmt000"), bytes("fmt999"));
+    }
+
+    LDBFactory.CheckReport report = LDBFactory.factory.check(dbDir, new Options().createIfMissing(false));
+    assertTrue(report.isOk(), report.toString());
+    assertFalse(report.getTableFormats().isEmpty(), report.toString());
+    assertTrue(report.getTableFormats().stream().anyMatch(value -> value.contains("formatVersion=2")),
+        report.toString());
+
+    String json = report.toJson();
+    assertTrue(json.contains("\"storageFormat\""), json);
+    assertTrue(json.contains("\"tableFormats\""), json);
+    assertTrue(json.contains("\"v2Tables\""), json);
+    assertTrue(json.contains("table.properties"), json);
+  }
+
+  @Test
+  void shouldReportMixedV1AndV2TableFormatsInCheckReport() throws Exception {
+    File dbDir = new File(tempDir, "mixed-storage-format-check-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options().createIfMissing(true).writeBufferSize(256).forceSstOnFlush(true))) {
+      for (int i = 0; i < 20; i++) {
+        db.put(bytes(String.format("legacy%03d", i)), bytes("legacy-" + i));
+      }
+      db.compactRange(bytes("legacy000"), bytes("legacy999"));
+    }
+
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options().createIfMissing(false).writeBufferSize(256).forceSstOnFlush(true).tableFormatVersion(2))) {
+      for (int i = 0; i < 20; i++) {
+        db.put(bytes(String.format("v2%03d", i)), bytes("v2-" + i));
+      }
+      db.compactRange(bytes("v2000"), bytes("v2999"));
+    }
+
+    LDBFactory.CheckReport report = LDBFactory.factory.check(dbDir, new Options().createIfMissing(false));
+    assertTrue(report.isOk(), report.toString());
+    assertTrue(report.getTableFormats().stream().anyMatch(value -> value.contains("formatVersion=1")),
+        report.toString());
+    assertTrue(report.getTableFormats().stream().anyMatch(value -> value.contains("formatVersion=2")),
+        report.toString());
+
+    String json = report.toJson();
+    assertTrue(json.contains("\"legacyTables\": 1"), json);
+    assertTrue(json.matches("(?s).*\"v2Tables\": [1-9][0-9]*.*"), json);
+    assertTrue(json.contains("table.properties"), json);
+  }
+
+  @Test
   void shouldReportCorruptSst() throws Exception {
     File dbDir = new File(tempDir, "corrupt-sst-check-db");
 

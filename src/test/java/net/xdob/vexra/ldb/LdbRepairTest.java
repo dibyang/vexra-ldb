@@ -144,6 +144,28 @@ class LdbRepairTest {
   }
 
   @Test
+  void shouldReportV2TableFormatWhenRepairingFromReadableSst() throws Exception {
+    File dbDir = new File(tempDir, "repair-v2-table-format");
+    createCompactedV2Db(dbDir);
+    deleteFilesWithPrefix(dbDir, "MANIFEST-");
+    assertTrue(new File(dbDir, Filename.currentFileName()).delete());
+
+    LDBFactory.factory.repair(dbDir, new Options().tableFormatVersion(2));
+
+    String report = readText(new File(dbDir, "REPAIR-REPORT.json"));
+    assertTrue(report.contains("\"storageFormat\""), report);
+    assertTrue(report.contains("\"tableFormats\""), report);
+    assertTrue(report.contains("formatVersion=2"), report);
+    assertTrue(report.contains("table.properties"), report);
+    assertTrue(report.contains("\"v2Tables\": 1"), report);
+
+    try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
+      assertArrayEquals(bytes("v2-value-0"), db.get(bytes("v2-k000")));
+      assertArrayEquals(bytes("v2-value-39"), db.get(bytes("v2-k039")));
+    }
+  }
+
+  @Test
   void shouldPlanRepairWithoutModifyingDatabaseDirectory() throws Exception {
     File dbDir = new File(tempDir, "repair-plan");
     createCompactedDefaultDb(dbDir);
@@ -224,6 +246,16 @@ class LdbRepairTest {
       db.put(bytes("deleted"), bytes("gone"));
       db.delete(bytes("deleted"));
       db.compactRange(bytes("a"), bytes("z"));
+    }
+  }
+
+  private static void createCompactedV2Db(File dbDir) throws Exception {
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options().createIfMissing(true).writeBufferSize(128).forceSstOnFlush(true).tableFormatVersion(2))) {
+      for (int i = 0; i < 40; i++) {
+        db.put(bytes(String.format("v2-k%03d", i)), bytes("v2-value-" + i));
+      }
+      db.compactRange(bytes("v2-k000"), bytes("v2-k999"));
     }
   }
 

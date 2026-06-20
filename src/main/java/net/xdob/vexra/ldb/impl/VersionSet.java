@@ -4,6 +4,7 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.*;
 import com.google.common.io.Files;
 import net.xdob.vexra.ldb.Options;
+import net.xdob.vexra.ldb.table.TableProperties;
 import net.xdob.vexra.ldb.table.UserComparator;
 import net.xdob.vexra.ldb.util.InternalIterator;
 import net.xdob.vexra.ldb.util.Level0Iterator;
@@ -176,6 +177,76 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
 
   public LookupResult get(int cfId, LookupKey key) {
     return current.get(cfId, key);
+  }
+
+  public List<LookupResult> get(int cfId, List<LookupKey> keys) {
+    return current.get(cfId, keys);
+  }
+
+  public String sstReadStats() {
+    return current.sstReadStats() + "," + tableCache.readStats();
+  }
+
+  /**
+   * 汇总当前 Version 中所有 SST 的 table format 信息。
+   *
+   * 该属性服务 0.8.0 文件格式演进的诊断和 release gate：旧 SST 会被统计为
+   * legacy v1；显式写入 v2 properties block 的 SST 会展示 format version 与
+   * feature set。读取 properties 只发生在诊断入口，不影响普通 get 热路径。
+   */
+  public String tableFormatStats() {
+    int total = 0;
+    int legacy = 0;
+    int v2 = 0;
+    int incompatible = 0;
+    Set<Integer> versions = new TreeSet<>();
+    StringBuilder files = new StringBuilder();
+    for (Entry<VersionEdit.CfLevel, FileMetaData> entry : current.getFiles().entries()) {
+      FileMetaData file = entry.getValue();
+      TableProperties properties = tableCache.getTableProperties(file.getNumber());
+      total++;
+      versions.add(properties.getFormatVersion());
+      if (properties.isLegacy()) {
+        legacy++;
+      }
+      if (properties.getFormatVersion() == 2) {
+        v2++;
+      }
+      if (!properties.getIncompatibleFeatures().isEmpty()) {
+        incompatible++;
+      }
+      if (files.length() > 0) {
+        files.append(';');
+      }
+      files.append("cf=").append(entry.getKey().getCfId())
+          .append("|level=").append(entry.getKey().getLevel())
+          .append("|file=").append(file.getNumber())
+          .append("|formatVersion=").append(properties.getFormatVersion())
+          .append("|legacy=").append(properties.isLegacy())
+          .append("|compatible=").append(properties.getCompatibleFeatures())
+          .append("|incompatible=").append(properties.getIncompatibleFeatures());
+    }
+    return "tables=" + total
+        + ",legacy=" + legacy
+        + ",v2=" + v2
+        + ",incompatible=" + incompatible
+        + ",formatVersions=" + versions
+        + ",files=[" + files + "]";
+  }
+
+  /**
+   * 返回当前数据库目录的存储格式摘要。
+   *
+   * 这里先把 table format 作为可执行证据接入，同时记录其它文件类型的当前
+   * legacy/schema 事实，后续 MANIFEST/backup schema 加固可继续扩展该属性。
+   */
+  public String storageFormatStats() {
+    return "table={" + tableFormatStats() + "}"
+        + ",wal=log-v1"
+        + ",manifest=version-edit-log-v1"
+        + ",current=text-manifest-pointer-v1"
+        + ",columnFamilies=text-registry-v1"
+        + ",backupMetadata=json-v1+schema-v2";
   }
 
   public boolean overlapInLevel(int cfId, int level, Slice smallestUserKey, Slice largestUserKey) {

@@ -1,10 +1,12 @@
 package net.xdob.vexra.ldb;
 
 import net.xdob.vexra.ldb.impl.LDBFactory;
+import net.xdob.vexra.ldb.impl.BloomFilterPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -205,6 +207,75 @@ class LdbObservabilityTest {
         new Options().createIfMissing(true).cacheBlocks(false))) {
       db.put(bytes("k"), bytes("v"));
       assertEquals("enabled=false", db.getProperty("ldb.blockCacheStats"));
+    }
+  }
+
+  @Test
+  void shouldExposeSstReadStatsForPointLookupProfiling() throws Exception {
+    File dbDir = new File(tempDir, "sst-read-stats-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options()
+            .createIfMissing(true)
+            .writeBufferSize(128)
+            .blockCacheSize(32)
+            .filterPolicy(new BloomFilterPolicy(16)))) {
+      for (int i = 0; i < 40; i++) {
+        db.put(bytes(String.format("sst:%03d", i)), bytes("value-" + i));
+      }
+      db.compactRange(bytes("sst:000"), bytes("sst:999"));
+
+      assertArrayEquals(bytes("value-0"), db.get(bytes("sst:000")));
+      assertArrayEquals(bytes("value-39"), db.get(bytes("sst:039")));
+      assertNull(db.get(bytes("sst:020!")));
+      assertEquals(3, db.get(Arrays.asList(bytes("sst:001"), bytes("sst:020!"), bytes("sst:039"))).size());
+
+      assertPropertyContains(db, "ldb.sstReadStats", "pointGets=");
+      assertPropertyContains(db, "ldb.sstReadStats", "candidateFiles=");
+      assertPropertyContains(db, "ldb.sstReadStats", "filterSkips=");
+      assertPropertyContains(db, "ldb.sstReadStats", "tableReads=");
+      assertPropertyContains(db, "ldb.sstReadStats", "tableRequests=");
+      assertPropertyContains(db, "ldb.sstReadStats", "iteratorRequests=");
+      assertPropertyContains(db, "ldb.sstReadStats", "mayContainRequests=");
+      String stats = db.getProperty("ldb.sstReadStats");
+      assertStatAtLeast(stats, "filterSkips", 1);
+      assertStatAtLeast(stats, "mayContainRequests", 1);
+      assertStatAtLeast(stats, "mayContainFalse", 1);
+    }
+  }
+
+  @Test
+  void shouldExposeStorageFormatProperties() throws Exception {
+    File legacyDir = new File(tempDir, "storage-format-legacy-db");
+
+    try (LDB db = LDBFactory.factory.open(legacyDir,
+        new Options().createIfMissing(true).writeBufferSize(128))) {
+      db.put(bytes("legacy"), bytes("v1"));
+      db.compactRange(bytes("a"), bytes("z"));
+
+      assertPropertyContains(db, "ldb.tableFormat", "tables=");
+      assertPropertyContains(db, "ldb.tableFormat", "legacy=");
+      assertPropertyContains(db, "ldb.storageFormat", "table={");
+      assertPropertyContains(db, "ldb.storageFormat", "manifest=version-edit-log-v1");
+      assertPropertyContains(db, "ldb.storageFormat", "backupMetadata=json-v1");
+      assertPropertyContains(db, "ldb.tableFormatPolicy", "newWrites=v1");
+      assertPropertyContains(db, "ldb.tableFormatPolicy", "productionState=default-legacy");
+      assertPropertyContains(db, "ldb.tableFormatPolicy", "rollback=new-writes-tableFormatVersion-1");
+    }
+
+    File v2Dir = new File(tempDir, "storage-format-v2-db");
+    try (LDB db = LDBFactory.factory.open(v2Dir,
+        new Options().createIfMissing(true).writeBufferSize(128).tableFormatVersion(2))) {
+      db.put(bytes("v2"), bytes("value"));
+      db.compactRange(bytes("a"), bytes("z"));
+
+      assertPropertyContains(db, "ldb.tableFormat", "v2=");
+      assertPropertyContains(db, "ldb.tableFormat", "formatVersion=2");
+      assertPropertyContains(db, "ldb.tableFormat", "table.properties");
+      assertPropertyContains(db, "ldb.storageFormat", "wal=log-v1");
+      assertPropertyContains(db, "ldb.tableFormatPolicy", "newWrites=v2-properties");
+      assertPropertyContains(db, "ldb.tableFormatPolicy", "productionState=explicit-v2");
+      assertPropertyContains(db, "ldb.tableFormatPolicy", "unknownFeaturePolicy=fail-fast");
     }
   }
 
@@ -492,6 +563,18 @@ class LdbObservabilityTest {
     String value = db.getProperty(property);
     assertNotNull(value, property);
     return Long.parseLong(value);
+  }
+
+  private static void assertStatAtLeast(String stats, String key, long minimum) {
+    assertNotNull(stats, key);
+    String prefix = key + "=";
+    for (String part : stats.split(",")) {
+      if (part.startsWith(prefix)) {
+        assertTrue(Long.parseLong(part.substring(prefix.length())) >= minimum, stats);
+        return;
+      }
+    }
+    fail("Missing stat " + key + " in " + stats);
   }
 
   private static byte[] bytes(String value) {

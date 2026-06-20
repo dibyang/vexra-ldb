@@ -72,10 +72,17 @@ class LdbPluginTest {
     try (LDB db = LDBFactory.factory.open(dbDir, new Options()
         .createIfMissing(true)
         .writeBufferSize(4096)
+        .tableFormatVersion(2)
+        .allowLegacyTableFormat(true)
+        .failOnUnknownTableFeature(true)
         .addPlugin(plugin))) {
       db.put(bytes("event"), bytes("value"), new WriteOptions().snapshot(true));
 
       assertEquals(4096, plugin.optionsView.writeBufferSize());
+      assertEquals(2, plugin.optionsView.tableFormatVersion());
+      assertTrue(plugin.optionsView.writeTableProperties());
+      assertTrue(plugin.optionsView.allowLegacyTableFormat());
+      assertTrue(plugin.optionsView.failOnUnknownTableFeature());
       assertThrows(UnsupportedOperationException.class,
           () -> plugin.optionsView.getColumnFamilies().clear());
       assertEquals(1, plugin.beforeBatchSize);

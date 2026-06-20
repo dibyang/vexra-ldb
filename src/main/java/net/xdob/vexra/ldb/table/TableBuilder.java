@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -30,15 +31,18 @@ public class TableBuilder {
   private final int blockRestartInterval;
   private final int blockSize;
   private final CompressionType compressionType;
+  private final Options options;
 
   private final FileChannel fileChannel;
   private final BlockBuilder dataBlockBuilder;
   private final BlockBuilder indexBlockBuilder;
   private final FilterPolicy filterPolicy;
   private Slice lastKey;
+  private Slice firstKey;
   private final UserComparator userComparator;
 
   private long entryCount;
+  private long dataBlockCount;
 
   // Either Finish() or Abandon() has been called.
   private boolean closed;
@@ -54,11 +58,13 @@ public class TableBuilder {
   private BlockHandle pendingHandle;  // Handle to add to index block
 
   private Slice compressedOutput;
+  private CompressionType lastWrittenCompressionType = CompressionType.NONE;
 
   private long position;
 
   private final Set<Slice> filterKeySet = new HashSet<>();
   private final List<Slice> filterKeys = new ArrayList<>();
+  private final Set<CompressionType> dataCompressionTypes = new LinkedHashSet<>();
 
   public TableBuilder(Options options, FileChannel fileChannel, UserComparator userComparator) {
     requireNonNull(options, "options is null");
@@ -71,6 +77,7 @@ public class TableBuilder {
 
     this.fileChannel = fileChannel;
     this.userComparator = userComparator;
+    this.options = options;
 
     blockRestartInterval = options.blockRestartInterval();
     blockSize = options.blockSize();
@@ -127,6 +134,9 @@ public class TableBuilder {
       pendingIndexEntry = false;
     }
 
+    if (entryCount == 0) {
+      firstKey = key;
+    }
     lastKey = key;
     entryCount++;
     dataBlockBuilder.add(key, value);
@@ -147,6 +157,8 @@ public class TableBuilder {
     checkState(!pendingIndexEntry, "Internal error: Table already has a pending index entry to flush");
 
     pendingHandle = writeBlock(dataBlockBuilder);
+    dataBlockCount++;
+    dataCompressionTypes.add(lastWrittenCompressionType);
     pendingIndexEntry = true;
   }
 
@@ -184,6 +196,7 @@ public class TableBuilder {
     }
 
     // create block trailer
+    lastWrittenCompressionType = blockCompressionType;
     BlockTrailer blockTrailer = new BlockTrailer(blockCompressionType, crc32c(blockContents, blockCompressionType));
     Slice trailer = BlockTrailer.writeBlockTrailer(blockTrailer);
 
@@ -236,6 +249,9 @@ public class TableBuilder {
     // 先写 filter block（如果启用）
     BlockHandle filterBlockHandle = writeFilterBlockIfNeeded();
 
+    // 写 properties block（如果显式启用 table format v2）
+    BlockHandle propertiesBlockHandle = writePropertiesBlockIfNeeded(filterBlockHandle);
+
     // 写 meta index block
     BlockBuilder metaIndexBlockBuilder =
         new BlockBuilder(256, blockRestartInterval, new BytewiseComparator());
@@ -244,6 +260,10 @@ public class TableBuilder {
       String key = "filter." + filterPolicy.name();
       Slice handleEncoding = BlockHandle.writeBlockHandle(filterBlockHandle);
       metaIndexBlockBuilder.add(Slices.utf8Slice(key), handleEncoding);
+    }
+    if (propertiesBlockHandle != null) {
+      Slice handleEncoding = BlockHandle.writeBlockHandle(propertiesBlockHandle);
+      metaIndexBlockBuilder.add(Slices.utf8Slice(TableProperties.META_INDEX_KEY), handleEncoding);
     }
 
     BlockHandle metaindexBlockHandle = writeBlock(metaIndexBlockBuilder);
@@ -277,6 +297,77 @@ public class TableBuilder {
 
     return writeRawBlock(Slices.wrappedBuffer(filterBytes));
   }
+
+  /**
+   * 在 table format v2 opt-in 时写入 properties block。
+   *
+   * 当前默认仍写 v1；只有调用方显式设置 `Options.tableFormatVersion(2)` 并保持
+   * `writeTableProperties=true` 时才会落盘。properties block 使用普通 block 编码，
+   * 便于旧 reader 忽略未知 metaindex entry，新 reader 解析格式版本和 feature set。
+   */
+  private BlockHandle writePropertiesBlockIfNeeded(BlockHandle filterBlockHandle) throws IOException {
+    if (options.tableFormatVersion() < 2 || !options.writeTableProperties()) {
+      return null;
+    }
+
+    BlockBuilder propertiesBlockBuilder =
+        new BlockBuilder(512, 1, new BytewiseComparator());
+    addProperty(propertiesBlockBuilder, TableProperties.COMPATIBLE_FEATURES_KEY, compatibleFeatures(filterBlockHandle));
+    addProperty(propertiesBlockBuilder, "ldb.format.created_by", "vexra-ldb/0.8.0-SNAPSHOT");
+    addProperty(propertiesBlockBuilder, TableProperties.INCOMPATIBLE_FEATURES_KEY, "");
+    addProperty(propertiesBlockBuilder, TableProperties.FORMAT_VERSION_KEY, "2");
+    addProperty(propertiesBlockBuilder, "ldb.table.checksum", "crc32c-block-trailer");
+    addProperty(propertiesBlockBuilder, "ldb.table.compression", compressionTypes());
+    addProperty(propertiesBlockBuilder, "ldb.table.data_block_count", Long.toString(dataBlockCount));
+    addProperty(propertiesBlockBuilder, "ldb.table.entry_count", Long.toString(entryCount));
+    addProperty(propertiesBlockBuilder, "ldb.table.filter_policy", filterPolicy == null ? "" : filterPolicy.name());
+    addProperty(propertiesBlockBuilder, "ldb.table.filter_scope", filterBlockHandle == null ? "" : "full-key");
+    addProperty(propertiesBlockBuilder, "ldb.table.index_type", "single-level");
+    addProperty(propertiesBlockBuilder, "ldb.table.largest_key", lastKey == null ? "" : java.util.Base64.getEncoder().encodeToString(lastKey.getBytes()));
+    addProperty(propertiesBlockBuilder, "ldb.table.smallest_key", firstKey == null ? "" : java.util.Base64.getEncoder().encodeToString(firstKey.getBytes()));
+    return writeBlock(propertiesBlockBuilder);
+  }
+
+  private void addProperty(BlockBuilder propertiesBlockBuilder, String key, String value) {
+    propertiesBlockBuilder.add(Slices.utf8Slice(key), Slices.utf8Slice(value == null ? "" : value));
+  }
+
+  private String compatibleFeatures(BlockHandle filterBlockHandle) {
+    List<String> features = new ArrayList<>();
+    features.add("table.properties");
+    features.add("block.trailer.crc32c");
+    features.add("index.single-level");
+    if (filterBlockHandle != null) {
+      features.add("filter.full-key");
+    }
+    if (dataCompressionTypes.contains(CompressionType.LZ4)) {
+      features.add("compression.lz4-block");
+    }
+    return join(features);
+  }
+
+  private String compressionTypes() {
+    if (dataCompressionTypes.isEmpty()) {
+      return "";
+    }
+    List<String> values = new ArrayList<>();
+    for (CompressionType type : dataCompressionTypes) {
+      values.add(type.name().toLowerCase(java.util.Locale.US));
+    }
+    return join(values);
+  }
+
+  private String join(List<String> values) {
+    StringBuilder builder = new StringBuilder();
+    for (String value : values) {
+      if (builder.length() > 0) {
+        builder.append(',');
+      }
+      builder.append(value);
+    }
+    return builder.toString();
+  }
+
   private BlockHandle writeRawBlock(Slice blockContents) throws IOException {
     CompressionType blockCompressionType = CompressionType.NONE;
 

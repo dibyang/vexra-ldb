@@ -26,6 +26,7 @@ Run at least:
 - Regular unit tests.
 - The `0.4.0` old-version upgrade compatibility fixture.
 - The production-gate longrun profile.
+- `storageFormatGates` for storage-format release evidence, covering SST/table properties, compatibility policy, future/malformed version fail-fast behavior, check/repair/backup/plugin evidence, and the default v1 write policy.
 - `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.json` and a Markdown summary.
 
 Formal release candidates should also run a longer production-gate or soak:
@@ -41,7 +42,8 @@ Formal release candidates should also run a longer production-gate or soak:
 2. Run `check` with the new version on a copy.
 3. Open the copy with the new version and verify key data, column families, snapshot cursor, and business read paths.
 4. Run a backup/restore loop on the copy.
-5. Switch the real database only after validation passes. On failure, preserve the old database copy, `RELEASE-GATE-REPORT.json`, and check reports.
+5. Archive `ldb.tableFormat`, `ldb.storageFormat`, `CheckReport.storageFormat`, and `RepairReport.storageFormat`, confirming old SSTs are classified as v1 legacy and v2 SSTs only come from explicit opt-in.
+6. Switch the real database only after validation passes. On failure, preserve the old database copy, `RELEASE-GATE-REPORT.json`, and check reports.
 
 The hard old-version compatibility gate is covered by `LdbUpgradeCompatibilityTest`. If `vexra-ldb-0.4.0.jar` is missing locally, install the formal 0.4.0 artifact into the local Maven cache first.
 
@@ -104,6 +106,7 @@ Read-only diagnostics:
 
 ```text
 ldb check <db>
+ldb properties <db> ldb.tableFormat ldb.storageFormat
 ldb properties <db> [property...]
 ldb scan <db> [limit]
 ldb repair-plan <db>
@@ -121,10 +124,11 @@ Recommended flow:
 
 1. Stop writes and preserve a snapshot of the original directory.
 2. Run `check` and `repair-plan`.
-3. Copy the original database to an isolated directory.
-4. Run `repair` on the isolated directory.
-5. Open the repaired directory and verify critical business data.
-6. Replace the real database or switch through business migration only after validation passes.
+3. Archive `storageFormat/tableFormats/legacyTables/v2Tables/incompatibleTables` so mixed-format state or future-format fail-fast behavior is explainable.
+4. Copy the original database to an isolated directory.
+5. Run `repair` on the isolated directory.
+6. Open the repaired directory and verify critical business data.
+7. Replace the real database or switch through business migration only after validation passes.
 
 ## Column-Family Tombstones
 
@@ -140,6 +144,7 @@ Recommended flow:
 | Open fails | Stop writes, copy the directory, run `check` | Repeatedly repair the original directory |
 | Backup validation fails | Preserve backup root, run `check-backup`, inspect `OBJECT-REFS.json` | Delete `objects/` or hand-edit ref counts |
 | Restore fails | Preserve `RESTORE-REPORT.json`, retry with an empty directory | Overwrite an existing target directory |
+| File-format anomaly | Archive `ldb.tableFormat`, `ldb.storageFormat`, and check/repair storage-format fields | Disable `failOnUnknownTableFeature` and continue production writes |
 | longrun fails | Archive workDir, `report/`, and logs | Delete the failed workDir before diagnosis |
 | Old-version upgrade fails | Preserve old DB copy and release-gate report | Write to the old DB with the new version |
 
@@ -153,3 +158,13 @@ Recommended flow:
 - `BACKUP-MANIFEST.json`
 - `OBJECT-REFS.json`
 - `REPAIR-REPORT.json` or `repair-plan` output
+- `ldb.tableFormat` and `ldb.storageFormat`
+- `CheckReport.storageFormat`, `tableFormats`, `legacyTables`, `v2Tables`, and `incompatibleTables`
+- `RepairReport.storageFormat`, `tableFormats`, `legacyTables`, `v2Tables`, and `incompatibleTables`
+## 0.9.0-SNAPSHOT SF-06: v2 storage-format production check
+
+Before enabling v2 writes in production, archive `ldb.tableFormatPolicy`, `ldb.tableFormat`, and `ldb.storageFormat`. Before enablement, expect `productionState=default-legacy`; after enablement, expect `productionState=explicit-v2` and `newWrites=v2-properties`. To roll back new writes, restore `Options.tableFormatVersion(1)` and archive `newWrites=v1` again. `failOnUnknownTableFeature=false` is diagnostic-only and must not be used as a production rollback strategy.
+
+## readrandom / Bloom Filter Pre-Release Check
+
+If the release targets random-read miss optimization, archive `ldb.sstReadStats` after a benchmark or gate that enables `BloomFilterPolicy`. Expect at least `mayContainRequests>0`; for in-range missing-key tests, expect `mayContainFalse>0` and `filterSkips>0`. If `filterSkips` remains 0, check whether the test key falls outside all SST ranges, whether the filter policy was not configured, or whether the SSTs were written by older options.

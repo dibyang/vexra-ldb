@@ -108,18 +108,26 @@ tasks.register('ldbDbBenchReport', JavaExec) {
   def dbDir = providers.gradleProperty('ldb.dbBench.dbDir')
       .orElse(layout.buildDirectory.dir('reports/ldb-db-bench/db').map { it.asFile.path })
   def benchmarks = providers.gradleProperty('ldb.dbBench.benchmarks')
-      .orElse('fillseq,readrandom,overwrite,readwhilewriting')
+      .orElse('fillseq,warm_readrandom,multiget_random,overwrite,readwhilewriting')
   def num = providers.gradleProperty('ldb.dbBench.num').orElse('200000')
   def reads = providers.gradleProperty('ldb.dbBench.reads').orElse('200000')
   def valueSize = providers.gradleProperty('ldb.dbBench.valueSize').orElse('100')
   def sync = providers.gradleProperty('ldb.dbBench.sync').orElse('false')
   def groupCommit = providers.gradleProperty('ldb.dbBench.groupCommit').orElse('false')
   def writeBufferSizeMb = providers.gradleProperty('ldb.dbBench.writeBufferSizeMb').orElse('512')
+  def readProfile = providers.gradleProperty('ldb.dbBench.readProfile').orElse('default')
+  def cacheBlocks = providers.gradleProperty('ldb.dbBench.cacheBlocks').orElse('true')
+  def blockCacheSize = providers.gradleProperty('ldb.dbBench.blockCacheSize').orElse('4096')
+  def verifyChecksums = providers.gradleProperty('ldb.dbBench.verifyChecksums').orElse('true')
+  def batchSize = providers.gradleProperty('ldb.dbBench.batchSize').orElse('64')
   def seed = providers.gradleProperty('ldb.dbBench.seed').orElse('20260619')
   args '--output', outputDir.get(), '--db', dbDir.get(), '--benchmarks', benchmarks.get(),
       '--num', num.get(), '--reads', reads.get(), '--value_size', valueSize.get(),
       '--sync', sync.get(), '--group_commit', groupCommit.get(),
-      '--write_buffer_size_mb', writeBufferSizeMb.get(), '--seed', seed.get()
+      '--write_buffer_size_mb', writeBufferSizeMb.get(), '--read_profile', readProfile.get(),
+      '--cache_blocks', cacheBlocks.get(), '--block_cache_size', blockCacheSize.get(),
+      '--verify_checksums', verifyChecksums.get(), '--batch_size', batchSize.get(),
+      '--seed', seed.get()
 }
 
 tasks.register('longRunTest', JavaExec) {

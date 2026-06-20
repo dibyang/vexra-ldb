@@ -50,6 +50,10 @@ public class Options implements OptionsView {
   private int pluginAsyncQueueCapacity = 1024;
   private long pluginAsyncCloseTimeoutMillis = TimeUnit.SECONDS.toMillis(30);
   private long pluginMaxTotalCallbackMillis;
+  private int tableFormatVersion = 1;
+  private boolean writeTableProperties = true;
+  private boolean allowLegacyTableFormat = true;
+  private boolean failOnUnknownTableFeature = true;
 
   public boolean cacheBlocks() {
     return cacheBlocks;
@@ -108,6 +112,86 @@ public class Options implements OptionsView {
       throw new IllegalArgumentException("compactionSuspendTimeoutMillis must be > 0");
     }
     this.compactionSuspendTimeoutMillis = compactionSuspendTimeoutMillis;
+    return this;
+  }
+
+  public int tableFormatVersion() {
+    return tableFormatVersion;
+  }
+
+  /**
+   * 设置新写 SST/table 文件的格式版本。
+   *
+   * <p>0.8.0-SNAPSHOT 仅支持 v1 和 v2。默认值为 1，保持旧格式写入；设置为 2
+   * 时才允许写入带 properties block 的 v2 table。该选项只影响新写文件，不会
+   * 原地改写已有 SST。
+   *
+   * @param tableFormatVersion table 格式版本，只能是 1 或 2。
+   * @return 当前 Options，便于链式配置。
+   * @throws IllegalArgumentException 当版本不在当前支持范围内时抛出。
+   */
+  public Options tableFormatVersion(int tableFormatVersion) {
+    if (tableFormatVersion < 1 || tableFormatVersion > 2) {
+      throw new IllegalArgumentException("tableFormatVersion must be 1 or 2");
+    }
+    this.tableFormatVersion = tableFormatVersion;
+    return this;
+  }
+
+  public boolean writeTableProperties() {
+    return writeTableProperties;
+  }
+
+  /**
+   * 设置 v2 table 是否写入 properties block。
+   *
+   * <p>该开关只有在 {@link #tableFormatVersion(int)} 设置为 2 时才会影响落盘；
+   * 默认值为 true。关闭该开关可用于诊断或兼容性实验，但生产发布默认应保持
+   * table format v1 写入或显式 v2 properties 写入，不建议制造缺少 properties 的
+   * v2 文件。
+   *
+   * @param writeTableProperties 是否写入 table properties。
+   * @return 当前 Options，便于链式配置。
+   */
+  public Options writeTableProperties(boolean writeTableProperties) {
+    this.writeTableProperties = writeTableProperties;
+    return this;
+  }
+
+  public boolean allowLegacyTableFormat() {
+    return allowLegacyTableFormat;
+  }
+
+  /**
+   * 设置是否允许读取旧 table 格式。
+   *
+   * <p>旧 SST 没有 properties block，会被读侧识别为 v1 legacy。默认值为 true，
+   * 保障新版本默认可以打开旧库。仅在发布验证或强制迁移检查时才建议关闭。
+   *
+   * @param allowLegacyTableFormat 是否允许读取 legacy v1 table。
+   * @return 当前 Options，便于链式配置。
+   */
+  public Options allowLegacyTableFormat(boolean allowLegacyTableFormat) {
+    this.allowLegacyTableFormat = allowLegacyTableFormat;
+    return this;
+  }
+
+  public boolean failOnUnknownTableFeature() {
+    return failOnUnknownTableFeature;
+  }
+
+  /**
+   * 设置遇到未知 table feature 或未来 table format version 时是否失败。
+   *
+   * <p>默认值为 true，用于避免 0.8 reader 静默误读未来格式、未知不兼容 feature
+   * 或损坏的 table format version。关闭该开关仅用于诊断性读取（diagnostic-only），不是生产回滚策略；
+   * 生产回滚应停止 v2 新写入并保留可验证的备份或副本。
+   *
+   * @param failOnUnknownTableFeature 是否对未知或未来格式 fail-fast。
+   * @return 当前 Options，便于链式配置。
+   */
+  public Options failOnUnknownTableFeature(boolean failOnUnknownTableFeature) {
+    this.failOnUnknownTableFeature = failOnUnknownTableFeature;
     return this;
   }
 

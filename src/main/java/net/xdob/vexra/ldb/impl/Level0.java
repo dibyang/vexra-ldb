@@ -63,6 +63,7 @@ public class Level0
   }
 
   public LookupResult get(LookupKey key, ReadStats readStats) {
+    readStats.clear();
     if (files.isEmpty()) {
       return null;
     }
@@ -72,18 +73,20 @@ public class Level0
       if (internalKeyComparator.getUserComparator().compare(key.getUserKey(), fileMetaData.getSmallest().getUserKey()) >= 0 &&
           internalKeyComparator.getUserComparator().compare(key.getUserKey(), fileMetaData.getLargest().getUserKey()) <= 0) {
         fileMetaDataList.add(fileMetaData);
+        readStats.recordCandidateFile();
       }
     }
 
     Collections.sort(fileMetaDataList, NEWEST_FIRST);
 
-    readStats.clear();
     Slice userKey = key.getUserKey();
     for (FileMetaData fileMetaData : fileMetaDataList) {
       if (!tableCache.mayContain(fileMetaData, userKey)) {
+        readStats.recordFilterSkip();
         continue; // 这个 table 一定没有这个 userKey
       }
       // open the iterator
+      readStats.recordTableRead();
       InternalTableIterator iterator = tableCache.newIterator(fileMetaData);
 
       // seek to the key
@@ -127,6 +130,83 @@ public class Level0
     }
 
     return null;
+  }
+
+  public List<LookupResult> get(List<LookupKey> keys, ReadStats readStats) {
+    readStats.clear();
+    List<LookupResult> results = new ArrayList<LookupResult>(Collections.nCopies(keys.size(), (LookupResult) null));
+    if (files.isEmpty() || keys.isEmpty()) {
+      return results;
+    }
+
+    List<FileMetaData> fileMetaDataList = new ArrayList<>(files);
+    Collections.sort(fileMetaDataList, NEWEST_FIRST);
+    boolean[] resolved = new boolean[keys.size()];
+    UserComparator userComparator = internalKeyComparator.getUserComparator();
+
+    for (FileMetaData fileMetaData : fileMetaDataList) {
+      List<Integer> candidateIndexes = new ArrayList<Integer>();
+      for (int i = 0; i < keys.size(); i++) {
+        if (resolved[i]) {
+          continue;
+        }
+        LookupKey key = keys.get(i);
+        if (userComparator.compare(key.getUserKey(), fileMetaData.getSmallest().getUserKey()) >= 0
+            && userComparator.compare(key.getUserKey(), fileMetaData.getLargest().getUserKey()) <= 0) {
+          readStats.recordCandidateFile();
+          if (tableCache.mayContain(fileMetaData, key.getUserKey())) {
+            candidateIndexes.add(i);
+          } else {
+            readStats.recordFilterSkip();
+          }
+        }
+      }
+      if (candidateIndexes.isEmpty()) {
+        continue;
+      }
+
+      readStats.recordTableRead();
+      InternalTableIterator iterator = tableCache.newIterator(fileMetaData);
+      for (Integer index : candidateIndexes) {
+        LookupKey key = keys.get(index);
+        LookupResult lookupResult = getFromIterator(fileMetaData, iterator, key);
+        if (lookupResult != null) {
+          results.set(index, lookupResult);
+          resolved[index] = true;
+        }
+      }
+    }
+
+    return results;
+  }
+
+  private LookupResult getFromIterator(FileMetaData fileMetaData, InternalTableIterator iterator, LookupKey key) {
+    iterator.seek(key.getInternalKey());
+
+    LookupResult pointResult = null;
+    long pointSequence = -1;
+    if (iterator.hasNext()) {
+      Entry<InternalKey, Slice> entry = iterator.next();
+      InternalKey internalKey = entry.getKey();
+      checkState(internalKey != null, "Corrupt key for %s", key.getUserKey().toString(UTF_8));
+      if (key.getUserKey().equals(internalKey.getUserKey())) {
+        if (internalKey.getValueType() == ValueType.DELETION) {
+          pointResult = LookupResult.deleted(key, internalKey.getSequenceNumber());
+          pointSequence = internalKey.getSequenceNumber();
+        } else if (internalKey.getValueType() == VALUE) {
+          pointResult = LookupResult.ok(key, entry.getValue(), internalKey.getSequenceNumber());
+          pointSequence = internalKey.getSequenceNumber();
+        }
+      }
+    }
+
+    long rangeDeleteSequence = fileMetaData.hasRangeDeletes()
+        ? newestCoveringRangeDelete(fileMetaData, key, pointSequence)
+        : -1;
+    if (rangeDeleteSequence >= 0) {
+      return LookupResult.deleted(key, rangeDeleteSequence);
+    }
+    return pointResult;
   }
 
   private long newestCoveringRangeDelete(FileMetaData fileMetaData, LookupKey key, long newerThanSequence) {

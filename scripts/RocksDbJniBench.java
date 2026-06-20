@@ -32,7 +32,7 @@ public final class RocksDbJniBench {
   private static final int DEFAULT_NUM = 200000;
   private static final int DEFAULT_READS = 200000;
   private static final int DEFAULT_VALUE_SIZE = 100;
-  private static final String DEFAULT_BENCHMARKS = "fillseq,readrandom,overwrite,readwhilewriting";
+  private static final String DEFAULT_BENCHMARKS = "fillseq,warm_readrandom,multiget_random,overwrite,readwhilewriting";
 
   private RocksDbJniBench() {
   }
@@ -65,13 +65,23 @@ public final class RocksDbJniBench {
     }
     List<Result> results = new ArrayList<>();
     for (String benchmark : config.benchmarks) {
-      File dbDir = new File(config.dbDir, benchmark);
-      deleteRecursively(dbDir);
+      File dbDir = dbDir(config, benchmark);
+      if (!"cold_readrandom_existing".equals(benchmark)) {
+        deleteRecursively(dbDir);
+      }
       ensureParent(dbDir);
       if ("fillseq".equals(benchmark)) {
         results.add(fillSeq(config, dbDir));
-      } else if ("readrandom".equals(benchmark)) {
-        results.add(readRandom(config, dbDir));
+      } else if ("readrandom".equals(benchmark) || "warm_readrandom".equals(benchmark)) {
+        results.add(warmReadRandom(config, dbDir, benchmark));
+      } else if ("cold_readrandom".equals(benchmark)) {
+        results.add(coldReadRandom(config, dbDir));
+      } else if ("cold_readrandom_prepare".equals(benchmark)) {
+        results.add(prepareColdReadRandom(config, dbDir));
+      } else if ("cold_readrandom_existing".equals(benchmark)) {
+        results.add(coldReadRandomExisting(config, dbDir));
+      } else if ("multiget_random".equals(benchmark)) {
+        results.add(multiGetRandom(config, dbDir));
       } else if ("overwrite".equals(benchmark)) {
         results.add(overwrite(config, dbDir));
       } else if ("readwhilewriting".equals(benchmark)) {
@@ -87,6 +97,13 @@ public final class RocksDbJniBench {
     return results;
   }
 
+  private static File dbDir(Config config, String benchmark) {
+    if ("cold_readrandom_prepare".equals(benchmark) || "cold_readrandom_existing".equals(benchmark)) {
+      return new File(config.dbDir, "cold_readrandom");
+    }
+    return new File(config.dbDir, benchmark);
+  }
+
   private static Result fillSeq(Config config, File dbDir) throws Exception {
     long start = System.nanoTime();
     RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
@@ -97,7 +114,7 @@ public final class RocksDbJniBench {
     return Result.of("fillseq", config.num, start, System.nanoTime());
   }
 
-  private static Result readRandom(Config config, File dbDir) throws Exception {
+  private static Result warmReadRandom(Config config, File dbDir, String resultName) throws Exception {
     Random random = new Random(config.seed);
     long hits = 0;
     RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
@@ -108,7 +125,68 @@ public final class RocksDbJniBench {
         hits++;
       }
     }
-    return Result.of("readrandom", config.reads, hits, start, System.nanoTime());
+    return Result.of(resultName, config.reads, hits, start, System.nanoTime());
+  }
+
+  private static Result coldReadRandom(Config config, File dbDir) throws Exception {
+    RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    prepareDb(config, db);
+    db.close();
+    Random random = new Random(config.seed);
+    long hits = 0;
+    RocksDB readDb = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    long start = System.nanoTime();
+    for (int i = 0; i < config.reads; i++) {
+      if (readDb.get(key(random.nextInt(config.num))) != null) {
+        hits++;
+      }
+    }
+    return Result.of("cold_readrandom", config.reads, hits, start, System.nanoTime());
+  }
+
+  private static Result prepareColdReadRandom(Config config, File dbDir) throws Exception {
+    long start = System.nanoTime();
+    RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    prepareDb(config, db);
+    return Result.of("cold_readrandom_prepare", config.num, start, System.nanoTime());
+  }
+
+  private static Result coldReadRandomExisting(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    long start = System.nanoTime();
+    for (int i = 0; i < config.reads; i++) {
+      if (db.get(key(random.nextInt(config.num))) != null) {
+        hits++;
+      }
+    }
+    return Result.of("cold_readrandom", config.reads, hits, start, System.nanoTime());
+  }
+
+  private static Result multiGetRandom(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    long operations = 0;
+    RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    prepareDb(config, db);
+    db.compactRange();
+    long start = System.nanoTime();
+    while (operations < config.reads) {
+      int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
+      List<byte[]> keys = new ArrayList<>(batchSize);
+      for (int i = 0; i < batchSize; i++) {
+        keys.add(key(random.nextInt(config.num)));
+      }
+      List<byte[]> values = db.multiGetAsList(keys);
+      for (byte[] value : values) {
+        if (value != null) {
+          hits++;
+        }
+      }
+      operations += batchSize;
+    }
+    return Result.of("multiget_random", operations, hits, start, System.nanoTime());
   }
 
   private static Result overwrite(Config config, File dbDir) throws Exception {
@@ -236,6 +314,7 @@ public final class RocksDbJniBench {
       field(writer, "valueSize", config.valueSize, true);
       field(writer, "sync", config.sync, true);
       field(writer, "writeBufferSizeMb", config.writeBufferSizeMb, true);
+      field(writer, "batchSize", config.batchSize, true);
       writer.write("  \"results\": [\n");
       for (int i = 0; i < results.size(); i++) {
         Result result = results.get(i);
@@ -259,12 +338,13 @@ public final class RocksDbJniBench {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "rocksdbjni-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,writeBufferSizeMb,rocksDbJniVersion\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,writeBufferSizeMb,batchSize,rocksDbJniVersion\n");
       for (Result result : results) {
         writer.write("rocksdbjni," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
             + config.num + "," + config.reads + "," + config.valueSize + ","
-            + config.sync + "," + config.writeBufferSizeMb + "," + config.rocksDbJniVersion + "\n");
+            + config.sync + "," + config.writeBufferSizeMb + "," + config.batchSize + ","
+            + config.rocksDbJniVersion + "\n");
       }
     }
   }
@@ -324,6 +404,7 @@ public final class RocksDbJniBench {
     private final int valueSize;
     private final boolean sync;
     private final int writeBufferSizeMb;
+    private final int batchSize;
     private final long seed;
     private final String rocksDbJniVersion;
 
@@ -336,10 +417,11 @@ public final class RocksDbJniBench {
       this.valueSize = integer(values, "value_size", DEFAULT_VALUE_SIZE);
       this.sync = bool(values, "sync", false);
       this.writeBufferSizeMb = integer(values, "write_buffer_size_mb", 512);
+      this.batchSize = integer(values, "batch_size", 64);
       this.seed = longValue(values, "seed", 20260620L);
       this.rocksDbJniVersion = values.getOrDefault("rocksdbjni_version", "unknown");
-      if (num <= 0 || reads <= 0 || valueSize <= 0 || writeBufferSizeMb <= 0) {
-        throw new IllegalArgumentException("num, reads, value_size and write_buffer_size_mb must be > 0");
+      if (num <= 0 || reads <= 0 || valueSize <= 0 || writeBufferSizeMb <= 0 || batchSize <= 0) {
+        throw new IllegalArgumentException("num, reads, value_size, write_buffer_size_mb and batch_size must be > 0");
       }
     }
 

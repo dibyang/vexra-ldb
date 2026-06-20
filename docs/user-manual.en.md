@@ -68,6 +68,10 @@ Common options:
 | `compactionRateLimitBytesPerSecond` | Compaction rate limit | Prevent background IO from starving foreground traffic |
 | `checkpointCopyRateLimitBytesPerSecond` | Checkpoint copy rate limit | Limit bandwidth when hard links fail or cross-file-system copies are required |
 | `groupCommitEnabled` | Merge sync writes | Consider a gray rollout when sync writes are frequent |
+| `tableFormatVersion` | Format version for newly written SST/table files | Default is `1`; set to `2` only when v2 properties blocks are explicitly required |
+| `writeTableProperties` | Whether to write v2 table properties | Enabled by default, but persisted only when `tableFormatVersion=2` |
+| `allowLegacyTableFormat` | Whether SSTs without a properties block remain readable | Enabled by default for old-database compatibility |
+| `failOnUnknownTableFeature` | Fail fast on unknown incompatible features, future table format versions, or malformed version fields | Keep enabled in production; disabling it is for diagnostic reads only and is not a rollback strategy |
 
 Plugin options are covered by the [Plugin Documentation Index](ldb-plugin-docs-index.en.md).
 
@@ -175,17 +179,19 @@ Archive these properties in release gates or restore-drill reports:
 
 - `ldb.recoveryEvidence`: records WAL, MANIFEST, check/repair entry points, and repair-report state for the current database.
 - `ldb.backupEvidence`: records evidence conventions for checkpoint, backup, restore, object-store metadata, and cleanup dry-run.
+- `ldb.tableFormat`: records SST/table format versions, v1 legacy/v2 counts, and feature-set summaries.
+- `ldb.storageFormat`: records the overall format summary for WAL, MANIFEST, CURRENT, COLUMN-FAMILIES, backup metadata, and table formats.
 
 Commands:
 
 ```bash
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool properties data/app.ldb
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool scan data/app.ldb 20
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool backup data/app.ldb backups
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool incremental-backup data/app.ldb backups
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check-backup backups/backup-000001
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool restore backups/backup-000001 restored.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool properties data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool scan data/app.ldb 20
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool backup data/app.ldb backups
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool incremental-backup data/app.ldb backups
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check-backup backups/backup-000001
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool restore backups/backup-000001 restored.ldb
 ```
 
 `scan` opens the default column family read-only and emits key-order JSON. The default limit is 100, an explicit limit must be positive, and key/value bytes are base64-encoded. Use it for small diagnostic samples, not as a business export replacement.
@@ -193,7 +199,7 @@ java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool
 `checkpoint` creates a local consistent copy. The implementation builds in a temporary directory, publishes the target only after verification, cleans the temporary directory on failure, and records copy, hard-link, byte, and duration statistics in the success report.
 
 ```bash
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool checkpoint data/app.ldb checkpoints/app-001
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool checkpoint data/app.ldb checkpoints/app-001
 ```
 
 The target directory must be absent or empty. For large databases or cross-file-system targets, SST hard links may fall back to file copying; use `Options#checkpointCopyRateLimitBytesPerSecond(long)` to limit copy bandwidth.
@@ -205,8 +211,8 @@ See the [Operations Runbook](operations.en.md) for full operational procedures.
 Read-only diagnostics:
 
 ```bash
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool repair-plan data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool check data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool repair-plan data/app.ldb
 ```
 
 Before repair:
@@ -219,7 +225,7 @@ Before repair:
 Run repair:
 
 ```bash
-java -cp build/libs/vexra-ldb-0.5.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool repair data/app.ldb
+java -cp build/libs/vexra-ldb-0.8.0-SNAPSHOT.jar net.xdob.vexra.ldb.tool.LdbTool repair data/app.ldb
 ```
 
 ## Plugins
@@ -306,7 +312,17 @@ It is not recommended. Stop writes, back up the raw directory, generate a repair
 - [Quick Start](quick-start.en.md)
 - [Operations Runbook](operations.en.md)
 - [Release Process](release.en.md)
+- [Storage Format Reference](storage-format.en.md)
+- [0.8 Storage Format Design](storage-format-0.8-design.en.md)
+- [0.8 Storage Format Acceptance Matrix](storage-format-0.8-acceptance.en.md)
 - [Project Design](ldb-project-design.en.md)
 - [Production Readiness Plan](ldb-production-readiness-plan.en.md)
 - [RocksDB Gap And Next-Version Plan](ldb-rocksdb-gap-next-version-plan.en.md)
 - [External Commitments And Acceptance Boundaries](vexra-ldb-external-commitment.en.md)
+## 0.9.0-SNAPSHOT SF-06: table format policy observability
+
+Before enabling v2 writes, applications should read `ldb.tableFormatPolicy`. The default should be `newWrites=v1,productionState=default-legacy`; after explicitly setting `Options.tableFormatVersion(2)`, it should become `newWrites=v2-properties,productionState=explicit-v2`. To stop new v2 writes, restore `tableFormatVersion=1`; existing v2 SSTs remain readable by the current version.
+
+## Bloom Filter Random-Read Observability
+
+For readrandom workloads with many misses, enable the full-key SST Bloom filter with `Options.filterPolicy(new BloomFilterPolicy(bitsPerKey))`. Before release, archive `ldb.sstReadStats`: `mayContainRequests` counts candidate SST filter checks, `mayContainFalse` counts Bloom decisions that the key is definitely absent, and `filterSkips` counts skipped table iterators. If no filter policy is configured or an old SST has no matching filter block, the read path conservatively falls back to may-contain=true.

@@ -81,6 +81,34 @@ class LdbCoreBehaviorTest {
   }
 
   /**
+   * 验证默认 get 快路径在 memtable、SST fallback、显式 snapshot 和 delete 组合下保持可见性语义。
+   */
+  @Test
+  void shouldKeepFastGetSemanticsAcrossMemTableSstSnapshotAndDelete() throws Exception {
+    File dbDir = new File(tempDir, "fast-get-semantics-db");
+
+    try (LDB db = LDBFactory.factory.open(dbDir,
+        new Options().createIfMissing(true).writeBufferSize(128))) {
+      db.put(bytes("hot"), bytes("v1"));
+      db.compactRange(bytes("a"), bytes("z"));
+      assertArrayEquals(bytes("v1"), db.get(bytes("hot")));
+
+      Snapshot snapshot = db.getSnapshot();
+      try {
+        db.put(bytes("hot"), bytes("v2"));
+        assertArrayEquals(bytes("v2"), db.get(bytes("hot")));
+        assertArrayEquals(bytes("v1"), db.get(bytes("hot"), new ReadOptions().snapshot(snapshot)));
+
+        db.delete(bytes("hot"));
+        assertNull(db.get(bytes("hot")));
+        assertArrayEquals(bytes("v1"), db.get(bytes("hot"), new ReadOptions().snapshot(snapshot)));
+      } finally {
+        snapshot.close();
+      }
+    }
+  }
+
+  /**
    * 验证批量点查按输入顺序返回结果，并且缺失 key 保持为 null。
    */
   @Test

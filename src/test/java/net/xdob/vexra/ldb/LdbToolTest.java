@@ -184,6 +184,9 @@ class LdbToolTest {
     assertEquals("", result.err);
     assertTrue(result.out.contains("\"databaseDir\""), result.out);
     assertTrue(result.out.contains("\"replayedWalFiles\""), result.out);
+    assertTrue(result.out.contains("\"storageFormat\""), result.out);
+    assertTrue(result.out.contains("\"tableFormats\""), result.out);
+    assertTrue(result.out.contains("\"legacyTables\""), result.out);
     assertTrue(result.out.contains("\"manifestFileNumber\""), result.out);
 
     try (LDB repaired = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
@@ -205,6 +208,8 @@ class LdbToolTest {
     assertEquals("", result.err);
     assertTrue(result.out.contains("\"dryRun\": true"), result.out);
     assertTrue(result.out.contains("\"replayedWalFiles\""), result.out);
+    assertTrue(result.out.contains("\"storageFormat\""), result.out);
+    assertTrue(result.out.contains("\"tableFormats\""), result.out);
     assertFalse(new File(dbDir, "REPAIR-REPORT.json").exists());
   }
 

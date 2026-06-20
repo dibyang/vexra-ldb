@@ -284,6 +284,82 @@ To avoid scope creep, the next version should implement only this combination:
 | RocksDB-style adapter | Do not provide a full adapter layer yet; keep native LDB APIs plus `ldb.api.*` self-description | Avoid implying full RocksDB compatibility |
 | MergeOperator/transactions/custom Env | Keep unsupported | These features change write, recovery, isolation, or filesystem-abstraction boundaries |
 
+## Random-Read Performance Plan
+
+This workstream follows the Java/JNI comparison results in `docs/ldb-rocksdb-performance-baseline.en.md`. Warm `readrandom` has improved from about 29% to 67.6% of RocksDB JNI. The next stage is to move from a single warm benchmark result to repeatable warm, cold, and native evidence while continuing to narrow the SST point-get, cache, and batch point-read gaps.
+
+### Scope
+
+| Item | Plan |
+| --- | --- |
+| In scope | `readrandom`, cold-start random reads, SST point gets, Bloom/filter, block/table cache, MultiGet, benchmark stability, RocksDB native/JNI comparison |
+| Out of scope | Transactions, Raft, plugins, networking, backup/restore, and broad non-read-path refactors unless evidence shows they directly affect random reads |
+
+### Action Items
+
+| ID | Priority | Action | Main Files/Entries | Acceptance Evidence |
+| --- | --- | --- | --- | --- |
+| RR-01 | P0 | Solidify the current passing baseline, keep the `scripts/run-rocksdbjni-comparison.ps1` profile, and add multi-run statistics with min/median/p95/max | `scripts/run-rocksdbjni-comparison.ps1`, `ldb-longrun` benchmark report | Multi-run comparison reports explain RocksDB JNI and LDB variance |
+| RR-02 | P0 | Add a cold-start random-read benchmark: prefill, close DB, reopen, then run `readrandom` to isolate the SST/table-cache path | `LdbDbBenchMain`, `RocksDbJniBench`, comparison scripts | `cold_readrandom` appears independently in JSON/CSV reports |
+| RR-03 | P0 | Add RocksDB native `db_bench` comparison and archive it separately from RocksDB JNI results | `scripts/run-rocksdb-comparison.ps1`, performance baseline docs | Native RocksDB version, command, parameters, and results are traceable |
+| RR-04 | P0 | Strengthen report semantics by separating `warm_readrandom`, `cold_readrandom`, `readwhilewriting`, and `multiget_random` | `comparison.json`, `comparison.csv`, `docs/ldb-rocksdb-performance-baseline*.md` | Different read scenarios no longer share one ambiguous `readrandom` conclusion |
+| RR-05 | P1 | Optimize SST point-get path, focusing on file filtering, filter checks, block decoding, and iterator creation cost | `Version`, `Level0`, `Level`, `TableCache`, `Table` | cold `readrandom` reaches the threshold and correctness tests pass |
+| RR-06 | P1 | Run default read-optimization experiments for `BloomFilterPolicy`, `blockCacheSize`, `cacheBlocks`, and `verifyChecksums` combinations | `Options`, benchmark config, user manual | Reports include both default and read-optimized profiles |
+| RR-07 | P1 | Add a MultiGet workstream and verify batch lookup reuse for snapshots, memtable lookup, SST file filtering, and table cache | `LDbImpl#get(List<byte[]>)`, related tests | `multiget_random` report and correctness tests pass |
+| RR-08 | P0 | Add regression protection for the default `get` fast path, explicit snapshots, delete, range delete, immutable memtable, and SST fallback | Unit tests, fault/compatibility fixtures | Optimizations preserve visibility and deletion semantics |
+| RR-09 | P0 | Define acceptance thresholds: short-term warm `readrandom >= 0.65x RocksDB JNI`, cold `readrandom >= 0.50x RocksDB JNI`; mid-term native `db_bench` stays above `0.50x` | release gate, long-run benchmark, performance baseline | Thresholds, environment, variance, and failure categories are archived |
+| RR-10 | P0 | Keep Chinese and English documents synchronized with commands, parameters, environment, results, and known bias | `docs/ldb-rocksdb-performance-baseline.md`, `.en.md` | Chinese/English results match and can be traced back to report paths |
+
+### Acceptance Commands
+
+| Command | Purpose |
+| --- | --- |
+| `.\gradlew.bat :ldb-longrun:ldbDbBenchReport` | Generate the LDB db_bench-style report |
+| `powershell.exe -ExecutionPolicy Bypass -File .\scripts\run-rocksdbjni-comparison.ps1` | Generate the RocksDB JNI comparison report |
+| `.\scripts\run-rocksdb-comparison.ps1` | Generate the native comparison report after native RocksDB `db_bench` is available locally |
+
+### Open Questions
+
+| ID | Question | Default Recommendation |
+| --- | --- | --- |
+| RR-OQ-01 | Can native RocksDB `db_bench` be installed or built on the current machine? | If yes, prioritize native comparison; otherwise keep JNI comparison as Java-call-path evidence |
+| RR-OQ-02 | Should the next stage prioritize cold `readrandom >= 50%` or push warm `readrandom` from 67.6% toward 80%? | Prioritize cold `readrandom`, because it exposes the real SST/table-cache gap |
+| RR-OQ-03 | Is it acceptable for the benchmark profile to enable Bloom/filter/cache as a "read-optimized profile"? | Yes, but keep default-profile results beside it so tuned results are not mistaken for default performance |
+
+### Current Implementation Status
+
+| ID | Status | Evidence |
+| --- | --- | --- |
+| RR-01 | Basic version complete | `run-rocksdbjni-comparison.ps1 -Runs 2` now writes `comparison-stats.csv/json` with min/median/p95/max |
+| RR-02 | Complete for the Java/JNI profile | `cold_readrandom` is available for LDB; RocksDB JNI uses `cold_readrandom_prepare` plus `cold_readrandom_existing` in two short processes to avoid the close issue |
+| RR-03 | Waiting on external environment | Native RocksDB `db_bench` is still not available locally; `run-rocksdb-comparison.ps1` remains the entry point |
+| RR-04 | Basic version complete | `comparison.json/csv` now separates `warm_readrandom` and `cold_readrandom` |
+| RR-05 | Complete for this workstream | `ldb.sstReadStats` and `ldb.blockCacheStats` now expose point-get, level, table-cache, filter, and iterator counters; `LdbObservabilityTest` covers the property; focused short reports archive SST read stats |
+| RR-06 | Complete for this workstream | `LdbDbBenchMain` supports `read_profile=default/read_optimized` with cache/checksum/Bloom settings, and `run-ldb-read-profile-comparison.ps1` writes side-by-side profile reports |
+| RR-07 | Complete for this workstream | `multiget_random` is available in LDB and RocksDB JNI runners; LDB compacts before timing so the benchmark covers SST filtering and table cache; correctness tests still cover input order and snapshot semantics |
+| RR-08 | Basic version complete | `LdbCoreBehaviorTest.shouldKeepFastGetSemanticsAcrossMemTableSstSnapshotAndDelete` protects default get fast-path semantics |
+| RR-09 | Basic thresholds complete | warm `readrandom` is 0.91x - 1.14x in this run, and cold `readrandom` is 0.71x; both exceed 0.50x |
+| RR-10 | Basic version complete | `ldb-rocksdb-performance-baseline.md` and its English copy now document warm/cold results and report paths |
+
+### RR-05/RR-06/RR-07 Focused Evidence On 2026-06-20
+
+The focused validation used `num=50000`, `reads=50000`, `value_size=100`, and `batch_size=64`. It is a short functional/performance evidence run for the new profiling/profile/MultiGet paths, not a replacement for the earlier `num=200000` baseline.
+
+| Profile | Scenario | LDB ops/s | RocksDB JNI ops/s | Ratio | Evidence |
+| --- | ---: | ---: | ---: | ---: | --- |
+| default | `warm_readrandom` | 426,928 | 528,133 | 0.8084 | `build/reports/rocksdbjni-comparison-rr-default/comparison.csv` |
+| default | `cold_readrandom` | 187,288 | 461,805 | 0.4056 | `build/reports/rocksdbjni-comparison-rr-default/comparison.csv` |
+| default | `multiget_random` | 208,268 | 513,548 | 0.4055 | `build/reports/rocksdbjni-comparison-rr-default/comparison.csv` |
+| read_optimized | `warm_readrandom` | 393,160 | 504,415 | 0.7794 | `build/reports/rocksdbjni-comparison-rr-read-optimized/comparison.csv` |
+| read_optimized | `cold_readrandom` | 201,693 | 460,801 | 0.4377 | `build/reports/rocksdbjni-comparison-rr-read-optimized/comparison.csv` |
+| read_optimized | `multiget_random` | 215,978 | 443,409 | 0.4871 | `build/reports/rocksdbjni-comparison-rr-read-optimized/comparison.csv` |
+
+Additional evidence:
+
+- `build/reports/ldb-read-profile-comparison-rr/profile-comparison.csv` records the default/read-optimized side-by-side LDB profile output.
+- `ldb-longrun/build/reports/ldb-read-profile-comparison-rr/default/ldb-db-bench-summary.json` records `sstReadStats` and `blockCacheStats`; the default `multiget_random` row shows `pointGets=50000`, `tableReads=50000`, and `mayContainRequests=50000`.
+- Verification commands passed: `.\gradlew.bat :compileJava :testClasses :ldb-longrun:compileJava`, `.\gradlew.bat :test --tests net.xdob.vexra.ldb.LdbCoreBehaviorTest --tests net.xdob.vexra.ldb.LdbObservabilityTest`, the two LDB profile runs, and the two RocksDB JNI comparison runs.
+
 ## Open Questions And Pending Decisions
 
 This section tracks the points that are still unclear and must be closed before the next-version scope is frozen. The default recommendation is to prioritize stability evidence and keep API semantics conservative; if the business side has a strong need, the corresponding capability should be promoted into a focused design item.
@@ -313,3 +389,123 @@ This section tracks the points that are still unclear and must be closed before 
 | Release gate | Short gates are hard gates; long runs are release-candidate evidence | Emit long-run evidence paths from release gate, but do not require every local run to execute long runs |
 | Fault injection | Automate stable cases; allow low-disk/cross-filesystem/permission-failure evidence to be archived manually | Add an evidence matrix and manual-evidence template in 23.4 |
 | PrefixExtractor | Implement only after real prefix-heavy workload evidence exists | In 23.5, review key/prefix conventions before changing the read path |
+
+## Next-Version Storage-Format Hardening Preview
+
+This section records storage-format gaps for a later version. It is not part of the current RR-05/RR-06/RR-07 implementation scope. The current random-read workstream does not change the on-disk format of WAL, SST, MANIFEST, CURRENT, COLUMN-FAMILIES, or backup metadata, so it does not introduce new cross-version compatibility risk.
+
+### Current Gaps
+
+| Area | Gap | Recommended Direction | Version Boundary |
+| --- | --- | --- | --- |
+| Format versioning | WAL, SST, MANIFEST, and backup metadata do not yet share a uniform `formatVersion` and feature-set convention | Define a format-version matrix; unknown features must fail fast or enter a documented read-only downgrade path | Design first in the next version; keep old format by default |
+| SST metadata | SST files do not expose rich enough per-file properties such as key count, data-block count, filter policy, compression, sequence bounds, and compaction origin | Add an SST properties block or equivalent metadata, and make check/repair/report able to read it | Requires a standalone compatibility design |
+| Filter/cache observability | Runtime `ldb.sstReadStats` and `ldb.blockCacheStats` exist, but SST files do not self-describe filter parameters | Record filter policy name, bits-per-key, prefix/filter parameters in SST metadata | Do not persist this as part of the current read-optimized profile |
+| MANIFEST compatibility boundary | MANIFEST does not yet clearly record capability sets and column-family metadata versions | Record format version, feature set, column-family metadata version, and incompatible features in MANIFEST | Requires old/new DB and old/new tool matrices |
+| Checksum coverage | Checksum coverage and check/repair evidence can be more explicit for every file type | Document checksum coverage and error classes for WAL/SST/MANIFEST/COLUMN-FAMILIES/backup metadata | Document first, then add fault injection |
+| Backup/object metadata | Object-store evidence exists, but schema version, chain id, generation, reference origin, and retention-policy fields can be stronger | Add backup metadata schema version and fields required for long chains, cleanup dry-run, and cross-version restore | Design together with operations retention policy |
+| Format reference docs | The plan documents direction, but there is no dedicated stable storage-format reference | Add or plan `docs/storage-format.md` and `docs/storage-format.en.md` for WAL/SST/MANIFEST/CURRENT/COLUMN-FAMILIES/backup metadata | Documentation first in the next version |
+
+### Recommended Next-Version Work Packages
+
+| ID | Priority | Work Package | Deliverable | Acceptance Evidence |
+| --- | --- | --- | --- | --- |
+| SF-01 | P0 | Storage-format reference docs | `docs/storage-format.md` and `docs/storage-format.en.md` | Docs list fields, versions, checksum coverage, compatibility policy, and repair behavior for each file type |
+| SF-02 | P0 | Format version and feature-set design | WAL/SST/MANIFEST/backup metadata version matrix | Open/reject behavior is clear for old DBs, new DBs, old tools, and new tools |
+| SF-03 | P1 | SST properties preview | SST metadata field design and minimal read API | check/repair/report can show key count, filter, compression, and sequence bounds |
+| SF-04 | P1 | Backup metadata schema hardening | backup/object metadata schema version and chain/generation design | Long-chain backup, restore, and cleanup dry-run have traceable evidence |
+| SF-05 | P1 | File-level checksum evidence matrix | checksum coverage and failure-classification docs | Fault injection covers truncation, mutation, missing files, and unknown features |
+
+### Explicitly Out Of Scope For This Version
+
+- Do not change the existing on-disk format of WAL/SST/MANIFEST/CURRENT/COLUMN-FAMILIES/backup metadata.
+- Do not introduce new feature markers that make old versions misread data or fail to open old databases.
+- Do not persist the Bloom/cache/checksum choices from the `read_optimized` benchmark profile as storage-format capabilities.
+- Do not promise old versions can open data written by future new versions; future designs must instead define fail-fast and rollback boundaries.
+
+### Relationship To The Current Random-Read Workstream
+
+- RR-05 exposes runtime bottlenecks through `ldb.sstReadStats` and `ldb.blockCacheStats`; next-version SF-03 can promote part of this evidence into SST self-describing metadata.
+- RR-06 keeps default/read-optimized profiles as benchmark configuration, not format changes; persisting filter parameters into SST must go through SF-02/SF-03 design.
+- RR-07 verifies that `multiget_random` exercises the SST/table-cache path; deeper key grouping by SST should depend on stronger SST properties and read-path profiling.
+
+## Current-Version Random-Read Gap Closure Record On 2026-06-20
+
+This section records the gaps closed in the current version. Storage-format gaps remain assigned to the next-version storage-format hardening preview; this version does not change the on-disk format.
+
+### Fixed Items
+
+| Item | Closure | Evidence |
+| --- | --- | --- |
+| `candidateFiles` statistics | Fixed the `ReadStats.clear()` placement in `Level0` / `Level` so candidate-file counters are not cleared before reporting, and empty levels no longer duplicate the previous level's stats | 200k default `cold_readrandom` and `multiget_random` both record `candidateFiles=200000` |
+| MultiGet SST batch entry | `LDbImpl` now routes MultiGet SST misses through `VersionSet#get(cfId, List<LookupKey>)`, preserving one snapshot sequence, memtable/immutable-memtable prefiltering, and SST fallback order | `LdbCoreBehaviorTest` and `LdbObservabilityTest` pass; `multiget_random` reports SST/table-cache stats |
+| 200k official-parameter evidence | Generated default/read-optimized profiles and RocksDB JNI comparisons with `num=200000`, `reads=200000`, `value_size=100`, and `batch_size=64` | `build/reports/ldb-read-profile-comparison-200k/profile-comparison.csv`, `build/reports/rocksdbjni-comparison-200k-default/comparison.csv`, `build/reports/rocksdbjni-comparison-200k-read-optimized/comparison.csv` |
+
+### 200k Comparison Results
+
+| Profile | Scenario | LDB ops/s | RocksDB JNI ops/s | Ratio | Evidence |
+| --- | ---: | ---: | ---: | ---: | --- |
+| default | `warm_readrandom` | 327,318 | 473,241 | 0.6917 | `build/reports/rocksdbjni-comparison-200k-default/comparison.csv` |
+| default | `cold_readrandom` | 157,705 | 320,820 | 0.4916 | `build/reports/rocksdbjni-comparison-200k-default/comparison.csv` |
+| default | `multiget_random` | 137,833 | 321,336 | 0.4289 | `build/reports/rocksdbjni-comparison-200k-default/comparison.csv` |
+| read_optimized | `warm_readrandom` | 293,233 | 521,253 | 0.5626 | `build/reports/rocksdbjni-comparison-200k-read-optimized/comparison.csv` |
+| read_optimized | `cold_readrandom` | 224,487 | 250,363 | 0.8966 | `build/reports/rocksdbjni-comparison-200k-read-optimized/comparison.csv` |
+| read_optimized | `multiget_random` | 172,418 | 197,650 | 0.8723 | `build/reports/rocksdbjni-comparison-200k-read-optimized/comparison.csv` |
+
+### Current Conclusion
+
+- The current default profile keeps `warm_readrandom` above 0.5x; default `cold_readrandom` is 0.4916x in this single 200k run, close to the threshold and not enough by itself to prove a regression because RocksDB JNI is noisy between runs.
+- The current read-optimized profile reaches 0.8966x for `cold_readrandom` and 0.8723x for `multiget_random`, satisfying the current-version random-read target of at least 0.5x under the tuned profile.
+- `multiget_random` now measures after compaction. The default row records `pointGets=200000`, `candidateFiles=200000`, `tableReads=200000`, and `mayContainRequests=200000`, proving the batch benchmark exercises SST filtering and table-cache lookup.
+- Native RocksDB `db_bench` remains an external-environment gap. This version keeps `run-rocksdb-comparison.ps1` as the entry point and does not make native comparison a local completion prerequisite.
+
+### Passed Verification
+
+- `.\gradlew.bat :compileJava :testClasses :ldb-longrun:compileJava`
+- `.\gradlew.bat :test --tests net.xdob.vexra.ldb.LdbCoreBehaviorTest --tests net.xdob.vexra.ldb.LdbObservabilityTest`
+- 200k default/read-optimized LDB profile runs
+- 200k default/read-optimized RocksDB JNI comparison runs
+
+## Completed in this version: deeper MultiGet SST batching
+
+Completed fixes for this version:
+
+- The MultiGet miss path no longer creates a full SST iterator independently for every key.
+- L0 batches unresolved keys across files from newest to oldest and reuses one iterator within each file.
+- Non-L0 levels group keys by candidate SST file using key ranges and reuse one iterator within each SST.
+- Empty-level profiling no longer inherits the previous read statistics, avoiding polluted candidateFiles/tableReads/iteratorRequests values.
+- The current SST/table file format remains unchanged; file-format improvements stay in the next version scope.
+
+Latest 200k `read_optimized` MultiGet comparison:
+
+| Metric | LDB | RocksDB JNI | Ratio |
+| --- | ---: | ---: | ---: |
+| multiget_random ops/s | 200,302.818 | 243,015.078 | 82.42% |
+
+Key LDB read statistics: tableReads=34,315, iteratorRequests=34,394, candidateFiles=200,000.
+
+Evidence paths:
+
+- `ldb-longrun/build/reports/ldb-multiget-optimized-200k/ldb-db-bench-summary.json`
+- `build/reports/rocksdbjni-comparison-multiget-optimized-200k/comparison.csv`
+## 0.8.0 Scope Convergence: File-Format Evolution
+
+The `0.8.0-SNAPSHOT` version goal has shifted from the previous random-read performance workstream to file-format improvement and evolution. The primary design entry points are:
+
+- `docs/storage-format-0.8-design.md`
+- `docs/storage-format-0.8-design.en.md`
+
+Current priorities:
+
+| ID | Priority | Goal | Notes |
+| --- | --- | --- | --- |
+| SF-01 | P0 | File-format reference docs | Document the current WAL/SST/MANIFEST/CURRENT/COLUMN-FAMILIES/backup metadata formats |
+| SF-02 | P0 | Table properties-block reader | Read SST self-describing metadata through metaindex `properties`; classify old SSTs as v1 legacy |
+| SF-03 | P0 | Format version and feature set | Support compatible/incompatible features; unknown incompatible features must fail fast |
+| SF-04 | P1 | v2 opt-in writes | TableBuilder writes properties block while preserving legacy-write mode by default |
+| SF-05 | P1 | check/repair/report integration | Add `ldb.storageFormat`, `ldb.tableFormat`, and release-gate `storageFormatGates` |
+
+Boundary: the first `0.8.0` increment does not promise RocksDB/LevelDB disk-format compatibility and does not promise older LDB versions can open new-format databases. It must guarantee that new versions open old databases and fail fast on unknown incompatible features.
+### SF-01 Completion Status
+
+The `0.8.0` storage-format work package SF-01 is complete. Current-format reference documents were added: `docs/storage-format.md` and `docs/storage-format.en.md`. Future implementation must use these references plus `docs/storage-format-0.8-design.md` as the factual and evolution boundary.

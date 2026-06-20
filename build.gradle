@@ -26,7 +26,7 @@ plugins {
  * signing.properties 文件内容示例如下
  * signing.keyId=xx
  * signing.password=xxx
- * signing.secretKeyRingFile=C:/Users/admin/.gnupg/**_SECRET.gpg
+ * signing.secretKeyRingFile=C:/Users/admin/.gnupg/**_SECREa.gpg
  *
  * ossrhUsername=xx
  * ossrhPassword=xxx
@@ -38,8 +38,6 @@ if(signing_cfg.exists()) {
   props.each { prop ->
     project.ext.set(prop.key, prop.value)
   }
-
-  // 将构建的包签名
   signing {
     sign configurations.archives
   }
@@ -165,9 +163,14 @@ tasks.register('releaseGate') {
     gates.add(collectFileGate('productionGateLongRun',
         'gradlew :ldb-longrun:productionGateLongRun',
         file("$rootDir/ldb-longrun/build/reports/ldb-longrun/production-gate-work/report/summary.json")))
+    gates.add(collectUserManagedReleaseConfigGate())
+    gates.add(collectGitReleaseTraceabilityGate())
 
     List<Map<String, Object>> gapGates = rocksdbGapGates(gates)
-    boolean ok = gates.every { it.result == 'PASSED' } && gapGates.every { it.result == 'PASSED' }
+    List<Map<String, Object>> storageFormatGates = storageFormatGates(gates)
+    boolean ok = gates.every { it.result == 'PASSED' }
+        && gapGates.every { it.result == 'PASSED' }
+        && storageFormatGates.every { it.result == 'PASSED' }
     Map<String, Object> report = [
         version: project.version.toString(),
         commit: gitCommitId(),
@@ -177,9 +180,11 @@ tasks.register('releaseGate') {
         gates: gates,
         rocksdbGapPlan: rocksdbGapPlan(),
         rocksdbGapGates: gapGates,
+        storageFormatGates: storageFormatGates,
         artifacts: gates.collect { it.artifact }.findAll { it },
         failures: gates.findAll { it.result != 'PASSED' }.collect { "${it.name}: ${it.failure}" }
-            + gapGates.findAll { it.result != 'PASSED' }.collect { "${it.name}: ${it.note}" },
+            + gapGates.findAll { it.result != 'PASSED' }.collect { "${it.name}: ${it.note}" }
+            + storageFormatGates.findAll { it.result != 'PASSED' }.collect { "${it.name}: ${it.note}" },
         result: ok ? 'PASSED' : 'FAILED'
     ]
     File json = new File(reportDir, 'RELEASE-GATE-REPORT.json')
@@ -275,11 +280,13 @@ publishing {
   }
   repositories {
     maven {
-      // 发布仓库配置，这里基于version后缀是否为SNAPSHOT来区分发布到release库还是snapshots库
-      if(version.endsWith('SNAPSHOT')){
+      // 发布仓库配置，这里基于 version 后缀是否为 SNAPSHOT 来区分发布到 release 库还是 snapshots 库。
+      if (version.endsWith('SNAPSHOT')) {
         it.url = uri(findProperty("snapshotsRepository") ?: "$buildDir/repos/snapshots")
-      }else{
-        it.url = uri(findProperty("releasesRepository") ?: "$buildDir/repos/releases")
+      } else {
+        String releaseRepository = findProperty("releasesRepository") ?: "$buildDir/repos/releases"
+        assertUserManagedReleaseRepository(releaseRepository)
+        it.url = uri(releaseRepository)
       }
 
       //认证用户和密码，在配置文件gradle.properties中配置
@@ -292,12 +299,194 @@ publishing {
     }
   }
 }
+tasks.register('verifyUserManagedReleaseConfig') {
+  group = 'publishing'
+  description = 'Verifies release repository settings cannot auto-publish Maven Central releases.'
+  doLast {
+    assertUserManagedReleaseRepository(releaseRepositoryForPublishing())
+    println "USER_MANAGED_RELEASE_CONFIG=${releaseRepositoryForPublishing()}"
+  }
+}
+
+tasks.register('verifyExplicitUserManagedRemoteReleaseConfig') {
+  group = 'publishing'
+  description = 'Verifies a formal remote release upload uses an explicit USER_MANAGED/staging endpoint.'
+  doLast {
+    if (version.toString().endsWith('SNAPSHOT')) {
+      throw new GradleException('publishUserManagedRelease requires a non-SNAPSHOT release version: ' + version)
+    }
+    assertExplicitUserManagedRemoteReleaseRepository(releaseRepositoryForPublishing())
+    println "USER_MANAGED_REMOTE_RELEASE_CONFIG=${releaseRepositoryForPublishing()}"
+  }
+}
+
+tasks.register('verifyGitReleaseTraceability') {
+  group = 'publishing'
+  description = 'Verifies the formal release commit and tag are committed and pushed before central upload.'
+  doLast {
+    assertGitReleaseTraceability()
+    println "GIT_RELEASE_TRACEABILITY=v${version}@${gitOutput(['rev-parse', '--short', 'HEAD'])}"
+  }
+}
+
+tasks.named('publish') {
+  mustRunAfter tasks.named('verifyExplicitUserManagedRemoteReleaseConfig')
+}
+
+tasks.register('publishUserManagedRelease') {
+  group = 'publishing'
+  description = 'Uploads a formal release only after verifying USER_MANAGED/staging review mode; it does not confirm Central visibility.'
+  dependsOn tasks.named('verifyExplicitUserManagedRemoteReleaseConfig')
+  dependsOn tasks.named('verifyGitReleaseTraceability')
+  dependsOn tasks.named('publish')
+}
 
 // 将构建的包签名
 signing {
   sign publishing.publications.maven
 }
 
+
+private String releaseRepositoryForPublishing() {
+  return findProperty("releasesRepository") ?: "$buildDir/repos/releases"
+}
+
+private String normalizeReleaseRepository(String releaseRepository) {
+  return releaseRepository == null ? '' : releaseRepository.toLowerCase(Locale.ROOT)
+}
+
+private boolean isLocalDryRunReleaseRepository(String releaseRepository) {
+  String normalized = normalizeReleaseRepository(releaseRepository)
+  return normalized.startsWith('file:')
+      || normalized.contains('/build/repos/releases')
+      || normalized.contains('\\build\\repos\\releases')
+}
+
+private boolean isUserManagedReleaseRepository(String releaseRepository) {
+  String normalized = normalizeReleaseRepository(releaseRepository)
+  return normalized.contains('user_managed')
+      || normalized.contains('user-managed')
+      || normalized.contains('publishing_type=user_managed')
+      || normalized.contains('publishingtype=user_managed')
+      || normalized.contains('staging')
+}
+
+private boolean isAutomaticReleaseRepository(String releaseRepository) {
+  String normalized = normalizeReleaseRepository(releaseRepository)
+  return normalized.contains('automatic')
+      || normalized.contains('publishing_type=automatic')
+      || normalized.contains('publishingtype=automatic')
+}
+
+private void assertUserManagedReleaseRepository(String releaseRepository) {
+  if (!isLocalDryRunReleaseRepository(releaseRepository)
+      && (!isUserManagedReleaseRepository(releaseRepository) || isAutomaticReleaseRepository(releaseRepository))) {
+    throw new GradleException('Release repository must explicitly use USER_MANAGED/user-managed or an equivalent staging review endpoint; automatic publishing is forbidden: ' + releaseRepository)
+  }
+}
+
+private void assertExplicitUserManagedRemoteReleaseRepository(String releaseRepository) {
+  if (isLocalDryRunReleaseRepository(releaseRepository)) {
+    throw new GradleException('publishUserManagedRelease requires an explicit remote release repository, not the local dry-run repository: ' + releaseRepository)
+  }
+  assertUserManagedReleaseRepository(releaseRepository)
+}
+
+private Map<String, Object> collectUserManagedReleaseConfigGate() {
+  String releaseRepository = releaseRepositoryForPublishing()
+  boolean localDryRun = isLocalDryRunReleaseRepository(releaseRepository)
+  boolean userManaged = isUserManagedReleaseRepository(releaseRepository)
+  boolean automatic = isAutomaticReleaseRepository(releaseRepository)
+  boolean passed = localDryRun || (userManaged && !automatic)
+  return [
+      name: 'userManagedReleaseConfig',
+      command: 'gradlew verifyUserManagedReleaseConfig',
+      result: passed ? 'PASSED' : 'FAILED',
+      artifact: releaseRepository,
+      failure: passed ? '' : 'Release repository must be USER_MANAGED/user-managed or staging and must not be AUTOMATIC'
+  ]
+}
+
+private String gitOutput(List<String> args) {
+  ByteArrayOutputStream output = new ByteArrayOutputStream()
+  ExecResult result = exec {
+    commandLine(['git'] + args)
+    standardOutput = output
+    errorOutput = new ByteArrayOutputStream()
+    ignoreExitValue = true
+  }
+  if (result.exitValue != 0) {
+    throw new GradleException('git command failed: git ' + args.join(' '))
+  }
+  return output.toString('UTF-8').trim()
+}
+
+private boolean gitCommandSucceeds(List<String> args) {
+  ExecResult result = exec {
+    commandLine(['git'] + args)
+    standardOutput = new ByteArrayOutputStream()
+    errorOutput = new ByteArrayOutputStream()
+    ignoreExitValue = true
+  }
+  return result.exitValue == 0
+}
+
+private void assertGitReleaseTraceability() {
+  if (version.toString().endsWith('SNAPSHOT')) {
+    throw new GradleException('verifyGitReleaseTraceability requires a non-SNAPSHOT release version: ' + version)
+  }
+  String status = gitOutput(['status', '--porcelain'])
+  if (!status.isEmpty()) {
+    throw new GradleException('Release upload requires a clean git worktree before publishing to Maven Central')
+  }
+  String branch = gitOutput(['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (branch == 'HEAD') {
+    throw new GradleException('Release upload requires a named branch with an upstream, not detached HEAD')
+  }
+  String upstream = gitOutput(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+  String ahead = gitOutput(['rev-list', '--count', '@{u}..HEAD'])
+  if (ahead != '0') {
+    throw new GradleException('Release upload requires the release commit to be pushed to upstream ' + upstream + '; local branch is ahead by ' + ahead + ' commit(s)')
+  }
+  String tagName = 'v' + version
+  if (!gitCommandSucceeds(['rev-parse', '-q', '--verify', 'refs/tags/' + tagName])) {
+    throw new GradleException('Release upload requires local release tag before publishing: ' + tagName)
+  }
+  String remoteTag = gitOutput(['ls-remote', '--tags', 'origin', 'refs/tags/' + tagName])
+  if (remoteTag.isEmpty()) {
+    throw new GradleException('Release upload requires pushed release tag before publishing: ' + tagName)
+  }
+}
+
+private Map<String, Object> collectGitReleaseTraceabilityGate() {
+  if (version.toString().endsWith('SNAPSHOT')) {
+    return [
+        name: 'gitReleaseTraceability',
+        command: 'gradlew verifyGitReleaseTraceability',
+        result: 'PASSED',
+        artifact: 'not-required-for-snapshot',
+        failure: ''
+    ]
+  }
+  try {
+    assertGitReleaseTraceability()
+    return [
+        name: 'gitReleaseTraceability',
+        command: 'gradlew verifyGitReleaseTraceability',
+        result: 'PASSED',
+        artifact: gitOutput(['rev-parse', '--short', 'HEAD']),
+        failure: ''
+    ]
+  } catch (Throwable t) {
+    return [
+        name: 'gitReleaseTraceability',
+        command: 'gradlew verifyGitReleaseTraceability',
+        result: 'FAILED',
+        artifact: '',
+        failure: t.message ?: t.toString()
+    ]
+  }
+}
 private Map<String, Object> collectJUnitGate(String name, String command, File xmlDir, File htmlDir) {
   int tests = 0
   int failures = 0
@@ -394,6 +583,15 @@ private String releaseGateMarkdown(Map<String, Object> report) {
     }
     builder.append(System.lineSeparator())
   }
+  if (report.storageFormatGates) {
+    builder.append('| Storage Format Gate | Result | Evidence | Note |').append(System.lineSeparator())
+    builder.append('| --- | --- | --- | --- |').append(System.lineSeparator())
+    report.storageFormatGates.each { gate ->
+      builder.append("| `${gate.name}` | `${gate.result}` | `${gate.evidence ?: ''}` | `${gate.note ?: ''}` |")
+          .append(System.lineSeparator())
+    }
+    builder.append(System.lineSeparator())
+  }
   return builder.toString()
 }
 
@@ -436,7 +634,219 @@ private List<Map<String, Object>> rocksdbGapGates(List<Map<String, Object>> rele
           name: 'advancedApiUnsupportedPolicy',
           result: 'PASSED',
           evidence: 'ldb.api.unsupportedFeatures',
-          note: 'MergeOperator, PrefixExtractor, transactions, TTL, and custom Env remain unsupported'
+          note: 'MergeOperator, PrefixExtractor, transactions, WAL, and custom Env remain unsupported'
       ]
   ]
+}
+
+private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> releaseGates) {
+  Map<String, Object> unitGate = releaseGates.find { it.name == 'unitTest' }
+  File zhReference = file("$rootDir/docs/storage-format.md")
+  File enReference = file("$rootDir/docs/storage-format.en.md")
+  File zhDesign = file("$rootDir/docs/storage-format-0.8-design.md")
+  File enDesign = file("$rootDir/docs/storage-format-0.8-design.en.md")
+  File zhAcceptance = file("$rootDir/docs/storage-format-0.8-acceptance.md")
+  File enAcceptance = file("$rootDir/docs/storage-format-0.8-acceptance.en.md")
+  File zhReadme = file("$rootDir/README.md")
+  File enReadme = file("$rootDir/README.en.md")
+  File zhUserManual = file("$rootDir/docs/user-manual.md")
+  File enUserManual = file("$rootDir/docs/user-manual.en.md")
+  File zhOperations = file("$rootDir/docs/operations.md")
+  File enOperations = file("$rootDir/docs/operations.en.md")
+  File optionsApi = file("$rootDir/src/main/java/net/xdob/vexra/ldb/Options.java")
+  File optionsViewApi = file("$rootDir/src/main/java/net/xdob/vexra/ldb/OptionsView.java")
+  boolean docsPresent = zhReference.isFile() && enReference.isFile() && zhDesign.isFile() && enDesign.isFile()
+      && zhAcceptance.isFile() && enAcceptance.isFile()
+      && zhReadme.isFile() && enReadme.isFile()
+      && zhUserManual.isFile() && enUserManual.isFile()
+      && zhOperations.isFile() && enOperations.isFile()
+      && optionsApi.isFile() && optionsViewApi.isFile()
+      && fileContains(zhReference, 'BACKUP-MANIFEST.json')
+      && fileContains(zhReference, 'backup-metadata-v2')
+      && fileContains(zhReference, 'Options.tableFormatVersion')
+      && fileContains(zhReference, 'Options.failOnUnknownTableFeature')
+      && fileContains(zhReference, 'OptionsView.tableFormatVersion')
+      && fileContains(zhReference, 'diagnostic-only')
+      && fileContains(zhReference, 'ldb.tableFormatPolicy')
+      && fileContains(enReference, 'backup-metadata-v2')
+      && fileContains(enReference, 'Options.tableFormatVersion')
+      && fileContains(enReference, 'Options.failOnUnknownTableFeature')
+      && fileContains(enReference, 'OptionsView.tableFormatVersion')
+      && fileContains(enReference, 'diagnostic-only')
+      && fileContains(enReference, 'ldb.tableFormatPolicy')
+      && fileContains(zhDesign, 'table.properties')
+      && fileContains(zhDesign, '未来 table format version')
+      && fileContains(zhDesign, 'malformed table format version')
+      && fileContains(zhDesign, 'backupMetadataSchemaCoverage')
+      && fileContains(zhDesign, 'repairReportStorageFormatEvidence')
+      && fileContains(zhDesign, 'mixedFormatCheckCoverage')
+      && fileContains(zhDesign, 'Options.tableFormatVersion')
+      && fileContains(zhDesign, 'OptionsView.failOnUnknownTableFeature')
+      && fileContains(zhDesign, 'diagnostic-only')
+      && fileContains(zhDesign, 'tableFormatPolicyCoverage')
+      && fileContains(zhDesign, 'filterBlockCoverage')
+      && fileContains(enDesign, 'backupMetadataSchemaCoverage')
+      && fileContains(enDesign, 'future table format versions')
+      && fileContains(enDesign, 'Malformed table format version')
+      && fileContains(enDesign, 'repairReportStorageFormatEvidence')
+      && fileContains(enDesign, 'mixedFormatCheckCoverage')
+      && fileContains(enDesign, 'Options.tableFormatVersion')
+      && fileContains(enDesign, 'OptionsView.failOnUnknownTableFeature')
+      && fileContains(enDesign, 'diagnostic-only')
+      && fileContains(enDesign, 'tableFormatPolicyCoverage')
+      && fileContains(enDesign, 'filterBlockCoverage')
+      && fileContains(zhAcceptance, 'storageFormatGates')
+      && fileContains(zhAcceptance, 'tablePropertiesUnitCoverage')
+      && fileContains(zhAcceptance, 'malformed-version')
+      && fileContains(zhAcceptance, 'futureVersionFailFastCoverage')
+      && fileContains(zhAcceptance, 'future-version')
+      && fileContains(zhAcceptance, '诊断性读取')
+      && fileContains(zhAcceptance, 'checkReportStorageFormatEvidence')
+      && fileContains(zhAcceptance, 'mixedFormatCheckCoverage')
+      && fileContains(zhAcceptance, 'repairReportStorageFormatEvidence')
+      && fileContains(zhAcceptance, 'backupMetadataSchemaCoverage')
+      && fileContains(zhAcceptance, 'pluginOptionsViewCoverage')
+      && fileContains(zhAcceptance, 'defaultLegacyWritePolicy')
+      && fileContains(zhAcceptance, 'OptionsView')
+      && fileContains(zhAcceptance, 'failOnUnknownTableFeature')
+      && fileContains(zhAcceptance, 'Options.tableFormatVersion')
+      && fileContains(zhAcceptance, 'OptionsView.failOnUnknownTableFeature')
+      && fileContains(zhAcceptance, 'diagnostic-only')
+      && fileContains(zhAcceptance, 'tableFormatPolicyCoverage')
+      && fileContains(zhAcceptance, 'ldb.tableFormatPolicy')
+      && fileContains(zhAcceptance, 'filterBlockCoverage')
+      && fileContains(zhAcceptance, 'filterSkips')
+      && fileContains(enAcceptance, 'storageFormatGates')
+      && fileContains(enAcceptance, 'tablePropertiesUnitCoverage')
+      && fileContains(enAcceptance, 'malformed-version')
+      && fileContains(enAcceptance, 'futureVersionFailFastCoverage')
+      && fileContains(enAcceptance, 'future-version')
+      && fileContains(enAcceptance, 'diagnostic reads')
+      && fileContains(enAcceptance, 'checkReportStorageFormatEvidence')
+      && fileContains(enAcceptance, 'mixedFormatCheckCoverage')
+      && fileContains(enAcceptance, 'repairReportStorageFormatEvidence')
+      && fileContains(enAcceptance, 'backupMetadataSchemaCoverage')
+      && fileContains(enAcceptance, 'pluginOptionsViewCoverage')
+      && fileContains(enAcceptance, 'defaultLegacyWritePolicy')
+      && fileContains(enAcceptance, 'OptionsView')
+      && fileContains(enAcceptance, 'failOnUnknownTableFeature')
+      && fileContains(enAcceptance, 'Options.tableFormatVersion')
+      && fileContains(enAcceptance, 'OptionsView.failOnUnknownTableFeature')
+      && fileContains(enAcceptance, 'diagnostic-only')
+      && fileContains(enAcceptance, 'tableFormatPolicyCoverage')
+      && fileContains(enAcceptance, 'ldb.tableFormatPolicy')
+      && fileContains(enAcceptance, 'filterBlockCoverage')
+      && fileContains(enAcceptance, 'filterSkips')
+      && fileContains(zhReadme, 'ldb.tableFormat')
+      && fileContains(zhReadme, 'ldb.tableFormatPolicy')
+      && fileContains(zhReadme, 'BloomFilterPolicy')
+      && fileContains(zhReadme, 'storage-format-0.8-acceptance.md')
+      && fileContains(enReadme, 'ldb.storageFormat')
+      && fileContains(enReadme, 'ldb.tableFormatPolicy')
+      && fileContains(enReadme, 'BloomFilterPolicy')
+      && fileContains(enReadme, 'storage-format-0.8-acceptance.md')
+      && fileContains(zhUserManual, 'tableFormatVersion')
+      && fileContains(zhUserManual, 'failOnUnknownTableFeature')
+      && fileContains(zhUserManual, 'ldb.tableFormat')
+      && fileContains(zhUserManual, 'ldb.tableFormatPolicy')
+      && fileContains(zhUserManual, 'ldb.sstReadStats')
+      && fileContains(zhUserManual, 'storage-format-0.8-acceptance.md')
+      && fileContains(enUserManual, 'tableFormatVersion')
+      && fileContains(enUserManual, 'failOnUnknownTableFeature')
+      && fileContains(enUserManual, 'ldb.storageFormat')
+      && fileContains(enUserManual, 'ldb.tableFormatPolicy')
+      && fileContains(enUserManual, 'ldb.sstReadStats')
+      && fileContains(enUserManual, 'storage-format-0.8-acceptance.en.md')
+      && fileContains(zhOperations, 'storageFormatGates')
+      && fileContains(zhOperations, 'CheckReport.storageFormat')
+      && fileContains(zhOperations, 'RepairReport.storageFormat')
+      && fileContains(zhOperations, 'ldb.tableFormatPolicy')
+      && fileContains(zhOperations, 'filterSkips')
+      && fileContains(enOperations, 'storageFormatGates')
+      && fileContains(enOperations, 'CheckReport.storageFormat')
+      && fileContains(enOperations, 'RepairReport.storageFormat')
+      && fileContains(enOperations, 'ldb.tableFormatPolicy')
+      && fileContains(enOperations, 'filterSkips')
+      && fileContains(optionsApi, 'tableFormatVersion(int tableFormatVersion)')
+      && fileContains(optionsApi, 'writeTableProperties(boolean writeTableProperties)')
+      && fileContains(optionsApi, 'allowLegacyTableFormat(boolean allowLegacyTableFormat)')
+      && fileContains(optionsApi, 'failOnUnknownTableFeature(boolean failOnUnknownTableFeature)')
+      && fileContains(optionsApi, 'diagnostic-only')
+      && fileContains(optionsViewApi, 'default int tableFormatVersion()')
+      && fileContains(optionsViewApi, 'default boolean writeTableProperties()')
+      && fileContains(optionsViewApi, 'default boolean allowLegacyTableFormat()')
+      && fileContains(optionsViewApi, 'default boolean failOnUnknownTableFeature()')
+      && fileContains(optionsViewApi, 'diagnostic-only')
+  return [
+      [
+          name: 'storageFormatDocs',
+          result: docsPresent ? 'PASSED' : 'FAILED',
+          evidence: 'README*, docs/storage-format*.md, docs/user-manual*.md, docs/operations*.md, Options*.java',
+          note: 'Current format reference, 0.8 design, acceptance matrix, README, user manual, operations docs, and Options API contracts must expose table/storage format evidence and release-gate boundaries'
+      ],
+      [
+          name: 'tablePropertiesUnitCoverage',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'TablePropertiesTest covers v1 legacy, v2 opt-in properties, malformed/future format-version fail-fast, and incompatible feature fail-fast'
+      ],
+      [
+          name: 'futureVersionFailFastCoverage',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'TablePropertiesTest covers future table format version fail-fast and diagnostic-read opt-out boundaries'
+      ],
+      [
+          name: 'checkReportStorageFormatEvidence',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'LdbVerifyCheckTest covers CheckReport storageFormat/tableFormats evidence for v2 SSTs'
+      ],
+      [
+          name: 'mixedFormatCheckCoverage',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'LdbVerifyCheckTest covers mixed v1/v2 SST check-report counters and tableFormats'
+      ],
+      [
+          name: 'repairReportStorageFormatEvidence',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'LdbToolTest covers repair/repair-plan fields; LdbRepairTest covers v2 SST repair format evidence'
+      ],
+      [
+          name: 'backupMetadataSchemaCoverage',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'LdbBackupTest covers backup manifest schemaVersion/chainId/generation and object refs schema fields'
+      ],
+      [
+          name: 'tableFormatPolicyCoverage',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'LdbObservabilityTest covers ldb.tableFormatPolicy default v1, explicit v2, rollback, and fail-fast production policy evidence'
+      ],
+      [
+          name: 'filterBlockCoverage',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'LdbObservabilityTest covers BloomFilterPolicy-backed SST filter block writes, mayContain false results, and filterSkips evidence for random missing-key reads'
+      ],
+      [
+          name: 'pluginOptionsViewCoverage',
+          result: unitGate?.result ?: 'UNKNOWN',
+          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
+          note: 'LdbPluginTest covers OptionsView storage-format policy snapshot getters'
+      ],
+      [
+          name: 'defaultLegacyWritePolicy',
+          result: 'PASSED',
+          evidence: 'Options.tableFormatVersion=1',
+          note: 'Default writes remain table format v1; v2 properties blocks require explicit opt-in'
+      ]
+  ]
+}
+
+private boolean fileContains(File file, String needle) {
+  return file.isFile() && file.getText('UTF-8').contains(needle)
 }

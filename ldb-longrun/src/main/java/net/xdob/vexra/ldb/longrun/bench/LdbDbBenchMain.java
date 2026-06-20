@@ -3,6 +3,7 @@ package net.xdob.vexra.ldb.longrun.bench;
 import net.xdob.vexra.ldb.LDB;
 import net.xdob.vexra.ldb.Options;
 import net.xdob.vexra.ldb.WriteOptions;
+import net.xdob.vexra.ldb.impl.BloomFilterPolicy;
 import net.xdob.vexra.ldb.impl.LDBFactory;
 
 import java.io.File;
@@ -34,7 +35,7 @@ public final class LdbDbBenchMain {
   private static final int DEFAULT_NUM = 200000;
   private static final int DEFAULT_READS = 200000;
   private static final int DEFAULT_VALUE_SIZE = 100;
-  private static final String DEFAULT_BENCHMARKS = "fillseq,readrandom,overwrite,readwhilewriting";
+  private static final String DEFAULT_BENCHMARKS = "fillseq,warm_readrandom,overwrite,readwhilewriting";
 
   private LdbDbBenchMain() {
   }
@@ -84,14 +85,15 @@ public final class LdbDbBenchMain {
       deleteRecursively(dbDir);
       if ("fillseq".equals(benchmark)) {
         results.add(fillSeq(config, dbDir));
-      } else if ("readrandom".equals(benchmark)) {
-        prepareDb(config, dbDir);
-        results.add(readRandom(config, dbDir));
+      } else if ("readrandom".equals(benchmark) || "warm_readrandom".equals(benchmark)) {
+        results.add(warmReadRandom(config, dbDir, benchmark));
+      } else if ("cold_readrandom".equals(benchmark)) {
+        results.add(coldReadRandom(config, dbDir));
+      } else if ("multiget_random".equals(benchmark)) {
+        results.add(multiGetRandom(config, dbDir));
       } else if ("overwrite".equals(benchmark)) {
-        prepareDb(config, dbDir);
         results.add(overwrite(config, dbDir));
       } else if ("readwhilewriting".equals(benchmark)) {
-        prepareDb(config, dbDir);
         results.add(readWhileWriting(config, dbDir));
       } else {
         throw new IllegalArgumentException("Unsupported benchmark: " + benchmark);
@@ -110,34 +112,79 @@ public final class LdbDbBenchMain {
       for (int i = 0; i < config.num; i++) {
         db.put(key(i), value(i, config.valueSize), writeOptions(config));
       }
+      return Result.of("fillseq", config.num, start, System.nanoTime(), db);
     }
-    return Result.of("fillseq", config.num, start, System.nanoTime());
   }
 
-  private static Result readRandom(Config config, File dbDir) throws Exception {
+  private static Result warmReadRandom(Config config, File dbDir, String resultName) throws Exception {
     Random random = new Random(config.seed);
     long hits = 0;
-    long start = System.nanoTime();
     try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+      long start = System.nanoTime();
       for (int i = 0; i < config.reads; i++) {
         if (db.get(key(random.nextInt(config.num))) != null) {
           hits++;
         }
       }
+      return Result.of(resultName, config.reads, hits, start, System.nanoTime(), db);
     }
-    return Result.of("readrandom", config.reads, hits, start, System.nanoTime());
+  }
+
+  private static Result coldReadRandom(Config config, File dbDir) throws Exception {
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+    }
+    Random random = new Random(config.seed);
+    long hits = 0;
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      long start = System.nanoTime();
+      for (int i = 0; i < config.reads; i++) {
+        if (db.get(key(random.nextInt(config.num))) != null) {
+          hits++;
+        }
+      }
+      return Result.of("cold_readrandom", config.reads, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result multiGetRandom(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    long operations = 0;
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+      db.compactRange(key(0), key(config.num));
+      long start = System.nanoTime();
+      while (operations < config.reads) {
+        int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
+        List<byte[]> keys = new ArrayList<>(batchSize);
+        for (int i = 0; i < batchSize; i++) {
+          keys.add(key(random.nextInt(config.num)));
+        }
+        List<byte[]> values = db.get(keys);
+        for (byte[] value : values) {
+          if (value != null) {
+            hits++;
+          }
+        }
+        operations += batchSize;
+      }
+      return Result.of("multiget_random", operations, hits, start, System.nanoTime(), db);
+    }
   }
 
   private static Result overwrite(Config config, File dbDir) throws Exception {
     Random random = new Random(config.seed);
-    long start = System.nanoTime();
     try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+      long start = System.nanoTime();
       for (int i = 0; i < config.num; i++) {
         int keyIndex = random.nextInt(config.num);
         db.put(key(keyIndex), value(i, config.valueSize), writeOptions(config));
       }
+      return Result.of("overwrite", config.num, start, System.nanoTime(), db);
     }
-    return Result.of("overwrite", config.num, start, System.nanoTime());
   }
 
   private static Result readWhileWriting(Config config, File dbDir) throws Exception {
@@ -146,8 +193,8 @@ public final class LdbDbBenchMain {
     final AtomicLong writes = new AtomicLong();
     final AtomicLong hits = new AtomicLong();
     final AtomicLong failures = new AtomicLong();
-    long start = System.nanoTime();
     try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
       Thread reader = new Thread(new Runnable() {
         @Override
         public void run() {
@@ -184,32 +231,46 @@ public final class LdbDbBenchMain {
           }
         }
       }, "ldb-db-bench-writer");
+      long start = System.nanoTime();
       reader.start();
       writer.start();
       startGate.countDown();
       reader.join();
       writer.join();
+      if (failures.get() > 0) {
+        throw new IllegalStateException("readwhilewriting failed with " + failures.get() + " worker failure(s)");
+      }
+      return Result.of("readwhilewriting", reads.get() + writes.get(), hits.get(), start, System.nanoTime(), db);
     }
-    if (failures.get() > 0) {
-      throw new IllegalStateException("readwhilewriting failed with " + failures.get() + " worker failure(s)");
-    }
-    return Result.of("readwhilewriting", reads.get() + writes.get(), hits.get(), start, System.nanoTime());
   }
 
-  private static void prepareDb(Config config, File dbDir) throws Exception {
-    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
-      WriteOptions writeOptions = writeOptions(config);
-      for (int i = 0; i < config.num; i++) {
-        db.put(key(i), value(i, config.valueSize), writeOptions);
-      }
+  private static void prepareDb(Config config, LDB db) {
+    WriteOptions writeOptions = writeOptions(config);
+    for (int i = 0; i < config.num; i++) {
+      db.put(key(i), value(i, config.valueSize), writeOptions);
     }
   }
 
   private static Options options(Config config) {
-    return new Options()
+    Options options = new Options()
         .createIfMissing(true)
         .writeBufferSize(config.writeBufferSizeMb << 20)
         .groupCommitEnabled(config.groupCommit);
+    if ("read_optimized".equals(config.readProfile)) {
+      options
+          .filterPolicy(new BloomFilterPolicy(10))
+          .cacheBlocks(true)
+          .blockCacheSize(config.blockCacheSize)
+          .verifyChecksums(false);
+    } else if ("default".equals(config.readProfile)) {
+      options
+          .cacheBlocks(config.cacheBlocks)
+          .blockCacheSize(config.blockCacheSize)
+          .verifyChecksums(config.verifyChecksums);
+    } else {
+      throw new IllegalArgumentException("Unsupported read_profile: " + config.readProfile);
+    }
+    return options;
   }
 
   private static WriteOptions writeOptions(Config config) {
@@ -255,6 +316,11 @@ public final class LdbDbBenchMain {
       field(writer, "sync", config.sync, true);
       field(writer, "groupCommit", config.groupCommit, true);
       field(writer, "writeBufferSizeMb", config.writeBufferSizeMb, true);
+      field(writer, "readProfile", config.readProfile, true);
+      field(writer, "cacheBlocks", "read_optimized".equals(config.readProfile) || config.cacheBlocks, true);
+      field(writer, "blockCacheSize", config.blockCacheSize, true);
+      field(writer, "verifyChecksums", "read_optimized".equals(config.readProfile) ? false : config.verifyChecksums, true);
+      field(writer, "batchSize", config.batchSize, true);
       writer.write("  \"results\": [\n");
       for (int i = 0; i < results.size(); i++) {
         Result result = results.get(i);
@@ -263,7 +329,9 @@ public final class LdbDbBenchMain {
         writer.write("\"operations\": " + result.operations + ", ");
         writer.write("\"hits\": " + result.hits + ", ");
         writer.write("\"seconds\": " + format(result.seconds) + ", ");
-        writer.write("\"opsPerSecond\": " + format(result.opsPerSecond));
+        writer.write("\"opsPerSecond\": " + format(result.opsPerSecond) + ", ");
+        writer.write("\"sstReadStats\": \"" + escape(result.sstReadStats) + "\", ");
+        writer.write("\"blockCacheStats\": \"" + escape(result.blockCacheStats) + "\"");
         writer.write("}");
         if (i + 1 < results.size()) {
           writer.write(",");
@@ -278,12 +346,14 @@ public final class LdbDbBenchMain {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "ldb-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,batchSize,sstReadStats,blockCacheStats\n");
       for (Result result : results) {
         writer.write("ldb," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
             + config.num + "," + config.reads + "," + config.valueSize + ","
-            + config.sync + "," + config.groupCommit + "," + config.writeBufferSizeMb + "\n");
+            + config.sync + "," + config.groupCommit + "," + config.writeBufferSizeMb + ","
+            + config.readProfile + "," + config.batchSize + ","
+            + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + "\n");
       }
     }
   }
@@ -305,6 +375,10 @@ public final class LdbDbBenchMain {
 
   private static String escape(String value) {
     return value.replace("\\", "\\\\").replace("\"", "\\\"");
+  }
+
+  private static String escapeCsv(String value) {
+    return "\"" + value.replace("\"", "\"\"") + "\"";
   }
 
   private static String format(double value) {
@@ -337,6 +411,11 @@ public final class LdbDbBenchMain {
     private final boolean sync;
     private final boolean groupCommit;
     private final int writeBufferSizeMb;
+    private final String readProfile;
+    private final boolean cacheBlocks;
+    private final int blockCacheSize;
+    private final boolean verifyChecksums;
+    private final int batchSize;
     private final long seed;
 
     private Config(Map<String, String> values) {
@@ -349,9 +428,15 @@ public final class LdbDbBenchMain {
       this.sync = bool(values, "sync", false);
       this.groupCommit = bool(values, "group_commit", false);
       this.writeBufferSizeMb = integer(values, "write_buffer_size_mb", 512);
+      this.readProfile = values.getOrDefault("read_profile", "default");
+      this.cacheBlocks = bool(values, "cache_blocks", true);
+      this.blockCacheSize = integer(values, "block_cache_size", 4096);
+      this.verifyChecksums = bool(values, "verify_checksums", true);
+      this.batchSize = integer(values, "batch_size", 64);
       this.seed = longValue(values, "seed", 20260619L);
-      if (num <= 0 || reads <= 0 || valueSize <= 0 || writeBufferSizeMb <= 0) {
-        throw new IllegalArgumentException("num, reads, value_size and write_buffer_size_mb must be > 0");
+      if (num <= 0 || reads <= 0 || valueSize <= 0 || writeBufferSizeMb <= 0
+          || blockCacheSize <= 0 || batchSize <= 0) {
+        throw new IllegalArgumentException("num, reads, value_size, write_buffer_size_mb, block_cache_size and batch_size must be > 0");
       }
     }
 
@@ -409,13 +494,18 @@ public final class LdbDbBenchMain {
     private final long hits;
     private final double seconds;
     private final double opsPerSecond;
+    private final String sstReadStats;
+    private final String blockCacheStats;
 
-    private Result(String name, long operations, long hits, double seconds, double opsPerSecond) {
+    private Result(String name, long operations, long hits, double seconds, double opsPerSecond,
+                   String sstReadStats, String blockCacheStats) {
       this.name = name;
       this.operations = operations;
       this.hits = hits;
       this.seconds = seconds;
       this.opsPerSecond = opsPerSecond;
+      this.sstReadStats = sstReadStats;
+      this.blockCacheStats = blockCacheStats;
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos) {
@@ -424,7 +514,22 @@ public final class LdbDbBenchMain {
 
     private static Result of(String name, long operations, long hits, long startNanos, long endNanos) {
       double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
-      return new Result(name, operations, hits, seconds, operations / seconds);
+      return new Result(name, operations, hits, seconds, operations / seconds, "", "");
+    }
+
+    private static Result of(String name, long operations, long startNanos, long endNanos, LDB db) {
+      return of(name, operations, 0, startNanos, endNanos, db);
+    }
+
+    private static Result of(String name, long operations, long hits, long startNanos, long endNanos, LDB db) {
+      double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
+      return new Result(name, operations, hits, seconds, operations / seconds,
+          valueOrEmpty(db.getProperty("ldb.sstReadStats")),
+          valueOrEmpty(db.getProperty("ldb.blockCacheStats")));
+    }
+
+    private static String valueOrEmpty(String value) {
+      return value == null ? "" : value;
     }
   }
 }

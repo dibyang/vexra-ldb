@@ -830,6 +830,10 @@ public class LDbImpl implements LDB {
     private final FilterPolicy filterPolicy;
     private final boolean readOnly;
     private final boolean cacheBlocks;
+    private final int tableFormatVersion;
+    private final boolean writeTableProperties;
+    private final boolean allowLegacyTableFormat;
+    private final boolean failOnUnknownTableFeature;
     private final int blockCacheSize;
     private final long compactionSuspendTimeoutMillis;
     private final long closeTimeoutMillis;
@@ -863,6 +867,10 @@ public class LDbImpl implements LDB {
       this.filterPolicy = options.filterPolicy();
       this.readOnly = options.readOnly();
       this.cacheBlocks = options.cacheBlocks();
+      this.tableFormatVersion = options.tableFormatVersion();
+      this.writeTableProperties = options.writeTableProperties();
+      this.allowLegacyTableFormat = options.allowLegacyTableFormat();
+      this.failOnUnknownTableFeature = options.failOnUnknownTableFeature();
       this.blockCacheSize = options.blockCacheSize();
       this.compactionSuspendTimeoutMillis = options.compactionSuspendTimeoutMillis();
       this.closeTimeoutMillis = options.closeTimeoutMillis();
@@ -962,6 +970,26 @@ public class LDbImpl implements LDB {
     @Override
     public boolean cacheBlocks() {
       return cacheBlocks;
+    }
+
+    @Override
+    public int tableFormatVersion() {
+      return tableFormatVersion;
+    }
+
+    @Override
+    public boolean writeTableProperties() {
+      return writeTableProperties;
+    }
+
+    @Override
+    public boolean allowLegacyTableFormat() {
+      return allowLegacyTableFormat;
+    }
+
+    @Override
+    public boolean failOnUnknownTableFeature() {
+      return failOnUnknownTableFeature;
     }
 
     @Override
@@ -1577,6 +1605,18 @@ public class LDbImpl implements LDB {
       if ("ldb.blockCacheStats".equals(name)) {
         return tableCache.blockCacheStats();
       }
+      if ("ldb.sstReadStats".equals(name)) {
+        return versions.sstReadStats();
+      }
+      if ("ldb.tableFormat".equals(name)) {
+        return versions.tableFormatStats();
+      }
+      if ("ldb.storageFormat".equals(name)) {
+        return versions.storageFormatStats();
+      }
+      if ("ldb.tableFormatPolicy".equals(name)) {
+        return tableFormatPolicy();
+      }
       if ("ldb.prefixReadiness".equals(name)) {
         return prefixReadiness();
       }
@@ -1890,6 +1930,31 @@ public class LDbImpl implements LDB {
       return optionValues();
     }
     return null;
+  }
+
+  private String tableFormatPolicy() {
+    boolean v2Writes = options.tableFormatVersion() == 2;
+    String newWrites;
+    if (!v2Writes) {
+      newWrites = "v1";
+    }
+    else if (options.writeTableProperties()) {
+      newWrites = "v2-properties";
+    }
+    else {
+      newWrites = "v2-without-properties-diagnostic";
+    }
+    String productionState = v2Writes ? "explicit-v2" : "default-legacy";
+    String unknownFeaturePolicy = options.failOnUnknownTableFeature() ? "fail-fast" : "diagnostic-only";
+    return "newWrites=" + newWrites
+        + ",configuredTableFormatVersion=" + options.tableFormatVersion()
+        + ",writeTableProperties=" + options.writeTableProperties()
+        + ",legacyReads=" + (options.allowLegacyTableFormat() ? "allowed" : "rejected")
+        + ",unknownFeaturePolicy=" + unknownFeaturePolicy
+        + ",futureVersionPolicy=" + unknownFeaturePolicy
+        + ",rollback=new-writes-tableFormatVersion-1"
+        + ",existingV2=readable-by-current-version"
+        + ",productionState=" + productionState;
   }
 
   private String optionValues() {
@@ -3018,12 +3083,12 @@ public class LDbImpl implements LDB {
 
   @Override
   public byte[] get(byte[] key) throws DBException {
-    return get(key, new ReadOptions());
+    return get(LdbColumnFamily.DEFAULT, key, null);
   }
 
   @Override
   public byte[] get(LdbColumnFamily cf, byte[] key) {
-    return get(cf, key, new ReadOptions());
+    return get(cf, key, null);
   }
 
   public byte[] get(LdbColumnFamily cf, byte[] key, ReadOptions options) throws DBException {
@@ -3035,8 +3100,7 @@ public class LDbImpl implements LDB {
 
       mutex.lock();
       try {
-        SnapshotImpl snapshot = getSnapshot(cf, options);
-        lookupKey = new LookupKey(Slices.wrappedBuffer(key), snapshot.getLastSequence());
+        lookupKey = new LookupKey(Slices.wrappedBuffer(key), readSequence(cf, options));
 
         LookupResult lookupResult = state.getMemTable().get(lookupKey);
         if (lookupResult != null) {
@@ -3083,9 +3147,21 @@ public class LDbImpl implements LDB {
     return get(LdbColumnFamily.DEFAULT, key, options);
   }
 
+  private long readSequence(LdbColumnFamily cf, ReadOptions options) {
+    if (options != null && options.snapshot() != null) {
+      return getSnapshot(cf, options).getLastSequence();
+    }
+    return lastSequence;
+  }
+
+  private long readSequence(LdbColumnFamily cf) {
+    getColumnFamilyState(cf);
+    return lastSequence;
+  }
+
   @Override
   public List<byte[]> get(List<byte[]> keys) throws DBException {
-    return get(LdbColumnFamily.DEFAULT, keys, new ReadOptions());
+    return get(LdbColumnFamily.DEFAULT, keys);
   }
 
   @Override
@@ -3095,7 +3171,67 @@ public class LDbImpl implements LDB {
 
   @Override
   public List<byte[]> get(LdbColumnFamily cf, List<byte[]> keys) throws DBException {
-    return get(cf, keys, new ReadOptions());
+    requireNonNull(cf, "cf is null");
+    requireNonNull(keys, "keys is null");
+    for (byte[] key : keys) {
+      requireNonNull(key, "key is null");
+    }
+    return get(cf, keys, readSequence(cf));
+  }
+
+  private List<byte[]> get(LdbColumnFamily cf, List<byte[]> keys, long snapshotSequence) {
+    long start = System.nanoTime();
+    try {
+      checkBackgroundException();
+      ColumnFamilyState state = getColumnFamilyState(cf);
+      List<byte[]> values = new ArrayList<byte[]>(Collections.nCopies(keys.size(), (byte[]) null));
+      List<LookupKey> missedLookupKeys = new ArrayList<LookupKey>();
+      List<Integer> missedIndexes = new ArrayList<Integer>();
+
+      mutex.lock();
+      try {
+        for (int i = 0; i < keys.size(); i++) {
+          LookupKey lookupKey = new LookupKey(Slices.wrappedBuffer(keys.get(i)), snapshotSequence);
+          LookupResult lookupResult = state.getMemTable().get(lookupKey);
+          if (lookupResult != null) {
+            values.set(i, valueBytes(lookupResult));
+            continue;
+          }
+
+          if (state.getImmutableMemTable() != null) {
+            lookupResult = state.getImmutableMemTable().get(lookupKey);
+            if (lookupResult != null) {
+              values.set(i, valueBytes(lookupResult));
+              continue;
+            }
+          }
+          missedLookupKeys.add(lookupKey);
+          missedIndexes.add(i);
+        }
+      } finally {
+        mutex.unlock();
+      }
+
+      List<LookupResult> lookupResults = versions.get(cf.getId(), missedLookupKeys);
+      for (int i = 0; i < lookupResults.size(); i++) {
+        LookupResult lookupResult = lookupResults.get(i);
+        if (lookupResult != null) {
+          values.set(missedIndexes.get(i), valueBytes(lookupResult));
+        }
+      }
+
+      mutex.lock();
+      try {
+        if (versions.needsCompaction()) {
+          maybeScheduleCompaction();
+        }
+      } finally {
+        mutex.unlock();
+      }
+      return values;
+    } finally {
+      getStats.record(System.nanoTime() - start, this.options.slowOperationThresholdMicros(), databaseDir);
+    }
   }
 
   @Override
@@ -3140,8 +3276,9 @@ public class LDbImpl implements LDB {
         mutex.unlock();
       }
 
-      for (int i = 0; i < missedLookupKeys.size(); i++) {
-        LookupResult lookupResult = versions.get(cf.getId(), missedLookupKeys.get(i));
+      List<LookupResult> lookupResults = versions.get(cf.getId(), missedLookupKeys);
+      for (int i = 0; i < lookupResults.size(); i++) {
+        LookupResult lookupResult = lookupResults.get(i);
         if (lookupResult != null) {
           values.set(missedIndexes.get(i), valueBytes(lookupResult));
         }

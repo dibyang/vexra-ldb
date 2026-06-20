@@ -197,6 +197,10 @@ class LdbBackupTest {
         LDBFactory.factory.createIncrementalBackup(dbDir, backupRoot, new Options().createIfMissing(false));
     assertTrue(first.isOk(), first.toString());
     assertTrue(new File(first.getTargetDir(), "BACKUP-MANIFEST.json").isFile());
+    String firstManifest = new String(Files.readAllBytes(new File(first.getTargetDir(), "BACKUP-MANIFEST.json").toPath()), UTF_8);
+    assertTrue(firstManifest.contains("\"schemaVersion\": \"backup-metadata-v2\""), firstManifest);
+    assertTrue(firstManifest.contains("\"chainId\": \"chain:backup-000001\""), firstManifest);
+    assertTrue(firstManifest.contains("\"generation\": 1"), firstManifest);
     assertTrue(first.getCopiedFiles().stream().anyMatch(name -> name.endsWith(".sst")), first.toString());
 
     try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
@@ -207,6 +211,15 @@ class LdbBackupTest {
         LDBFactory.factory.createIncrementalBackup(dbDir, backupRoot, new Options().createIfMissing(false));
     assertTrue(second.isOk(), second.toString());
     assertTrue(new File(second.getTargetDir(), "BACKUP-MANIFEST.json").isFile());
+    String secondManifest = new String(Files.readAllBytes(new File(second.getTargetDir(), "BACKUP-MANIFEST.json").toPath()), UTF_8);
+    assertTrue(secondManifest.contains("\"schemaVersion\": \"backup-metadata-v2\""), secondManifest);
+    assertTrue(secondManifest.contains("\"chainId\": \"chain:backup-000001\""), secondManifest);
+    assertTrue(secondManifest.contains("\"generation\": 2"), secondManifest);
+    assertTrue(secondManifest.contains("\"parentBackupId\": \"backup-000001\""), secondManifest);
+    String objectRefs = new String(Files.readAllBytes(new File(backupRoot, "OBJECT-REFS.json").toPath()), UTF_8);
+    assertTrue(objectRefs.contains("\"schemaVersion\": \"backup-object-refs-v2\""), objectRefs);
+    assertTrue(objectRefs.contains("\"objectStoreVersion\": 1"), objectRefs);
+    assertTrue(objectRefs.contains("\"generatedBy\": \"vexra-ldb\""), objectRefs);
     assertFalse(second.getReusedFiles().isEmpty(), second.toString());
     assertTrue(LDBFactory.factory.checkBackup(second.getTargetDir(), new Options().createIfMissing(false)).isOk());
 
