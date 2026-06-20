@@ -492,3 +492,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-rocksdbjni-comparison.ps1
 | LDB/RocksDB JNI 比例 | `55.68%` | `247361.396 / 444235.456`，达到至少 50% 的 P0 目标 |
 
 已知非阻塞项：Windows 环境仍可能输出 `Failed to force LDB directory ... AccessDeniedException` warning；本轮 `releaseGate` 和 benchmark 均最终 PASS，不阻塞发布准备。
+## 0.9.0 发布候选准备记录
+
+发布时间窗口：2026-06-20。
+
+发布主题：发布链路修正、v2 文件格式生产化观测、Bloom/filter block 随机读优化。
+
+准备动作：
+
+- 版本号从 `0.9.0-SNAPSHOT` 切换为 `0.9.0`。
+- `CHANGELOG.md` / `CHANGELOG.en.md` 将 0.9.0 变更从 snapshot 开发记录归档为正式版本条目。
+- 正式发布门禁要求 release commit 已推送到 GitHub/upstream，且本地和远端都存在 `v0.9.0` tag；缺少 Git 追溯证据时 `releaseGate.gitReleaseTraceability` 必须失败。
+- 中央仓库上传仍必须使用 `publishUserManagedRelease`，不得使用普通 `publish` 代替 user-managed 发布语义证明。
+
+发布准备必须执行：
+
+```powershell
+.\gradlew.bat test releaseGate publishToMavenLocal
+```
+
+若第一次在切换版本后、提交/tag 前执行 `releaseGate`，预期会被 `gitReleaseTraceability` 拦截；正确顺序是提交版本切换、推送 GitHub、创建并推送 `v0.9.0` tag 后再次执行发布门禁。

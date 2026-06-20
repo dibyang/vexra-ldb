@@ -6,19 +6,21 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
-## 0.9.0-SNAPSHOT SF-06 v2 Storage-Format Production Observability
+## [0.9.0] - 2026-06-20
+
+### SF-06 v2 Storage-Format Production Observability
 
 - Added the `ldb.tableFormatPolicy` runtime property, centralizing the new-write format, v2 properties switch, legacy read policy, unknown/future fail-fast policy, rollback action, and production state.
 - `LdbObservabilityTest` covers default v1, explicit v2, rollback wording, and fail-fast policy evidence.
 - Added `tableFormatPolicyCoverage` to `storageFormatGates`, and require Chinese/English format references, design docs, acceptance docs, README, user manual, and operations docs to include `ldb.tableFormatPolicy` production guidance.
-## 0.9.0-SNAPSHOT RR-01 Bloom/Filter Block Random-Read Optimization
+### RR-01 Bloom/Filter Block Random-Read Optimization
 
 - When `BloomFilterPolicy` is enabled, SSTs write a `filter.<policyName>` metaindex entry and readers use the matching policy for full-key `mayContain`.
 - Level0, LevelN, and MultiGet candidate SSTs run the filter check before opening table iterators; when Bloom returns false, the read records `filterSkips` and skips that SST.
 - `LdbObservabilityTest` adds an in-range missing-key case and asserts `filterSkips>0`, `mayContainRequests>0`, and `mayContainFalse>0`.
 - Added `filterBlockCoverage` to `storageFormatGates`, requiring Chinese/English format references, design docs, acceptance docs, README, user manual, and operations docs to record Bloom/filter block pre-release evidence.
 - 200k warm_readrandom release-preparation comparison: LDB ead_optimized reached 247,361.396 ops/s, RocksDB JNI reached 444,235.456 ops/s, and the ratio was 55.68%, meeting the P0 target of at least 50%.
-## 0.9.0-SNAPSHOT REL-01 Release Workflow Fix
+### REL-01 Release Workflow Fix
 
 - Added `verifyUserManagedReleaseConfig` and `publishUserManagedRelease`; the latter requires a formal release version, an explicit remote release repository, and USER_MANAGED/user-managed or staging review mode.
 - Added `userManagedReleaseConfig` and `gitReleaseTraceability` gates to `releaseGate`, failing release checks when the release repository is AUTOMATIC, review mode cannot be proven, or a formal upload cannot prove that the release commit and tag have been pushed.

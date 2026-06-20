@@ -6,19 +6,21 @@
 
 ## [Unreleased]
 
-## 0.9.0-SNAPSHOT SF-06 v2 文件格式生产化观测
+## [0.9.0] - 2026-06-20
+
+### SF-06 v2 文件格式生产化观测
 
 - 新增 `ldb.tableFormatPolicy` 运行时属性，集中暴露新写入格式、v2 properties 开关、legacy 读取策略、unknown/future fail-fast 策略、回滚动作和生产状态。
 - `LdbObservabilityTest` 覆盖默认 v1、显式 v2、回滚说明和 fail-fast 策略证据。
 - `storageFormatGates` 新增 `tableFormatPolicyCoverage`，并要求中英文格式参考、设计、验收、README、用户手册和运维文档包含 `ldb.tableFormatPolicy` 生产化说明。
-## 0.9.0-SNAPSHOT RR-01 Bloom/filter block 随机读优化
+### RR-01 Bloom/filter block 随机读优化
 
 - 启用 `BloomFilterPolicy` 时，SST 写入 `filter.<policyName>` metaindex entry，并在读侧用同名策略执行 full-key `mayContain`。
 - Level0、LevelN 和 MultiGet 候选 SST 会在打开 table iterator 前执行 filter 判断；Bloom 返回 false 时记录 `filterSkips` 并跳过该 SST。
 - `LdbObservabilityTest` 增加范围内缺失 key 场景，断言 `filterSkips>0`、`mayContainRequests>0`、`mayContainFalse>0`。
 - `storageFormatGates` 新增 `filterBlockCoverage`，并要求中英文格式、设计、验收、README、用户手册和运维文档记录 Bloom/filter block 发布前证据。
 - 200k warm_readrandom 发布准备对比：LDB ead_optimized 为 247,361.396 ops/s，RocksDB JNI 为 444,235.456 ops/s，比例 55.68%，达到至少 50% 的 P0 目标。
-## 0.9.0-SNAPSHOT REL-01 发布链路修正
+### REL-01 发布链路修正
 
 - 新增 `verifyUserManagedReleaseConfig` 与 `publishUserManagedRelease` 发布入口，后者要求正式版本、显式远程 release 仓库以及 USER_MANAGED/user-managed 或 staging 待审核模式。
 - `releaseGate` 新增 `userManagedReleaseConfig` 与 `gitReleaseTraceability` 门禁，发布仓库若出现 AUTOMATIC、无法证明待审核模式，或正式版本上传前无法证明 commit/tag 已推送，则失败。

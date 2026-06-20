@@ -492,3 +492,23 @@ Validation results:
 | LDB/RocksDB JNI ratio | `55.68%` | `247361.396 / 444235.456`, meeting the P0 target of at least 50% |
 
 Known non-blocking item: Windows may still emit `Failed to force LDB directory ... AccessDeniedException`; this run's `releaseGate` and benchmark both finished with PASS results and do not block release preparation.
+## 0.9.0 Release-Candidate Preparation Record
+
+Release window: 2026-06-20.
+
+Release theme: release workflow fixes, v2 storage-format production observability, and Bloom/filter block random-read optimization.
+
+Preparation actions:
+
+- Version changed from `0.9.0-SNAPSHOT` to `0.9.0`.
+- `CHANGELOG.md` / `CHANGELOG.en.md` archive the 0.9.0 changes as a formal release entry instead of snapshot development notes.
+- Formal release gates require the release commit to be pushed to GitHub/upstream and require `v0.9.0` to exist both locally and on the remote; without Git traceability, `releaseGate.gitReleaseTraceability` must fail.
+- Central upload must still use `publishUserManagedRelease`; plain `publish` must not replace user-managed publication proof.
+
+Required release-preparation command:
+
+```powershell
+.\gradlew.bat test releaseGate publishToMavenLocal
+```
+
+If `releaseGate` is run immediately after switching the version but before commit/tag, `gitReleaseTraceability` is expected to block it. The correct order is committing the version switch, pushing to GitHub, creating and pushing the `v0.9.0` tag, then running the release gate again.
