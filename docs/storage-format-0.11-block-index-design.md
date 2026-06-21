@@ -573,11 +573,8 @@ BI 15 将 key-only restart-key 构建限制在单点 `Table.get(Slice)` 的 dire
 | MultiGet data block 打开复用 point-get block cache | `multiget_mixed=173,148.600 ops/s`，低于相邻样本；虽然 `tablePointGetSlotHits=39,899`，但 slot 维护、碰撞和 last-block 状态扰动超过收益。 | 否 |
 
 结论：当前默认 `multiget_mixed` 更像随机单点读集合，而不是同 block 密集批量读。后续若继续追 MultiGet，应优先考虑 LSM 层批内去重、跨层候选裁剪、批内 key 顺序生成策略，或单独构造“同 block 密集 MultiGet”画像；不要在默认随机画像上继续扩大 dense block 或 point-get 小缓存复用。
-## 2026-06-21 MultiGet SST miss 去重
+## 2026-06-21 MultiGet SST miss 去重候选验证
 
-本轮在 `LDbImpl` API 层对批量读中已经 miss memtable/immutable memtable、即将进入 SST 的 key 做去重：相同 CF + user key 只保留一个 `LookupKey` 进入 `VersionSet`，查询结果再回填到所有原始请求位置。回填时为每个位置生成独立 `byte[]`，避免重复 key 的返回值共享同一个可变数组引用。
+本轮验证了在 `LDbImpl` API 层对批量读中已经 miss memtable/immutable memtable、即将进入 SST 的 key 做去重：相同 CF + user key 只保留一个 `LookupKey` 进入 `VersionSet`，查询结果再回填到所有原始请求位置。该方案语义上适合真实业务中存在重复 key 的 MultiGet，但默认随机画像重复率有限，且即使改成单次哈希扫描，仍会给无重复 batch 增加额外 key hash/map 维护成本。
 
-该优化不改变 LSM 可见语义：同一个 batch 中的重复 key 在同一 snapshot sequence 下应返回相同结果；memtable 已命中的位置仍按原路径立即返回。默认 `multiget_mixed` 50k 样本结果为 `readrandom_hit=196,064.053 ops/s`、`multiget_mixed=213,040.644 ops/s`。由于默认画像重复率有限，该优化主要是为真实业务中存在重复 key 的 MultiGet 降低 SST 查询放大，收益取决于批内重复率。
-### MultiGet SST miss 懒去重收口
-
-为降低无重复批次的额外成本，SST miss 去重改为懒触发：先用无分配的 `Slice` 内容比较检测 batch 内是否存在重复 user key；没有重复时直接调用原 `VersionSet` 批量查询路径，只有发现重复时才构建 unique 映射。50k 默认画像样本结果为 `readrandom_hit=169,550.724 ops/s`、`multiget_mixed=209,650.287 ops/s`。该结果说明默认随机画像仍不是重复 key 友好 workload；本优化保留的价值主要在真实重复 key MultiGet，而不是默认随机 `multiget_mixed` 峰值。
+验证结果：初始懒去重 50k 默认画像为 `readrandom_hit=169,550.724 ops/s`、`multiget_mixed=209,650.287 ops/s`；改为单次哈希扫描后 50k 默认画像为 `readrandom_hit=156,573.961 ops/s`、`multiget_mixed=185,171.332 ops/s`。结论是该候选不应进入默认热路径；后续若要保留，需要先增加重复 key 专项 benchmark 或显式配置开关，而不是影响默认 `multiget_mixed`。
