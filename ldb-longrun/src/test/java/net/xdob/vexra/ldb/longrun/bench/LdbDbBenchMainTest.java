@@ -58,5 +58,8 @@ class LdbDbBenchMainTest {
     assertTrue(json.contains("tableLastBlockHits="), json);
     assertTrue(json.contains("pointReadContextFileHits="), json);
     assertTrue(json.contains("blockSeekIndexHits="), json);
+    assertTrue(json.contains("\"tableFormatStats\""), json);
+    assertTrue(json.contains("blockLocalIndexBytes="), json);
+    assertTrue(json.contains("inlineBlockSeekIndexBytes="), json);
   }
 }

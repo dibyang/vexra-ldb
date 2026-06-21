@@ -418,3 +418,63 @@ BI 15 limited key-only restart-key construction to the single-key `Table.get(Sli
 BI 15 therefore fails the `readrandom_hit`-first acceptance rule. The code is reverted to the shared default block-open path: `readRestartKeys` keeps using `readEntry(input, null).getKey()`, and `Table.get(Slice)` point-get block misses continue to call `openBlockForDirectRead`. This result is kept as rejection evidence only and does not enter the main path.
 
 The combined BI 07 through BI 15 evidence shows that small CPU/JIT/cache-shape guesses on the current default read path are no longer producing stable value. The next highest-value phase should return to the file-format layer: complete the feature-guarded persistent block seek-anchor format, then use the full gate across `readrandom_hit`, sameblock, burst, scan, and MultiGet to decide whether it can move from experimental capability to default candidate.
+## v0.11 format hardening: feature guard and block-size estimation
+
+The file-format hardening phase first fixes two release-critical boundaries.
+
+First, every format capability that writes an incompatible table feature must also write the properties block. `writeBlockLocalIndex`, `writeEntryAnchorIndex`, and `writeInlineBlockSeekIndex` all rely on `incompatible_features` to protect old readers. If a caller disables `writeTableProperties`, the writer must fail fast instead of producing an SST whose data blocks use a new layout but whose table metadata does not declare the feature.
+
+Second, when inline block seek index writing is enabled, `BlockBuilder.currentSizeEstimate()` must include the inline mini-index and the extra trailer fields. This estimate drives data-block flushing. If it ignores mini-index bytes, enabling the new format can produce data blocks that materially exceed the target block size. The estimate may be conservative, but it must not undercount inline anchors that have already been collected.
+
+These changes do not alter default v1 writes, do not introduce a full-entry index, and do not change `Block.seek` or `blockSeekIndexHits/Misses/Fallbacks` semantics. They move the v4 inline seek-index path from an experimental capability toward a safer format boundary suitable for further release gating.
+## v0.11 post-hardening gate result: inline seek index remains opt-in
+
+After adding the properties feature guard and block-size estimate hardening, the 50k v4 inline full gate reported `readrandom_hit=178,971.686 ops/s`, `readrandom_sameblock=540,420.772 ops/s`, `readrandom_burst=385,352.297 ops/s`, `multiget_mixed=311,765.792 ops/s`, `multiget_sameblock=430,889.243 ops/s`, and `scan=1,334,507.700 ops/s`.
+
+Compared with the current default full gate at `readrandom_hit=188,079.379 ops/s`, the inline format still does not beat the default path on the primary metric. Burst and some MultiGet metrics improve, but the phase acceptance rule remains `readrandom_hit` first. Therefore v4 inline block seek index stays explicitly opt-in and must not become the default write policy yet.
+
+The value of this round is format safety, not a performance win: the writer now rejects incompatible features without a properties guard, and block flushing accounts for inline mini-index bytes. If this format is pushed further, the next analysis should focus on inline-covered block count, anchor bytes, block-size changes, and cache behavior instead of enabling it by default.
+## v0.11 inline seek-index loss analysis
+
+Three follow-up experiments were run after the v4 inline seek-index hardening. The result is that the current format loses mainly through data-block count and cache behavior, not through a simple admission or block-size parameter.
+
+In the default 50k full gate, `readrandom_hit=188,079.379 ops/s`, `tableDataBlockOpens=8,898`, `tablePointGetSlotCollisions=7,726`, and direct-read block-cache misses are about `1,389`. With v4 inline interval=4/admission=2, `readrandom_hit=178,971.686 ops/s`, `tableDataBlockOpens=9,623`, `tablePointGetSlotCollisions=8,324`, and direct-read block-cache misses are about `1,563`. The inline index avoids scanning data entries to build anchors, but it adds on-disk block bytes. That creates more data blocks, more point-get cache collisions, and more direct-read misses, which cancels the benefit.
+
+Raising admission to 4 failed more clearly: `readrandom_hit=135,409.614 ops/s`, with sameblock, burst, and MultiGet also lower overall. Simply skipping inline anchors for more blocks loses seek-time benefit and is not a default fix.
+
+Increasing v4 inline blockSize to 4608 also did not fix the issue: `readrandom_hit=159,520.520 ops/s`, while burst, multiget_sameblock, and scan remained weak. This shows that simply increasing the block budget changes scan windows and cache/JIT shape and is not a reliable compensation strategy.
+
+Therefore the next step should not blindly tune `inlineBlockSeekIndexAdmissionMinAnchors` or global block size. The higher-value cut is reducing the inline mini-index encoding cost itself: for example, avoid storing a full key and full previousKey for every anchor, and switch to restart-key-relative prefix-compressed anchor encoding or a compact offset/previous-key delta sufficient to restore the seek start. Acceptance remains `readrandom_hit` first, while still checking sameblock, burst, scan, and MultiGet.
+## v0.11 compact inline encoding result: v2 is not kept
+
+A v2 compact inline mini-index experiment was attempted: new block magic, anchor keys prefix-compressed against restart keys, and previousKey prefix-compressed against the anchor key, while the reader kept v1 compatibility. The implementation passed compilation and format tests, but the 50k full gate failed badly: `readrandom_hit=94,116.513 ops/s`, `readrandom_sameblock=367,621.109 ops/s`, `readrandom_burst=296,207.478 ops/s`, `multiget_mixed=198,781.786 ops/s`, `multiget_sameblock=277,817.444 ops/s`, and `scan=1,312,539.212 ops/s`.
+
+This shows that even if v2 reduces inline bytes, the more complex prefix decoding, extra base-key dependency, and more complicated block-open parser more than cancel the benefit and significantly hurt the primary metric and MultiGet. Therefore v2 compact inline encoding is not kept. The code is reverted to v1 inline encoding, while retaining only the release-grade feature guard and block-size-estimate hardening.
+
+If inline-index compression is revisited later, it must not add complex decoding to the block-open hot path. A better direction would preserve a very simple reader path, for example by reducing anchor count or changing writer-side layout, but only after proving that block-open CPU and cache misses do not increase.
+## v0.11 low-cost format observation: tableFormatStats in dbBench
+
+To avoid inferring inline seek-index space cost only from indirect counters, dbBench now reports a `tableFormatStats` field by reading the existing `ldb.tableFormat` diagnostic property. This property is evaluated only when reports are generated: it walks SST properties in the current Version and aggregates `dataBlockCount`, `inlineBlockSeekIndexBytes`, `inlineBlockSeekIndexCoveredBlocks`, `inlineBlockSeekIndexAnchorCount`, `blockLocalIndexBytes`, `blockLocalIndexCoveredBlocks`, `entryAnchorIndexBytes`, `entryAnchorIndexCoveredBlocks`, and `entryAnchorIndexAnchorCount`.
+
+This observation does not enter the normal get, MultiGet, or scan hot paths and does not add per-block-open counters. It reuses persisted table properties, so it is suitable as low-cost evidence for release gates and format experiments. Future comparisons between default and v4 inline paths should inspect ops/s, `sstReadStats`, `blockCacheStats`, and `tableFormatStats` together instead of guessing format amplification from performance numbers alone.
+## v0.11 tableFormatStats same-run comparison
+
+After adding `tableFormatStats`, a same-run 50k comparison was executed for the default path and the v4 inline path. Note that the default path still writes legacy v1 tables without a properties block, so `dataBlockCount=0` in `tableFormatStats` means there are no table properties to aggregate, not that there are no data blocks. The v4 inline path can report format cost directly from properties.
+
+Same-run default path: `readrandom_hit=137,368.902 ops/s`, `multiget_mixed=331,767.391 ops/s`, and `scan=1,509,803.152 ops/s`. For `readrandom_hit`, the counters were `tableDataBlockOpens=8,898`, `tablePointGetSlotCollisions=7,726`, and `tableDirectReadBlockCacheMisses=1,389`.
+
+Same-run v4 inline path: `readrandom_hit=120,214.501 ops/s`, `multiget_mixed=262,338.845 ops/s`, and `scan=1,526,433.244 ops/s`. `tableFormatStats` reported `dataBlockCount=1,563`, `inlineBlockSeekIndexBytes=646,846`, `inlineBlockSeekIndexCoveredBlocks=1,563`, and `inlineBlockSeekIndexAnchorCount=10,937`. The matching `readrandom_hit` counters were `tableDataBlockOpens=9,623`, `tablePointGetSlotCollisions=8,324`, and `tableDirectReadBlockCacheMisses=1,563`.
+
+This closes the previous hypothesis with direct evidence: v4 inline index moves block-open anchor construction cost into the persisted format, but it adds about 414 bytes of inline index per data block on average (646,846 / 1,563), increasing effective block/cache pressure. The random point-read path then opens about 725 more data blocks, sees about 598 more point-get slot collisions, and its direct-read misses align with the inline data-block count at 1,563. The current format benefit is consumed by the extra cache misses and block-open count.
+
+Therefore the current v4 inline seek index should not move toward default enablement. If this line continues, the goal must change from "inline the existing anchors" to a minimal layout with almost no block-count/cache amplification. Otherwise the feature should remain experimental, and optimization effort should shift back to the default path or higher-level point-read context.
+## Default read path addendum: LookupKey encoded-key reuse
+
+After keeping inline block seek index opt-in, this stage moves the optimization focus back to the default read path. `LookupKey` now lazily caches the encoded internal key: memtable hits do not pay the encoding cost, while SST direct get encodes once and reuses that Slice across the same point read or MultiGet table-cache call.
+
+This change does not alter the SST file format, MANIFEST, WAL, table properties, comparator semantics, sequence semantics, deletion handling, or range-deletion handling. The intended benefit is lower repeated `InternalKey.encode()` Slice allocation on readrandom and MultiGet hot paths; the compatibility boundary is that all SST reads must continue to use the exact same internal-key byte order.
+### LookupKey encoded-key reuse validation result
+
+Validation passed with `compileJava`, focused core read-path tests, `LdbDbBenchMainTest`, and a 50k default-format performance sample. The sample report is `ldb-longrun/build/reports/ldb-db-bench-lookupkey-encoded-cache-50k/ldb-db-bench-summary.csv`.
+
+This run recorded `readrandom_hit=135,438.627 ops/s` and `multiget_mixed=200,087.238 ops/s`. Counters show readrandom still issued `directGetRequests=50000` with `pointReadContextFileHits=49987`; MultiGet still issued `directGetBatchRequests=782` and `directGetBatchKeys=50000`. Therefore this change is retained as a low-risk allocation reduction, but it is not the primary performance breakthrough; the remaining default-path bottleneck is still per-key table/data-block positioning and in-block seek cost.

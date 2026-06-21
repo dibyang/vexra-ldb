@@ -559,7 +559,8 @@ public final class LdbDbBenchMain {
         writer.write("\"seconds\": " + format(result.seconds) + ", ");
         writer.write("\"opsPerSecond\": " + format(result.opsPerSecond) + ", ");
         writer.write("\"sstReadStats\": \"" + escape(result.sstReadStats) + "\", ");
-        writer.write("\"blockCacheStats\": \"" + escape(result.blockCacheStats) + "\"");
+        writer.write("\"blockCacheStats\": \"" + escape(result.blockCacheStats) + "\", ");
+        writer.write("\"tableFormatStats\": \"" + escape(result.tableFormatStats) + "\"");
         writer.write("}");
         if (i + 1 < results.size()) {
           writer.write(",");
@@ -574,7 +575,7 @@ public final class LdbDbBenchMain {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "ldb-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats\n");
       for (Result result : results) {
         writer.write("ldb," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
@@ -587,7 +588,8 @@ public final class LdbDbBenchMain {
             + config.writeInlineBlockSeekIndex + "," + config.inlineBlockSeekIndexInterval + ","
             + config.inlineBlockSeekIndexAdmissionMinAnchors + ","
             + config.batchSize + ","
-            + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + "\n");
+            + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + ","
+            + escapeCsv(result.tableFormatStats) + "\n");
       }
     }
   }
@@ -766,9 +768,10 @@ public final class LdbDbBenchMain {
     private final double opsPerSecond;
     private final String sstReadStats;
     private final String blockCacheStats;
+    private final String tableFormatStats;
 
     private Result(String name, long operations, long hits, double seconds, double opsPerSecond,
-                   String sstReadStats, String blockCacheStats) {
+                   String sstReadStats, String blockCacheStats, String tableFormatStats) {
       this.name = name;
       this.operations = operations;
       this.hits = hits;
@@ -776,6 +779,7 @@ public final class LdbDbBenchMain {
       this.opsPerSecond = opsPerSecond;
       this.sstReadStats = sstReadStats;
       this.blockCacheStats = blockCacheStats;
+      this.tableFormatStats = tableFormatStats;
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos) {
@@ -784,7 +788,7 @@ public final class LdbDbBenchMain {
 
     private static Result of(String name, long operations, long hits, long startNanos, long endNanos) {
       double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
-      return new Result(name, operations, hits, seconds, operations / seconds, "", "");
+      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "");
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos, LDB db) {
@@ -795,7 +799,8 @@ public final class LdbDbBenchMain {
       double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
       return new Result(name, operations, hits, seconds, operations / seconds,
           valueOrEmpty(db.getProperty("ldb.sstReadStats")),
-          valueOrEmpty(db.getProperty("ldb.blockCacheStats")));
+          valueOrEmpty(db.getProperty("ldb.blockCacheStats")),
+          valueOrEmpty(db.getProperty("ldb.tableFormat")));
     }
 
     private static String valueOrEmpty(String value) {

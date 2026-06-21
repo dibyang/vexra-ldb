@@ -290,6 +290,30 @@ class TablePropertiesTest {
   }
 
   @Test
+  void shouldRejectIncompatibleFeaturesWithoutPropertiesGuard() {
+    assertThrows(IllegalArgumentException.class, () -> writeTable(
+        new File(tempDir, "v3-local-index-no-properties.sst"),
+        new Options()
+            .tableFormatVersion(3)
+            .writeTableProperties(false)
+            .writeBlockLocalIndex(true)));
+
+    assertThrows(IllegalArgumentException.class, () -> writeTable(
+        new File(tempDir, "v4-entry-anchor-no-properties.sst"),
+        new Options()
+            .tableFormatVersion(4)
+            .writeTableProperties(false)
+            .writeEntryAnchorIndex(true)));
+
+    assertThrows(IllegalArgumentException.class, () -> writeTable(
+        new File(tempDir, "v4-inline-seek-no-properties.sst"),
+        new Options()
+            .tableFormatVersion(4)
+            .writeTableProperties(false)
+            .writeInlineBlockSeekIndex(true)));
+  }
+
+  @Test
   void shouldWriteAndReadV4InlineBlockSeekIndexWhenOptedIn() throws Exception {
     File tableFile = new File(tempDir, "v4-inline-seek.sst");
 
@@ -319,6 +343,24 @@ class TablePropertiesTest {
     } finally {
       table.closer().call();
     }
+  }
+
+  @Test
+  void shouldIncludeInlineSeekIndexInBlockSizeEstimate() {
+    BlockBuilder builder = new BlockBuilder(
+        256,
+        4,
+        new BytewiseComparator(),
+        true,
+        1,
+        1);
+    builder.add(Slices.utf8Slice("k000"), Slices.utf8Slice("value-0"));
+    builder.add(Slices.utf8Slice("k001"), Slices.utf8Slice("value-1"));
+
+    int estimatedBeforeFinish = builder.currentSizeEstimate();
+    int actualAfterFinish = builder.finish().length();
+
+    assertTrue(estimatedBeforeFinish >= actualAfterFinish);
   }
 
   private static void writeTable(File tableFile, Options options) throws Exception {

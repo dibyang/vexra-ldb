@@ -105,16 +105,24 @@ public class TableCache {
    * <p>该入口用于随机点查和 MultiGet，避免创建完整的 table/internal iterator 链。返回值仍是 SST 中 seek 到的候选 entry，
    * 上层负责判断 user key、sequence 和 value type 语义。</p>
    */
-  public Entry<Slice, Slice> get(FileMetaData file, InternalKey internalKey) {
-    return get(file.getNumber(), internalKey);
+  public Entry<Slice, Slice> get(FileMetaData file, LookupKey key) {
+    return get(file.getNumber(), key);
   }
 
   /**
    * 通过 table 层 direct get 读取单个内部 key。
    */
   public Entry<Slice, Slice> get(long number, InternalKey internalKey) {
+    return getEncoded(number, internalKey.encode());
+  }
+
+  public Entry<Slice, Slice> get(long number, LookupKey key) {
+    return getEncoded(number, key.getEncodedInternalKey());
+  }
+
+  private Entry<Slice, Slice> getEncoded(long number, Slice encodedInternalKey) {
     directGetRequestCount.incrementAndGet();
-    Entry<Slice, Slice> result = getTable(number).get(internalKey.encode());
+    Entry<Slice, Slice> result = getTable(number).get(encodedInternalKey);
     if (result == null) {
       directGetMissCount.incrementAndGet();
     } else {
@@ -129,18 +137,18 @@ public class TableCache {
    * <p>该入口服务 MultiGet：table 层会把 key 按 data block handle 分组，减少同一 SST/data block
    * 内的重复 block 打开和重复 seek 成本。返回顺序与输入 key 顺序一致。</p>
    */
-  public List<Entry<Slice, Slice>> get(FileMetaData file, List<InternalKey> internalKeys) {
-    if (internalKeys.isEmpty()) {
+  public List<Entry<Slice, Slice>> get(FileMetaData file, List<LookupKey> keys) {
+    if (keys.isEmpty()) {
       return Collections.emptyList();
     }
 
     directGetBatchRequestCount.incrementAndGet();
-    directGetBatchKeyCount.addAndGet(internalKeys.size());
-    directGetRequestCount.addAndGet(internalKeys.size());
+    directGetBatchKeyCount.addAndGet(keys.size());
+    directGetRequestCount.addAndGet(keys.size());
 
-    List<Slice> encodedKeys = new ArrayList<Slice>(internalKeys.size());
-    for (InternalKey internalKey : internalKeys) {
-      encodedKeys.add(internalKey.encode());
+    List<Slice> encodedKeys = new ArrayList<Slice>(keys.size());
+    for (LookupKey key : keys) {
+      encodedKeys.add(key.getEncodedInternalKey());
     }
 
     List<Entry<Slice, Slice>> results = getTable(file.getNumber()).get(encodedKeys);

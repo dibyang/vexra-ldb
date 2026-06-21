@@ -110,7 +110,7 @@ public class Level0
 
       LookupResult pointResult = null;
       long pointSequence = -1;
-      Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key.getInternalKey());
+      Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key);
       if (entry != null) {
         // parse the key in the block
         InternalKey internalKey = new InternalKey(entry.getKey());
@@ -186,14 +186,12 @@ public class Level0
 
       readStats.recordTableRead();
       List<LookupKey> fileKeys = new ArrayList<LookupKey>(candidateIndexes.size());
-      List<InternalKey> internalKeys = new ArrayList<InternalKey>(candidateIndexes.size());
       for (Integer index : candidateIndexes) {
         LookupKey key = keys.get(index);
         fileKeys.add(key);
-        internalKeys.add(key.getInternalKey());
       }
 
-      List<Entry<Slice, Slice>> entries = tableCache.get(fileMetaData, internalKeys);
+      List<Entry<Slice, Slice>> entries = tableCache.get(fileMetaData, fileKeys);
       for (int i = 0; i < fileKeys.size(); i++) {
         LookupResult lookupResult = getFromTableEntry(fileMetaData, fileKeys.get(i), entries.get(i), readStats);
         if (lookupResult != null) {
@@ -245,7 +243,7 @@ public class Level0
   private LookupResult getFromTable(FileMetaData fileMetaData, LookupKey key) {
     LookupResult pointResult = null;
     long pointSequence = -1;
-    Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key.getInternalKey());
+    Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key);
     if (entry != null) {
       InternalKey internalKey = new InternalKey(entry.getKey());
       checkState(internalKey != null, "Corrupt key for %s", key.getUserKey().toString(UTF_8));

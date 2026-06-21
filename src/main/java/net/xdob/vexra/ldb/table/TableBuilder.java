@@ -285,6 +285,12 @@ public class TableBuilder {
     if (options.writeInlineBlockSeekIndex() && options.tableFormatVersion() < 4) {
       throw new IllegalArgumentException("writeInlineBlockSeekIndex requires tableFormatVersion >= 4");
     }
+    if (!options.writeTableProperties()
+        && (options.writeBlockLocalIndex()
+        || options.writeEntryAnchorIndex()
+        || options.writeInlineBlockSeekIndex())) {
+      throw new IllegalArgumentException("incompatible table features require writeTableProperties=true");
+    }
     // flush current data block
     flush();
 

@@ -92,9 +92,10 @@ public class BlockBuilder {
       return SIZE_OF_INT;
     }
 
-    return block.size() +                              // raw data buffer
+    return block.size() +                          // raw data buffer
+        inlineSeekIndexSizeEstimate() +            // optional inline seek index
         restartPositions.size() * SIZE_OF_INT +    // restart positions
-        SIZE_OF_INT;                               // restart position size
+        restartTrailerSizeEstimate();              // restart count and optional inline metadata
   }
 
   public void add(BlockEntry blockEntry) {
@@ -207,6 +208,29 @@ public class BlockBuilder {
     lastInlineSeekIndexBytes = block.size() - inlineIndexOffset;
     lastInlineSeekIndexAnchorCount = inlineSeekAnchors.size();
     return inlineIndexOffset;
+  }
+
+  private int inlineSeekIndexSizeEstimate() {
+    if (!writeInlineSeekIndex || inlineSeekAnchors.size() < inlineSeekIndexAdmissionMinAnchors) {
+      return 0;
+    }
+    int size = 5; // anchor count varint upper bound
+    for (InlineSeekAnchor anchor : inlineSeekAnchors) {
+      size += 5; // restart index varint upper bound
+      size += 5; // entry offset varint upper bound
+      size += 5; // key length varint upper bound
+      size += anchor.key.length();
+      size += 5; // previous key length varint upper bound
+      size += anchor.previousKey.length();
+    }
+    return size;
+  }
+
+  private int restartTrailerSizeEstimate() {
+    if (!writeInlineSeekIndex || inlineSeekAnchors.size() < inlineSeekIndexAdmissionMinAnchors) {
+      return SIZE_OF_INT;
+    }
+    return 3 * SIZE_OF_INT;
   }
 
   private static final class InlineSeekAnchor {

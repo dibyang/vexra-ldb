@@ -418,3 +418,63 @@ BI 15 将 key-only restart-key 构建限制在单点 `Table.get(Slice)` 的 dire
 因此 BI 15 不满足“以 `readrandom_hit` 为主验收指标”的要求，代码回退到默认 `Block` 构造和 direct read 共享同一路径：`readRestartKeys` 继续使用 `readEntry(input, null).getKey()`，`Table.get(Slice)` 的 point-get block miss 继续调用 `openBlockForDirectRead`。该结论保留为失败证据，但不进入主线。
 
 连续 BI 07 到 BI 15 的结果说明，继续在当前默认读路径上做小型 CPU/JIT/cache 形态猜测，收益已经很不稳定。下一阶段最有价值的工作应转回文件格式层：把 block 内 seek anchor 作为受 feature guard 保护的持久化格式能力完善，并以 `readrandom_hit`、sameblock、burst、scan、MultiGet 全门禁决定是否从实验能力推进为候选默认能力。
+## v0.11 格式发布级补强：feature guard 与 block size 估算
+
+进入文件格式完善阶段后，当前主线先补齐两项发布前必须固定的边界。
+
+第一，任何会写入不兼容 table feature 的格式能力都必须同时写入 properties block。`writeBlockLocalIndex`、`writeEntryAnchorIndex`、`writeInlineBlockSeekIndex` 都依赖 `incompatible_features` 保护旧 reader；如果调用方关闭 `writeTableProperties`，writer 必须 fail-fast，避免生成“数据块已经使用新布局，但 table 缺少 feature 声明”的 SST。
+
+第二，启用 inline block seek index 后，`BlockBuilder.currentSizeEstimate()` 必须计入 inline mini-index 和额外 trailer 字段。该估算用于 data block flush 决策；如果忽略 mini-index 字节，启用新格式后可能生成明显超过目标 block size 的 data block。估算可以保守，但不能低估已经收集到的 inline anchors。
+
+这两项修改不改变默认 v1 写入行为，不引入 full-entry index，也不改变 `Block.seek` 或 `blockSeekIndexHits/Misses/Fallbacks` 语义。它们的目标是让 v4 inline seek index 从“可实验”前进到“格式边界更安全、可发布前继续门禁”的状态。
+## v0.11 补强后门禁结果：inline seek index 仍保持 opt-in
+
+补齐 properties feature guard 和 block size estimate 后，重新运行 50k v4 inline full gate：`readrandom_hit=178,971.686 ops/s`、`readrandom_sameblock=540,420.772 ops/s`、`readrandom_burst=385,352.297 ops/s`、`multiget_mixed=311,765.792 ops/s`、`multiget_sameblock=430,889.243 ops/s`、`scan=1,334,507.700 ops/s`。
+
+与当前默认路径 full gate 的 `readrandom_hit=188,079.379 ops/s` 相比，inline 格式主指标仍未超过默认路径；虽然 burst 和 MultiGet 部分指标有改善，但当前阶段验收规则仍以 `readrandom_hit` 为主。因此 v4 inline block seek index 继续保持显式 opt-in，不进入默认写入策略。
+
+本轮补强的价值在于格式安全性，而不是宣布性能胜出：writer 不再允许缺少 properties guard 的不兼容 feature，block flush 估算也会计入 inline mini-index 字节。下一步如果继续推进该格式，应优先分析 inline block 数量、anchor bytes、block size 变化和 cache 行为，而不是直接默认开启。
+## v0.11 inline seek index 失利原因定位
+
+对补强后的 v4 inline seek index 继续做了三组定位实验，结论是当前格式输在 data block 数量和 cache 行为，而不是单纯 admission 或 block size 参数。
+
+默认路径 50k full gate 中，`readrandom_hit=188,079.379 ops/s`，`tableDataBlockOpens=8,898`，`tablePointGetSlotCollisions=7,726`，direct-read block cache miss 约 `1,389`。v4 inline interval=4/admission=2 中，`readrandom_hit=178,971.686 ops/s`，`tableDataBlockOpens=9,623`，`tablePointGetSlotCollisions=8,324`，direct-read block cache miss 约 `1,563`。也就是说，inline index 确实避免了从 data entries 扫描构建 anchors，但它增加了落盘 block 字节，导致更多 data block、更高 point-get cache collision 和更多 direct-read miss，抵消了收益。
+
+提高 admission 到 4 的实验失败更明显：`readrandom_hit=135,409.614 ops/s`，sameblock、burst 和 MultiGet 也整体下降。这说明简单跳过更多 block 的 inline anchors 会丢掉 seek-time 收益，不能作为默认修复方向。
+
+把 v4 inline 的 blockSize 提高到 4608 也没有修复问题：`readrandom_hit=159,520.520 ops/s`，burst、multiget_sameblock 和 scan 继续偏弱。这说明简单放大 block budget 会改变 block 内扫描窗口和 cache/JIT 形态，不是可靠的抵消策略。
+
+因此下一步不应继续盲调 `inlineBlockSeekIndexAdmissionMinAnchors` 或全局 block size。更有价值的切口是压缩 inline mini-index 自身的编码成本：例如避免为每个 anchor 保存完整 key 和完整 previousKey，改成基于 restart key 的前缀压缩 anchor 编码，或只保存足以恢复 seek 起点的 offset/previous-key delta。验收仍必须以 `readrandom_hit` 为主，并同时检查 sameblock、burst、scan、MultiGet。
+## v0.11 compact inline encoding 实验结论：不保留 v2
+
+尝试过将 inline mini-index 改成 v2 紧凑编码：写入新 magic，anchor key 相对 restart key 前缀压缩，previousKey 相对 anchor key 前缀压缩；reader 同时保留 v1 兼容解析。该实现通过编译和格式测试，但 50k full gate 明显失败：`readrandom_hit=94,116.513 ops/s`、`readrandom_sameblock=367,621.109 ops/s`、`readrandom_burst=296,207.478 ops/s`、`multiget_mixed=198,781.786 ops/s`、`multiget_sameblock=277,817.444 ops/s`、`scan=1,312,539.212 ops/s`。
+
+该结果说明，虽然 v2 可能减少 inline bytes，但更复杂的前缀解码、额外 base-key 依赖和更复杂的 block-open 解析路径把收益完全抵消，并显著伤害主指标和 MultiGet。因此 v2 compact inline encoding 不进入主线，代码回退到 v1 inline encoding；当前只保留 feature guard 和 block size estimate 这两项发布级补强。
+
+后续若继续压缩 inline index，不能再把复杂解码放到 block-open 热路径上。更可取的方向是保持读取端简单，例如只减少 anchor 数量或改变 writer 侧布局，但必须先证明不会增加 block-open 解码 CPU 和 cache miss。
+## v0.11 低开销格式观测：tableFormatStats 进入 dbBench
+
+为避免继续依靠间接统计猜测 inline seek index 的空间代价，dbBench 报告新增 `tableFormatStats` 字段，直接读取已有的 `ldb.tableFormat` 诊断属性。该属性只在报告生成时遍历当前 Version 的 SST properties，聚合 `dataBlockCount`、`inlineBlockSeekIndexBytes`、`inlineBlockSeekIndexCoveredBlocks`、`inlineBlockSeekIndexAnchorCount`、`blockLocalIndexBytes`、`blockLocalIndexCoveredBlocks`、`entryAnchorIndexBytes`、`entryAnchorIndexCoveredBlocks` 和 `entryAnchorIndexAnchorCount`。
+
+该观测不进入普通 get、MultiGet 或 scan 热路径，也不在每次 block open 时新增计数；它复用已经落盘的 table properties，因此适合作为 release gate 和格式实验的低成本证据。后续比较默认路径和 v4 inline 路径时，应同时查看 ops/s、`sstReadStats`、`blockCacheStats` 和 `tableFormatStats`，避免只凭性能数值猜测格式放大来源。
+## v0.11 tableFormatStats 同轮对照结论
+
+接入 `tableFormatStats` 后，重新跑了一组同轮 50k 默认路径与 v4 inline 路径对照。需要注意：默认路径仍是 legacy v1，不写 properties block，因此 `tableFormatStats` 中 `dataBlockCount=0` 表示没有可聚合的 table properties，并不表示没有 data block；v4 inline 路径则可以直接从 properties 汇总格式成本。
+
+同轮默认路径结果：`readrandom_hit=137,368.902 ops/s`，`multiget_mixed=331,767.391 ops/s`，`scan=1,509,803.152 ops/s`。`readrandom_hit` 统计中 `tableDataBlockOpens=8,898`、`tablePointGetSlotCollisions=7,726`、`tableDirectReadBlockCacheMisses=1,389`。
+
+同轮 v4 inline 结果：`readrandom_hit=120,214.501 ops/s`，`multiget_mixed=262,338.845 ops/s`，`scan=1,526,433.244 ops/s`。`tableFormatStats` 显示 `dataBlockCount=1,563`、`inlineBlockSeekIndexBytes=646,846`、`inlineBlockSeekIndexCoveredBlocks=1,563`、`inlineBlockSeekIndexAnchorCount=10,937`。对应 `readrandom_hit` 统计中 `tableDataBlockOpens=9,623`、`tablePointGetSlotCollisions=8,324`、`tableDirectReadBlockCacheMisses=1,563`。
+
+这组证据把此前判断闭环了：v4 inline index 把 block-open anchor 构建成本前移到落盘格式，但每个 data block 平均约 414 字节 inline index（646,846 / 1,563），造成更多有效 block/cache 压力。随机点查主路径因此多打开约 725 次 data block，多出约 598 次 point-get slot collision，并且 direct-read miss 数跟 inline dataBlockCount 对齐到 1,563。当前格式收益被这些额外 cache miss 和 block-open 次数吃掉。
+
+因此，当前 v4 inline seek index 不应继续向默认开启推进。后续如果还要做，需要先改变格式目标：不是“把现有 anchors 直接内联”，而是设计一种对 block count/cache 几乎无放大的极简布局；否则应保持实验态，把优化重点转回默认路径或更高层 point-read context。
+## 默认读路径补充：LookupKey 编码复用
+
+在 inline block seek index 保持 opt-in 后，本阶段把优化重心回到默认读路径。`LookupKey` 新增懒加载的 encoded internal key 缓存：memtable 命中时不产生额外编码；只有查询落到 SST direct get 时才编码一次，并在同一次单点读或 MultiGet 的 table cache 调用中复用。
+
+该调整不改变 SST 文件格式、MANIFEST、WAL 或 table properties，也不改变 comparator、sequence 和 deletion/range deletion 语义。收益目标是降低 readrandom 与 MultiGet 热路径中 `InternalKey.encode()` 的重复 Slice 分配成本；风险边界主要是确保所有 SST 查询仍使用同一个 internal key 字节序。
+### LookupKey 编码复用验证结果
+
+验证命令通过：`compileJava`、核心读路径测试、`LdbDbBenchMainTest`，以及 50k 默认格式轻量性能样本。样本路径为 `ldb-longrun/build/reports/ldb-db-bench-lookupkey-encoded-cache-50k/ldb-db-bench-summary.csv`。
+
+本轮结果：`readrandom_hit=135,438.627 ops/s`，`multiget_mixed=200,087.238 ops/s`。统计显示 readrandom 仍保持 `directGetRequests=50000`、`pointReadContextFileHits=49987`；MultiGet 仍保持 `directGetBatchRequests=782`、`directGetBatchKeys=50000`。因此该优化可作为低风险分配削减保留，但不能视为主要性能突破；当前默认路径的主要剩余成本仍是每个 key 的 table/data-block 定位和 block 内 seek。

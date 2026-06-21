@@ -206,6 +206,15 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
     int legacy = 0;
     int v2 = 0;
     int incompatible = 0;
+    long dataBlockCount = 0;
+    long inlineBlockSeekIndexBytes = 0;
+    long inlineBlockSeekIndexCoveredBlocks = 0;
+    long inlineBlockSeekIndexAnchorCount = 0;
+    long blockLocalIndexBytes = 0;
+    long blockLocalIndexCoveredBlocks = 0;
+    long entryAnchorIndexBytes = 0;
+    long entryAnchorIndexCoveredBlocks = 0;
+    long entryAnchorIndexAnchorCount = 0;
     Set<Integer> versions = new TreeSet<>();
     StringBuilder files = new StringBuilder();
     for (Entry<VersionEdit.CfLevel, FileMetaData> entry : current.getFiles().entries()) {
@@ -222,6 +231,15 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
       if (!properties.getIncompatibleFeatures().isEmpty()) {
         incompatible++;
       }
+      dataBlockCount += propertyLong(properties, "ldb.table.data_block_count");
+      inlineBlockSeekIndexBytes += propertyLong(properties, TableProperties.INLINE_BLOCK_SEEK_INDEX_BYTES_KEY);
+      inlineBlockSeekIndexCoveredBlocks += propertyLong(properties, TableProperties.INLINE_BLOCK_SEEK_INDEX_COVERED_BLOCKS_KEY);
+      inlineBlockSeekIndexAnchorCount += propertyLong(properties, TableProperties.INLINE_BLOCK_SEEK_INDEX_ANCHOR_COUNT_KEY);
+      blockLocalIndexBytes += propertyLong(properties, TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY);
+      blockLocalIndexCoveredBlocks += propertyLong(properties, TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY);
+      entryAnchorIndexBytes += propertyLong(properties, TableProperties.ENTRY_ANCHOR_INDEX_BYTES_KEY);
+      entryAnchorIndexCoveredBlocks += propertyLong(properties, TableProperties.ENTRY_ANCHOR_INDEX_COVERED_BLOCKS_KEY);
+      entryAnchorIndexAnchorCount += propertyLong(properties, TableProperties.ENTRY_ANCHOR_INDEX_ANCHOR_COUNT_KEY);
       if (files.length() > 0) {
         files.append(';');
       }
@@ -238,7 +256,24 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
         + ",v2=" + v2
         + ",incompatible=" + incompatible
         + ",formatVersions=" + versions
+        + ",dataBlockCount=" + dataBlockCount
+        + ",inlineBlockSeekIndexBytes=" + inlineBlockSeekIndexBytes
+        + ",inlineBlockSeekIndexCoveredBlocks=" + inlineBlockSeekIndexCoveredBlocks
+        + ",inlineBlockSeekIndexAnchorCount=" + inlineBlockSeekIndexAnchorCount
+        + ",blockLocalIndexBytes=" + blockLocalIndexBytes
+        + ",blockLocalIndexCoveredBlocks=" + blockLocalIndexCoveredBlocks
+        + ",entryAnchorIndexBytes=" + entryAnchorIndexBytes
+        + ",entryAnchorIndexCoveredBlocks=" + entryAnchorIndexCoveredBlocks
+        + ",entryAnchorIndexAnchorCount=" + entryAnchorIndexAnchorCount
         + ",files=[" + files + "]";
+  }
+
+  private static long propertyLong(TableProperties properties, String key) {
+    String value = properties.get(key);
+    if (value == null || value.trim().isEmpty()) {
+      return 0;
+    }
+    return Long.parseLong(value.trim());
   }
 
   /**
