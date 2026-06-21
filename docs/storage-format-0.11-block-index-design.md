@@ -478,3 +478,47 @@ BI 15 将 key-only restart-key 构建限制在单点 `Table.get(Slice)` 的 dire
 验证命令通过：`compileJava`、核心读路径测试、`LdbDbBenchMainTest`，以及 50k 默认格式轻量性能样本。样本路径为 `ldb-longrun/build/reports/ldb-db-bench-lookupkey-encoded-cache-50k/ldb-db-bench-summary.csv`。
 
 本轮结果：`readrandom_hit=135,438.627 ops/s`，`multiget_mixed=200,087.238 ops/s`。统计显示 readrandom 仍保持 `directGetRequests=50000`、`pointReadContextFileHits=49987`；MultiGet 仍保持 `directGetBatchRequests=782`、`directGetBatchKeys=50000`。因此该优化可作为低风险分配削减保留，但不能视为主要性能突破；当前默认路径的主要剩余成本仍是每个 key 的 table/data-block 定位和 block 内 seek。
+## 默认读路径补充：热点 block 完整 entry 索引
+
+为继续压缩 `readrandom_hit` 的 block 内 seek 成本，data block 在内存中新增懒加载的完整 entry 索引。第一次点查仍沿用原有 restart/seek-anchor 路径，避免一次性冷触达 block 被全量解码拖慢；当同一 block 第二次进入点查路径时，才解码完整 entry 列表，并在后续点查中使用二分返回第一个大于等于目标 internal key 的候选 entry。
+
+该优化只改变 `Block` 的内存态结构，不改变 SST 文件格式、inline seek index 编码、properties、MANIFEST 或 WAL。兼容性边界是：完整 entry 索引必须复用 block 内原始 comparator 顺序，并保持 table 层“返回候选 entry、由 impl 层判断 user key/sequence/value type”的语义。
+### 热点 block entry 索引验证结果
+
+验证命令通过：`compileJava`、核心读路径与 `BlockTest` 聚焦测试，以及 50k 默认格式轻量性能样本。样本路径为 `ldb-longrun/build/reports/ldb-db-bench-hot-block-entry-index-50k/ldb-db-bench-summary.csv`。
+
+本轮结果：`readrandom_hit=164,884.920 ops/s`，`multiget_mixed=234,447.899 ops/s`。相对上一轮 LookupKey 编码复用样本（`readrandom_hit=135,438.627 ops/s`，`multiget_mixed=200,087.238 ops/s`），该内存态热点 block entry 索引对 hit-path 有明确正向收益。它仍低于历史正式 gate 的最佳 `readrandom_hit=188,079.379 ops/s`，因此后续还需要正式多场景 gate 验证，并继续压缩 table/data-block 定位和 block 内候选返回成本。
+### 热点 block entry 索引收窄验证
+
+为避免稀疏 MultiGet 在大量 data block 上触发完整 entry 解码，热点完整 entry 索引已收窄到 single-key 默认点查路径；batch MultiGet 继续使用原有 block seek index。验证命令通过：`compileJava`、核心读路径与 `BlockTest` 聚焦测试，以及完整 50k 默认格式样本 `ldb-longrun/build/reports/ldb-db-bench-hot-single-entry-index-full-50k/ldb-db-bench-summary.csv`。
+
+收窄后的完整样本结果：`readrandom_hit=164,315.801 ops/s`，`readrandom_sameblock=573,148.015 ops/s`，`readrandom_burst=293,425.164 ops/s`，`multiget_mixed=196,828.619 ops/s`，`multiget_sameblock=385,789.967 ops/s`，`scan=1,147,849.962 ops/s`。结论是：该优化对 single-key hit-path 有正向效果，但完整 gate 中 `multiget_mixed` 与 `scan` 波动仍偏大，当前只作为保留候选，不应在没有更多 repeated run 前宣称已经完成发布级性能收敛。
+### 热点 block entry 索引 admission=8 验证
+
+为降低稀疏访问误建完整 entry 索引的风险，single-key 热点 entry 索引改为同一 block 第 8 次点查触达后才构建。验证命令通过：`compileJava`、核心读路径与 `BlockTest` 聚焦测试，以及完整 50k 默认格式样本 `ldb-longrun/build/reports/ldb-db-bench-hot-single-entry-index-admit8-full-50k/ldb-db-bench-summary.csv`。
+
+本轮结果：`readrandom_hit=191,235.230 ops/s`，`readrandom_sameblock=530,336.297 ops/s`，`readrandom_burst=303,723.344 ops/s`，`multiget_mixed=240,762.543 ops/s`，`multiget_sameblock=368,896.152 ops/s`，`scan=1,071,829.742 ops/s`。相对前一轮 admission=2 收窄样本，`readrandom_hit` 从 `164,315.801 ops/s` 提升到 `191,235.230 ops/s`，`multiget_mixed` 从 `196,828.619 ops/s` 回升到 `240,762.543 ops/s`。该阈值更适合作为当前候选默认策略；scan 仍需要 repeated run 观察，因为该路径不走 single-key 热点 entry 索引，当前结果更可能体现短样本与 compaction/Windows 文件删除噪声。
+### admission=8 repeated run 结果
+
+为确认 admission=8 是否具备发布级稳定性，继续执行两轮完整 50k 默认格式 gate：`ldb-longrun/build/reports/ldb-db-bench-hot-single-entry-index-admit8-repeat1-50k/ldb-db-bench-summary.csv` 与 `ldb-longrun/build/reports/ldb-db-bench-hot-single-entry-index-admit8-repeat2-50k/ldb-db-bench-summary.csv`。
+
+两轮结果分别为：repeat1 `readrandom_hit=157,924.493 ops/s`，`readrandom_sameblock=482,122.883 ops/s`，`readrandom_burst=296,613.563 ops/s`，`multiget_mixed=206,513.348 ops/s`，`multiget_sameblock=383,401.477 ops/s`，`scan=1,391,648.993 ops/s`；repeat2 `readrandom_hit=167,199.420 ops/s`，`readrandom_sameblock=544,096.283 ops/s`，`readrandom_burst=304,127.928 ops/s`，`multiget_mixed=208,952.355 ops/s`，`multiget_sameblock=369,599.140 ops/s`，`scan=1,090,386.498 ops/s`。
+
+结论：admission=8 在单轮样本中曾达到 `191,235.230 ops/s`，但 repeated run 未稳定复现该峰值，`readrandom_hit` 仍未稳定超过历史正式 gate 的 `188,079.379 ops/s`。该优化当前只能作为候选保留；发布级结论应继续以多轮统计为准，下一步需要补充热点索引命中/构建计数，或继续提高 admission/限制内存索引构建范围。
+### 热点 entry 索引计数补充
+
+为避免继续盲调 admission，`sstReadStats` 新增 `hotPointEntryIndexHits`、`hotPointEntryIndexBuilds`、`hotPointEntryIndexAdmissionSkips`。验证命令通过：`compileJava`、`BlockTest`/`LdbObservabilityTest` 聚焦测试，以及 50k 计数样本 `ldb-longrun/build/reports/ldb-db-bench-hot-entry-index-counters-50k/ldb-db-bench-summary.csv`。
+
+计数样本中，`readrandom_hit=159,428.913 ops/s`，并记录 `hotPointEntryIndexHits=40277`、`hotPointEntryIndexBuilds=1389`、`hotPointEntryIndexAdmissionSkips=9723`；`multiget_mixed=200,463.391 ops/s`，并记录 `hotPointEntryIndexHits=0`、`hotPointEntryIndexBuilds=0`、`hotPointEntryIndexAdmissionSkips=0`。这说明 single-key 收窄生效，MultiGet 不再触发热点 entry 索引；但 readrandom 会对 1,389 个 data block 全部构建完整 entry 索引，收益来自约 4 万次命中，波动风险来自构建成本和短样本 JVM/GC/compaction 噪声。
+
+下一步不应继续盲目调阈值，而应基于这些计数比较 admission=8、16 或更轻量的 per-block 小型候选缓存：如果 `Builds` 接近 data block 数且 `Hits/Builds` 不足以覆盖构建成本，应优先减少完整 entry 索引构建范围；如果 `Hits` 稳定覆盖构建成本，再考虑保留 admission=8 作为默认候选。
+### direct-mapped 小型候选缓存验证
+
+完整 entry 索引构建成本较高后，本轮改为 per-block direct-mapped 小型候选缓存：每个 data block 保留 32 个 target internal key 到候选 entry 的映射，命中时直接返回，未命中仍走原有 seek index。该缓存只服务 single-key 点查，MultiGet batch 路径不触发。
+
+验证命令通过：`compileJava`、`BlockTest`/`LdbObservabilityTest` 聚焦测试，以及 50k 样本 `ldb-longrun/build/reports/ldb-db-bench-hot-candidate-cache-direct-50k/ldb-db-bench-summary.csv`。本轮结果：`readrandom_hit=181,001.175 ops/s`，`multiget_mixed=260,646.090 ops/s`。相对线性 32 槽小缓存样本（`readrandom_hit=157,179.422 ops/s`，`multiget_mixed=209,475.147 ops/s`），direct-mapped 查找显著降低缓存探测成本，是比全量 entry 索引更轻量、更适合继续 repeated run 的候选。
+### direct-mapped 小型候选缓存完整 gate
+
+继续执行完整 50k 默认格式 gate：`ldb-longrun/build/reports/ldb-db-bench-hot-candidate-cache-direct-full-50k/ldb-db-bench-summary.csv`。结果为：`readrandom_hit=160,800.400 ops/s`，`readrandom_sameblock=498,942.740 ops/s`，`readrandom_burst=263,292.590 ops/s`，`multiget_mixed=243,876.505 ops/s`，`multiget_sameblock=381,849.327 ops/s`，`scan=1,038,542.385 ops/s`。
+
+结论：direct-mapped 小型候选缓存在三项样本中可达到 `readrandom_hit=181,001.175 ops/s`，但完整 gate 未稳定复现；它降低了缓存探测成本，也避免了全量 entry 索引构建，但对随机 hit 主指标的稳定提升仍不足。当前不应作为发布级默认优化提交结论；更值得继续的是将候选缓存从 exact target key 扩展为“同 block 上一个候选 entry 的邻近复用”或继续优化 block 内 seek 本身的对象分配。

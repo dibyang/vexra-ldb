@@ -478,3 +478,47 @@ This change does not alter the SST file format, MANIFEST, WAL, table properties,
 Validation passed with `compileJava`, focused core read-path tests, `LdbDbBenchMainTest`, and a 50k default-format performance sample. The sample report is `ldb-longrun/build/reports/ldb-db-bench-lookupkey-encoded-cache-50k/ldb-db-bench-summary.csv`.
 
 This run recorded `readrandom_hit=135,438.627 ops/s` and `multiget_mixed=200,087.238 ops/s`. Counters show readrandom still issued `directGetRequests=50000` with `pointReadContextFileHits=49987`; MultiGet still issued `directGetBatchRequests=782` and `directGetBatchKeys=50000`. Therefore this change is retained as a low-risk allocation reduction, but it is not the primary performance breakthrough; the remaining default-path bottleneck is still per-key table/data-block positioning and in-block seek cost.
+## Default read path addendum: hot-block full entry index
+
+To further reduce `readrandom_hit` in-block seek cost, data blocks now build a lazy in-memory full-entry index. The first point lookup still uses the existing restart/seek-anchor path, so one-off cold block touches do not pay a full decode. When the same block reaches the point lookup path for the second time, the block decodes its full entry list and later point lookups use binary search to return the first candidate entry greater than or equal to the target internal key.
+
+This optimization only changes the in-memory `Block` representation. It does not alter the SST file format, inline seek-index encoding, table properties, MANIFEST, or WAL. The compatibility boundary is that the full-entry index must preserve the block comparator order and the table-layer contract of returning a candidate entry while the impl layer still decides user-key, sequence, and value-type semantics.
+### Hot-block entry-index validation result
+
+Validation passed with `compileJava`, focused core read-path and `BlockTest` coverage, plus a 50k default-format performance sample. The sample report is `ldb-longrun/build/reports/ldb-db-bench-hot-block-entry-index-50k/ldb-db-bench-summary.csv`.
+
+This run recorded `readrandom_hit=164,884.920 ops/s` and `multiget_mixed=234,447.899 ops/s`. Compared with the previous LookupKey encoded-key reuse sample (`readrandom_hit=135,438.627 ops/s`, `multiget_mixed=200,087.238 ops/s`), the in-memory hot-block entry index shows a clear positive hit-path effect. It is still below the best formal-gate `readrandom_hit=188,079.379 ops/s`, so the next step is formal multi-scenario gate validation and continued reduction of table/data-block positioning and in-block candidate-return cost.
+### Hot-block entry-index narrowed validation
+
+To avoid sparse MultiGet triggering full-entry decoding across many data blocks, the hot full-entry index has been narrowed to the single-key default point-read path; batch MultiGet continues to use the existing block seek index. Validation passed with `compileJava`, focused core read-path and `BlockTest` coverage, plus the full 50k default-format sample `ldb-longrun/build/reports/ldb-db-bench-hot-single-entry-index-full-50k/ldb-db-bench-summary.csv`.
+
+The narrowed full sample recorded `readrandom_hit=164,315.801 ops/s`, `readrandom_sameblock=573,148.015 ops/s`, `readrandom_burst=293,425.164 ops/s`, `multiget_mixed=196,828.619 ops/s`, `multiget_sameblock=385,789.967 ops/s`, and `scan=1,147,849.962 ops/s`. Conclusion: the optimization has a positive single-key hit-path effect, but `multiget_mixed` and `scan` remain volatile in the full gate. It should remain a candidate until repeated runs prove release-grade convergence.
+### Hot-block entry-index admission=8 validation
+
+To reduce the risk of sparse accesses building full-entry indexes too early, the single-key hot entry index now builds only after the same block reaches its 8th point lookup. Validation passed with `compileJava`, focused core read-path and `BlockTest` coverage, plus the full 50k default-format sample `ldb-longrun/build/reports/ldb-db-bench-hot-single-entry-index-admit8-full-50k/ldb-db-bench-summary.csv`.
+
+This run recorded `readrandom_hit=191,235.230 ops/s`, `readrandom_sameblock=530,336.297 ops/s`, `readrandom_burst=303,723.344 ops/s`, `multiget_mixed=240,762.543 ops/s`, `multiget_sameblock=368,896.152 ops/s`, and `scan=1,071,829.742 ops/s`. Compared with the previous admission=2 narrowed sample, `readrandom_hit` improved from `164,315.801 ops/s` to `191,235.230 ops/s`, and `multiget_mixed` recovered from `196,828.619 ops/s` to `240,762.543 ops/s`. This threshold is a better current default candidate; scan still needs repeated-run observation because it does not use the single-key hot entry index and is likely affected by short-sample, compaction, and Windows file-deletion noise.
+### admission=8 repeated-run result
+
+To verify whether admission=8 is release-grade stable, two additional full 50k default-format gates were run: `ldb-longrun/build/reports/ldb-db-bench-hot-single-entry-index-admit8-repeat1-50k/ldb-db-bench-summary.csv` and `ldb-longrun/build/reports/ldb-db-bench-hot-single-entry-index-admit8-repeat2-50k/ldb-db-bench-summary.csv`.
+
+The two runs recorded: repeat1 `readrandom_hit=157,924.493 ops/s`, `readrandom_sameblock=482,122.883 ops/s`, `readrandom_burst=296,613.563 ops/s`, `multiget_mixed=206,513.348 ops/s`, `multiget_sameblock=383,401.477 ops/s`, and `scan=1,391,648.993 ops/s`; repeat2 `readrandom_hit=167,199.420 ops/s`, `readrandom_sameblock=544,096.283 ops/s`, `readrandom_burst=304,127.928 ops/s`, `multiget_mixed=208,952.355 ops/s`, `multiget_sameblock=369,599.140 ops/s`, and `scan=1,090,386.498 ops/s`.
+
+Conclusion: admission=8 reached `191,235.230 ops/s` in one sample, but repeated runs did not reproduce that peak, and `readrandom_hit` did not stably exceed the previous formal-gate `188,079.379 ops/s`. This optimization should remain a candidate only; release-grade conclusions should rely on multi-run statistics. The next step is to add counters for hot-index builds/hits, or further raise admission / narrow the in-memory index build scope.
+### Hot entry-index counter addendum
+
+To avoid further blind admission tuning, `sstReadStats` now includes `hotPointEntryIndexHits`, `hotPointEntryIndexBuilds`, and `hotPointEntryIndexAdmissionSkips`. Validation passed with `compileJava`, focused `BlockTest`/`LdbObservabilityTest` coverage, and the 50k counter sample `ldb-longrun/build/reports/ldb-db-bench-hot-entry-index-counters-50k/ldb-db-bench-summary.csv`.
+
+In the counter sample, `readrandom_hit=159,428.913 ops/s` recorded `hotPointEntryIndexHits=40277`, `hotPointEntryIndexBuilds=1389`, and `hotPointEntryIndexAdmissionSkips=9723`; `multiget_mixed=200,463.391 ops/s` recorded `hotPointEntryIndexHits=0`, `hotPointEntryIndexBuilds=0`, and `hotPointEntryIndexAdmissionSkips=0`. This confirms the single-key narrowing works and MultiGet no longer triggers the hot entry index. However, readrandom builds the full entry index for all 1,389 data blocks; the benefit comes from about 40k hot-index hits, while volatility comes from build cost and short-sample JVM/GC/compaction noise.
+
+The next step should not be blind threshold tuning. Use these counters to compare admission=8, admission=16, or a lighter per-block candidate cache: if `Builds` stays close to the data-block count and `Hits/Builds` does not cover build cost, prefer reducing full-entry-index construction; if `Hits` consistently amortize the build cost, admission=8 can remain the default candidate.
+### Direct-mapped small candidate-cache validation
+
+After full entry-index build cost proved expensive, this run switches to a per-block direct-mapped small candidate cache: each data block keeps 32 mappings from target internal key to candidate entry. Cache hits return directly, while misses still use the existing seek index. The cache only serves single-key point reads; batch MultiGet does not trigger it.
+
+Validation passed with `compileJava`, focused `BlockTest`/`LdbObservabilityTest` coverage, and the 50k sample `ldb-longrun/build/reports/ldb-db-bench-hot-candidate-cache-direct-50k/ldb-db-bench-summary.csv`. This run recorded `readrandom_hit=181,001.175 ops/s` and `multiget_mixed=260,646.090 ops/s`. Compared with the linear 32-slot candidate-cache sample (`readrandom_hit=157,179.422 ops/s`, `multiget_mixed=209,475.147 ops/s`), direct-mapped lookup significantly reduces probe cost and is a lighter, more suitable candidate for repeated-run validation than the full entry index.
+### Direct-mapped small candidate-cache full gate
+
+A full 50k default-format gate was run at `ldb-longrun/build/reports/ldb-db-bench-hot-candidate-cache-direct-full-50k/ldb-db-bench-summary.csv`. Results: `readrandom_hit=160,800.400 ops/s`, `readrandom_sameblock=498,942.740 ops/s`, `readrandom_burst=263,292.590 ops/s`, `multiget_mixed=243,876.505 ops/s`, `multiget_sameblock=381,849.327 ops/s`, and `scan=1,038,542.385 ops/s`.
+
+Conclusion: the direct-mapped small candidate cache reached `readrandom_hit=181,001.175 ops/s` in the three-scenario sample, but the full gate did not reproduce it stably. It lowers cache probe cost and avoids full-entry-index construction, but still does not provide a stable random-hit improvement. It should not be treated as a release-grade default optimization yet; the more valuable follow-up is extending the candidate cache from exact target-key reuse to neighboring-candidate reuse within the same block, or further reducing object allocation in the in-block seek path.
