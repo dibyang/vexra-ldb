@@ -84,6 +84,8 @@ public final class RocksDbJniBench {
         results.add(readRandomHit(config, dbDir));
       } else if ("readrandom_sameblock".equals(benchmark)) {
         results.add(readRandomSameBlock(config, dbDir));
+      } else if ("readrandom_burst".equals(benchmark)) {
+        results.add(readRandomBurst(config, dbDir));
       } else if ("readrandom_miss".equals(benchmark)) {
         results.add(readRandomMiss(config, dbDir));
       } else if ("readrandom_mixed".equals(benchmark)) {
@@ -208,6 +210,31 @@ public final class RocksDbJniBench {
       }
     }
     return Result.of("readrandom_sameblock", config.reads, hits, start, System.nanoTime());
+  }
+
+  private static Result readRandomBurst(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    prepareDb(config, db);
+    db.compactRange();
+    int window = Math.max(1, Math.min(config.batchSize, config.num));
+    int span = Math.max(1, config.num - window);
+    int base = random.nextInt(span);
+    long start = System.nanoTime();
+    for (int i = 0; i < config.reads; i++) {
+      if (i % window == 0) {
+        base = random.nextInt(span);
+      }
+      int offset = i % window;
+      if ((i & 1) == 1) {
+        offset = window - 1 - offset;
+      }
+      if (db.get(key(base + offset)) != null) {
+        hits++;
+      }
+    }
+    return Result.of("readrandom_burst", config.reads, hits, start, System.nanoTime());
   }
 
   private static Result readRandomMiss(Config config, File dbDir) throws Exception {

@@ -58,6 +58,12 @@ public class Options implements OptionsView {
   private boolean failOnUnknownTableFeature = true;
   private boolean writeBlockLocalIndex;
   private int blockLocalIndexInterval = 4;
+  private boolean writeEntryAnchorIndex;
+  private int entryAnchorIndexInterval = 4;
+  private int entryAnchorIndexAdmissionMinAnchors = 2;
+  private boolean writeInlineBlockSeekIndex;
+  private int inlineBlockSeekIndexInterval = 4;
+  private int inlineBlockSeekIndexAdmissionMinAnchors = 2;
 
   public boolean cacheBlocks() {
     return cacheBlocks;
@@ -165,8 +171,8 @@ public class Options implements OptionsView {
    * @throws IllegalArgumentException 当版本不在当前支持范围内时抛出。
    */
   public Options tableFormatVersion(int tableFormatVersion) {
-    if (tableFormatVersion < 1 || tableFormatVersion > 3) {
-      throw new IllegalArgumentException("tableFormatVersion must be 1, 2, or 3");
+    if (tableFormatVersion < 1 || tableFormatVersion > 4) {
+      throw new IllegalArgumentException("tableFormatVersion must be 1, 2, 3, or 4");
     }
     this.tableFormatVersion = tableFormatVersion;
     return this;
@@ -259,6 +265,102 @@ public class Options implements OptionsView {
       throw new IllegalArgumentException("blockLocalIndexInterval must be > 0");
     }
     this.blockLocalIndexInterval = blockLocalIndexInterval;
+    return this;
+  }
+
+  public boolean writeEntryAnchorIndex() {
+    return writeEntryAnchorIndex;
+  }
+
+  /**
+   * 设置 v4 SST 是否写入 sparse entry-anchor index。
+   *
+   * <p>该开关只声明下一代文件格式能力，默认关闭。真正写入前必须同时设置
+   * {@link #tableFormatVersion(int)} 为 4 或更高；当前 reader skeleton 会识别该 feature，
+   * writer 在完整目录和索引块落盘能力接入前会 fail-fast，避免生成声明和实际内容不一致的 SST。</p>
+   */
+  public Options writeEntryAnchorIndex(boolean writeEntryAnchorIndex) {
+    this.writeEntryAnchorIndex = writeEntryAnchorIndex;
+    return this;
+  }
+
+  public int entryAnchorIndexInterval() {
+    return entryAnchorIndexInterval;
+  }
+
+  /**
+   * 设置 sparse entry-anchor index 的 entry 间隔。
+   *
+   * <p>默认值 4 与当前 Block open-time seek index 的稳定配置一致；该索引只保存稀疏 anchor，
+   * 不保存 value/value offset，也不形成 full-entry index。</p>
+   */
+  public Options entryAnchorIndexInterval(int entryAnchorIndexInterval) {
+    if (entryAnchorIndexInterval <= 0) {
+      throw new IllegalArgumentException("entryAnchorIndexInterval must be > 0");
+    }
+    this.entryAnchorIndexInterval = entryAnchorIndexInterval;
+    return this;
+  }
+
+  public int entryAnchorIndexAdmissionMinAnchors() {
+    return entryAnchorIndexAdmissionMinAnchors;
+  }
+
+  /**
+   * 设置单个 data block 写入 entry-anchor index 的最少 anchor 数。
+   *
+   * <p>低于该阈值的 block 后续 writer 应跳过索引写入，避免小 block metadata 放大超过收益。</p>
+   */
+  public Options entryAnchorIndexAdmissionMinAnchors(int entryAnchorIndexAdmissionMinAnchors) {
+    if (entryAnchorIndexAdmissionMinAnchors <= 0) {
+      throw new IllegalArgumentException("entryAnchorIndexAdmissionMinAnchors must be > 0");
+    }
+    this.entryAnchorIndexAdmissionMinAnchors = entryAnchorIndexAdmissionMinAnchors;
+    return this;
+  }
+
+  public boolean writeInlineBlockSeekIndex() {
+    return writeInlineBlockSeekIndex;
+  }
+
+  /**
+   * 设置 v4 SST 是否把 point-get 使用的稀疏 seek anchor 内联到 data block。
+   *
+   * <p>该格式只保存 restart/稀疏 anchor，不保存完整 entry 索引；旧 reader 必须通过 incompatible
+   * feature fail-fast，避免把带尾部 mini-index 的 data block 当成旧 block 解析。</p>
+   */
+  public Options writeInlineBlockSeekIndex(boolean writeInlineBlockSeekIndex) {
+    this.writeInlineBlockSeekIndex = writeInlineBlockSeekIndex;
+    return this;
+  }
+
+  public int inlineBlockSeekIndexInterval() {
+    return inlineBlockSeekIndexInterval;
+  }
+
+  /**
+   * 设置 data block 内联 seek anchor 的 entry 间隔。
+   */
+  public Options inlineBlockSeekIndexInterval(int inlineBlockSeekIndexInterval) {
+    if (inlineBlockSeekIndexInterval <= 0) {
+      throw new IllegalArgumentException("inlineBlockSeekIndexInterval must be > 0");
+    }
+    this.inlineBlockSeekIndexInterval = inlineBlockSeekIndexInterval;
+    return this;
+  }
+
+  public int inlineBlockSeekIndexAdmissionMinAnchors() {
+    return inlineBlockSeekIndexAdmissionMinAnchors;
+  }
+
+  /**
+   * 设置单个 data block 写入 inline mini-index 的最少 anchor 数，避免小 block 放大。
+   */
+  public Options inlineBlockSeekIndexAdmissionMinAnchors(int inlineBlockSeekIndexAdmissionMinAnchors) {
+    if (inlineBlockSeekIndexAdmissionMinAnchors <= 0) {
+      throw new IllegalArgumentException("inlineBlockSeekIndexAdmissionMinAnchors must be > 0");
+    }
+    this.inlineBlockSeekIndexAdmissionMinAnchors = inlineBlockSeekIndexAdmissionMinAnchors;
     return this;
   }
 

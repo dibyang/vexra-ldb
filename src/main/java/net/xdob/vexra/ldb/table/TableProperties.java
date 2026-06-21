@@ -30,6 +30,23 @@ public final class TableProperties {
   public static final String BLOCK_LOCAL_INDEX_INTERVAL_KEY = "ldb.table.block_local_index.interval";
   public static final String BLOCK_LOCAL_INDEX_BYTES_KEY = "ldb.table.block_local_index.bytes";
   public static final String BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY = "ldb.table.block_local_index.covered_blocks";
+  public static final String ENTRY_ANCHOR_INDEX_FEATURE = "block.entry_anchor_index.v1";
+  public static final String ENTRY_ANCHOR_INDEX_META_INDEX_KEY = "entry_anchor_index";
+  public static final String ENTRY_ANCHOR_INDEX_KEY = "ldb.table.entry_anchor_index";
+  public static final String ENTRY_ANCHOR_INDEX_VERSION_KEY = "ldb.table.entry_anchor_index.version";
+  public static final String ENTRY_ANCHOR_INDEX_POLICY_KEY = "ldb.table.entry_anchor_index.policy";
+  public static final String ENTRY_ANCHOR_INDEX_INTERVAL_KEY = "ldb.table.entry_anchor_index.interval";
+  public static final String ENTRY_ANCHOR_INDEX_BYTES_KEY = "ldb.table.entry_anchor_index.bytes";
+  public static final String ENTRY_ANCHOR_INDEX_COVERED_BLOCKS_KEY = "ldb.table.entry_anchor_index.covered_blocks";
+  public static final String ENTRY_ANCHOR_INDEX_ANCHOR_COUNT_KEY = "ldb.table.entry_anchor_index.anchor_count";
+  public static final String INLINE_BLOCK_SEEK_INDEX_FEATURE = "block.inline_seek_index.v1";
+  public static final String INLINE_BLOCK_SEEK_INDEX_KEY = "ldb.table.inline_block_seek_index";
+  public static final String INLINE_BLOCK_SEEK_INDEX_VERSION_KEY = "ldb.table.inline_block_seek_index.version";
+  public static final String INLINE_BLOCK_SEEK_INDEX_POLICY_KEY = "ldb.table.inline_block_seek_index.policy";
+  public static final String INLINE_BLOCK_SEEK_INDEX_INTERVAL_KEY = "ldb.table.inline_block_seek_index.interval";
+  public static final String INLINE_BLOCK_SEEK_INDEX_BYTES_KEY = "ldb.table.inline_block_seek_index.bytes";
+  public static final String INLINE_BLOCK_SEEK_INDEX_COVERED_BLOCKS_KEY = "ldb.table.inline_block_seek_index.covered_blocks";
+  public static final String INLINE_BLOCK_SEEK_INDEX_ANCHOR_COUNT_KEY = "ldb.table.inline_block_seek_index.anchor_count";
   public static final String FILTER_POLICY_KEY = "ldb.table.filter_policy";
   public static final String FILTER_SCOPE_KEY = "ldb.table.filter_scope";
   public static final String FILTER_KEY_COUNT_KEY = "ldb.table.filter.key_count";
@@ -37,7 +54,7 @@ public final class TableProperties {
   public static final String FILTER_BITS_PER_KEY_KEY = "ldb.table.filter.bits_per_key";
 
   private static final int LEGACY_FORMAT_VERSION = 1;
-  private static final int CURRENT_FORMAT_VERSION = 3;
+  private static final int CURRENT_FORMAT_VERSION = 4;
 
   private final int formatVersion;
   private final boolean legacy;
@@ -137,6 +154,8 @@ public final class TableProperties {
     }
     LinkedHashSet<String> unsupportedFeatures = new LinkedHashSet<>(incompatibleFeatures);
     unsupportedFeatures.remove(BLOCK_LOCAL_INDEX_FEATURE);
+    unsupportedFeatures.remove(ENTRY_ANCHOR_INDEX_FEATURE);
+    unsupportedFeatures.remove(INLINE_BLOCK_SEEK_INDEX_FEATURE);
     if (!unsupportedFeatures.isEmpty()) {
       throw new IllegalArgumentException("Table " + tableName
           + " contains unsupported incompatible features: " + unsupportedFeatures);

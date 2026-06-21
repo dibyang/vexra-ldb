@@ -42,6 +42,9 @@ class LdbApiCompatibilityTest {
             .writeTableProperties(true)
             .writeBlockLocalIndex(false)
             .blockLocalIndexInterval(4)
+            .writeInlineBlockSeekIndex(false)
+            .inlineBlockSeekIndexInterval(4)
+            .inlineBlockSeekIndexAdmissionMinAnchors(2)
             .level0CompactionTrigger(3)
             .level0SlowdownWritesTrigger(6)
             .writeSlowdownDelayNanos(500_000L)
@@ -69,6 +72,9 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.optionsMapping", "tableFormatVersion=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "writeBlockLocalIndex=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "blockLocalIndexInterval=supported");
+      assertPropertyContains(db, "ldb.api.optionsMapping", "writeInlineBlockSeekIndex=supported");
+      assertPropertyContains(db, "ldb.api.optionsMapping", "inlineBlockSeekIndexInterval=supported");
+      assertPropertyContains(db, "ldb.api.optionsMapping", "inlineBlockSeekIndexAdmissionMinAnchors=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "multiGet=supported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "mergeOperator=unsupported");
       assertPropertyContains(db, "ldb.api.optionsMapping", "prefixExtractor=unsupported");
@@ -82,6 +88,9 @@ class LdbApiCompatibilityTest {
       assertPropertyContains(db, "ldb.api.optionValues", "tableFormatVersion=3");
       assertPropertyContains(db, "ldb.api.optionValues", "writeBlockLocalIndex=false");
       assertPropertyContains(db, "ldb.api.optionValues", "blockLocalIndexInterval=4");
+      assertPropertyContains(db, "ldb.api.optionValues", "writeInlineBlockSeekIndex=false");
+      assertPropertyContains(db, "ldb.api.optionValues", "inlineBlockSeekIndexInterval=4");
+      assertPropertyContains(db, "ldb.api.optionValues", "inlineBlockSeekIndexAdmissionMinAnchors=2");
       assertPropertyContains(db, "ldb.api.optionValues", "columnFamilyCount=2");
       assertPropertyContains(db, "ldb.api.optionValues", "level0CompactionTrigger=3");
       assertPropertyContains(db, "ldb.api.optionValues", "writeSlowdownDelayNanos=500000");
@@ -167,8 +176,10 @@ class LdbApiCompatibilityTest {
     assertThrows(IllegalArgumentException.class, () -> new Options().level0StopWritesTrigger(0));
     assertThrows(IllegalArgumentException.class, () -> new Options().writeSlowdownDelayNanos(0));
     assertThrows(IllegalArgumentException.class, () -> new Options().compactionRateLimitBytesPerSecond(-1));
-    assertThrows(IllegalArgumentException.class, () -> new Options().tableFormatVersion(4));
+    assertEquals(4, new Options().tableFormatVersion(4).tableFormatVersion());
     assertThrows(IllegalArgumentException.class, () -> new Options().blockLocalIndexInterval(0));
+    assertThrows(IllegalArgumentException.class, () -> new Options().inlineBlockSeekIndexInterval(0));
+    assertThrows(IllegalArgumentException.class, () -> new Options().inlineBlockSeekIndexAdmissionMinAnchors(0));
   }
 
   private static void assertPropertyContains(LDB db, String property, String expected) {

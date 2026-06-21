@@ -165,8 +165,8 @@ class TablePropertiesTest {
       assertTrue(stats.contains("directoryEntries=1"));
       assertTrue(stats.contains("seekCount="));
       assertTrue(stats.contains("hitCount="));
-      assertTrue(stats.contains("seekCount=0"));
-      assertTrue(stats.contains("hitCount=0"));
+      assertTrue(stats.contains("seekCount=2"));
+      assertTrue(stats.contains("hitCount=2"));
 
       java.util.List<net.xdob.vexra.ldb.util.Slice> denseLookup = new java.util.ArrayList<>();
       for (int i = 0; i < 8; i++) {
@@ -174,8 +174,46 @@ class TablePropertiesTest {
       }
       assertEquals(8, table.get(denseLookup).size());
       String denseStats = table.getBlockLocalIndexStats();
-      assertTrue(denseStats.contains("seekCount=8"));
-      assertTrue(denseStats.contains("hitCount=8"));
+      assertTrue(denseStats.contains("seekCount=10"));
+      assertTrue(denseStats.contains("hitCount=10"));
+    } finally {
+      table.closer().call();
+    }
+  }
+
+  @Test
+  void shouldWriteAndReadV4EntryAnchorIndexDirectoryWhenOptedIn() throws Exception {
+    File tableFile = new File(tempDir, "v4-entry-anchor.sst");
+
+    writeDenseTable(tableFile, new Options()
+        .blockRestartInterval(4)
+        .tableFormatVersion(4)
+        .writeEntryAnchorIndex(true)
+        .entryAnchorIndexInterval(1)
+        .entryAnchorIndexAdmissionMinAnchors(1));
+
+    Table table = openTable(tableFile, new Options());
+    try {
+      TableProperties properties = table.getProperties();
+      Map<String, String> values = properties.getValues();
+
+      assertEquals(4, properties.getFormatVersion());
+      assertTrue(properties.getIncompatibleFeatures().contains(TableProperties.ENTRY_ANCHOR_INDEX_FEATURE));
+      assertEquals("true", values.get(TableProperties.ENTRY_ANCHOR_INDEX_KEY));
+      assertEquals("1", values.get(TableProperties.ENTRY_ANCHOR_INDEX_VERSION_KEY));
+      assertEquals("sparse-entry-anchor", values.get(TableProperties.ENTRY_ANCHOR_INDEX_POLICY_KEY));
+      assertEquals("1", values.get(TableProperties.ENTRY_ANCHOR_INDEX_INTERVAL_KEY));
+      assertEquals("1", values.get(TableProperties.ENTRY_ANCHOR_INDEX_COVERED_BLOCKS_KEY));
+      assertTrue(Long.parseLong(values.get(TableProperties.ENTRY_ANCHOR_INDEX_BYTES_KEY)) > 0);
+      assertTrue(Long.parseLong(values.get(TableProperties.ENTRY_ANCHOR_INDEX_ANCHOR_COUNT_KEY)) > 0);
+
+      assertEquals(internalKey("k001", 1), table.get(internalKey("k001", 1)).getKey());
+      String stats = table.getEntryAnchorIndexStats();
+      assertTrue(stats.contains("declared=true"));
+      assertTrue(stats.contains("directoryHandlePresent=true"));
+      assertTrue(stats.contains("directoryLoaded=false"));
+      assertTrue(stats.contains("seekCount=0"));
+      assertTrue(stats.contains("hitCount=0"));
     } finally {
       table.closer().call();
     }
@@ -201,14 +239,14 @@ class TablePropertiesTest {
     BlockBuilder builder = new BlockBuilder(256, 1, new BytewiseComparator());
     builder.add(Slices.utf8Slice(TableProperties.COMPATIBLE_FEATURES_KEY), Slices.utf8Slice("table.properties"));
     builder.add(Slices.utf8Slice(TableProperties.INCOMPATIBLE_FEATURES_KEY), Slices.utf8Slice(""));
-    builder.add(Slices.utf8Slice(TableProperties.FORMAT_VERSION_KEY), Slices.utf8Slice("4"));
+    builder.add(Slices.utf8Slice(TableProperties.FORMAT_VERSION_KEY), Slices.utf8Slice("5"));
 
     TableProperties properties = TableProperties.read(new Block(builder.finish(), new BytewiseComparator()));
 
     IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-        () -> properties.validateReadable(true, "v4.sst"));
-    assertTrue(error.getMessage().contains("unsupported table format version 4"));
-    assertDoesNotThrow(() -> properties.validateReadable(false, "v4.sst"));
+        () -> properties.validateReadable(true, "v5.sst"));
+    assertTrue(error.getMessage().contains("unsupported table format version 5"));
+    assertDoesNotThrow(() -> properties.validateReadable(false, "v5.sst"));
   }
 
   @Test
@@ -240,10 +278,47 @@ class TablePropertiesTest {
   @Test
   void shouldRejectUnsupportedTableFormatVersionOption() {
     assertThrows(IllegalArgumentException.class, () -> new Options().tableFormatVersion(0));
-    assertThrows(IllegalArgumentException.class, () -> new Options().tableFormatVersion(4));
     assertEquals(2, new Options().tableFormatVersion(2).tableFormatVersion());
     assertEquals(3, new Options().tableFormatVersion(3).tableFormatVersion());
-    assertThrows(IllegalArgumentException.class, () -> new Options().blockLocalIndexInterval(0));
+    assertEquals(4, new Options().tableFormatVersion(4).tableFormatVersion());
+    assertThrows(IllegalArgumentException.class, () -> new Options().tableFormatVersion(5));
+      assertThrows(IllegalArgumentException.class, () -> new Options().blockLocalIndexInterval(0));
+      assertThrows(IllegalArgumentException.class, () -> new Options().entryAnchorIndexInterval(0));
+      assertThrows(IllegalArgumentException.class, () -> new Options().entryAnchorIndexAdmissionMinAnchors(0));
+      assertThrows(IllegalArgumentException.class, () -> new Options().inlineBlockSeekIndexInterval(0));
+      assertThrows(IllegalArgumentException.class, () -> new Options().inlineBlockSeekIndexAdmissionMinAnchors(0));
+  }
+
+  @Test
+  void shouldWriteAndReadV4InlineBlockSeekIndexWhenOptedIn() throws Exception {
+    File tableFile = new File(tempDir, "v4-inline-seek.sst");
+
+    writeDenseTable(tableFile, new Options()
+        .blockRestartInterval(4)
+        .tableFormatVersion(4)
+        .writeInlineBlockSeekIndex(true)
+        .inlineBlockSeekIndexInterval(2)
+        .inlineBlockSeekIndexAdmissionMinAnchors(1));
+
+    Table table = openTable(tableFile, new Options());
+    try {
+      TableProperties properties = table.getProperties();
+      Map<String, String> values = properties.getValues();
+
+      assertEquals(4, properties.getFormatVersion());
+      assertTrue(properties.getIncompatibleFeatures().contains(TableProperties.INLINE_BLOCK_SEEK_INDEX_FEATURE));
+      assertEquals("true", values.get(TableProperties.INLINE_BLOCK_SEEK_INDEX_KEY));
+      assertEquals("1", values.get(TableProperties.INLINE_BLOCK_SEEK_INDEX_VERSION_KEY));
+      assertEquals("inline-sparse-anchor", values.get(TableProperties.INLINE_BLOCK_SEEK_INDEX_POLICY_KEY));
+      assertEquals("2", values.get(TableProperties.INLINE_BLOCK_SEEK_INDEX_INTERVAL_KEY));
+      assertEquals("1", values.get(TableProperties.INLINE_BLOCK_SEEK_INDEX_COVERED_BLOCKS_KEY));
+      assertTrue(Long.parseLong(values.get(TableProperties.INLINE_BLOCK_SEEK_INDEX_BYTES_KEY)) > 0);
+      assertTrue(Long.parseLong(values.get(TableProperties.INLINE_BLOCK_SEEK_INDEX_ANCHOR_COUNT_KEY)) > 0);
+      assertEquals(internalKey("k000", 1), table.get(internalKey("k000", 1)).getKey());
+      assertEquals(internalKey("k017", 1), table.get(internalKey("k017", 1)).getKey());
+    } finally {
+      table.closer().call();
+    }
   }
 
   private static void writeTable(File tableFile, Options options) throws Exception {

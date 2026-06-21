@@ -94,6 +94,8 @@ public final class LdbDbBenchMain {
         results.add(readRandomHit(config, dbDir));
       } else if ("readrandom_sameblock".equals(benchmark)) {
         results.add(readRandomSameBlock(config, dbDir));
+      } else if ("readrandom_burst".equals(benchmark)) {
+        results.add(readRandomBurst(config, dbDir));
       } else if ("readrandom_miss".equals(benchmark)) {
         results.add(readRandomMiss(config, dbDir));
       } else if ("readrandom_mixed".equals(benchmark)) {
@@ -200,6 +202,33 @@ public final class LdbDbBenchMain {
         }
       }
       return Result.of("readrandom_sameblock", config.reads, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result readRandomBurst(Config config, File dbDir) throws Exception {
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+    }
+    Random random = new Random(config.seed);
+    long hits = 0;
+    int window = Math.max(1, Math.min(config.batchSize, config.num));
+    int span = Math.max(1, config.num - window);
+    int base = random.nextInt(span);
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      long start = System.nanoTime();
+      for (int i = 0; i < config.reads; i++) {
+        if (i % window == 0) {
+          base = random.nextInt(span);
+        }
+        int offset = (i % window);
+        if ((i & 1) == 1) {
+          offset = window - 1 - offset;
+        }
+        if (db.get(key(base + offset)) != null) {
+          hits++;
+        }
+      }
+      return Result.of("readrandom_burst", config.reads, hits, start, System.nanoTime(), db);
     }
   }
 
@@ -429,7 +458,13 @@ public final class LdbDbBenchMain {
         .tableFormatVersion(config.tableFormatVersion)
         .writeTableProperties(config.writeTableProperties)
         .writeBlockLocalIndex(config.writeBlockLocalIndex)
-        .blockLocalIndexInterval(config.blockLocalIndexInterval);
+        .blockLocalIndexInterval(config.blockLocalIndexInterval)
+        .writeEntryAnchorIndex(config.writeEntryAnchorIndex)
+        .entryAnchorIndexInterval(config.entryAnchorIndexInterval)
+        .entryAnchorIndexAdmissionMinAnchors(config.entryAnchorIndexAdmissionMinAnchors)
+        .writeInlineBlockSeekIndex(config.writeInlineBlockSeekIndex)
+        .inlineBlockSeekIndexInterval(config.inlineBlockSeekIndexInterval)
+        .inlineBlockSeekIndexAdmissionMinAnchors(config.inlineBlockSeekIndexAdmissionMinAnchors);
     if ("read_optimized".equals(config.readProfile)) {
       options
           .filterPolicy(new BloomFilterPolicy(10))
@@ -506,6 +541,12 @@ public final class LdbDbBenchMain {
       field(writer, "writeTableProperties", config.writeTableProperties, true);
       field(writer, "writeBlockLocalIndex", config.writeBlockLocalIndex, true);
       field(writer, "blockLocalIndexInterval", config.blockLocalIndexInterval, true);
+      field(writer, "writeEntryAnchorIndex", config.writeEntryAnchorIndex, true);
+      field(writer, "entryAnchorIndexInterval", config.entryAnchorIndexInterval, true);
+      field(writer, "entryAnchorIndexAdmissionMinAnchors", config.entryAnchorIndexAdmissionMinAnchors, true);
+      field(writer, "writeInlineBlockSeekIndex", config.writeInlineBlockSeekIndex, true);
+      field(writer, "inlineBlockSeekIndexInterval", config.inlineBlockSeekIndexInterval, true);
+      field(writer, "inlineBlockSeekIndexAdmissionMinAnchors", config.inlineBlockSeekIndexAdmissionMinAnchors, true);
       field(writer, "verifyChecksums", "read_optimized".equals(config.readProfile) ? false : config.verifyChecksums, true);
       field(writer, "batchSize", config.batchSize, true);
       writer.write("  \"results\": [\n");
@@ -533,7 +574,7 @@ public final class LdbDbBenchMain {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "ldb-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,batchSize,sstReadStats,blockCacheStats\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats\n");
       for (Result result : results) {
         writer.write("ldb," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
@@ -541,7 +582,11 @@ public final class LdbDbBenchMain {
             + config.sync + "," + config.groupCommit + "," + config.writeBufferSizeMb + ","
             + config.readProfile + "," + config.blockCacheWarmOnOpen + "," + config.blockCacheAdmissionMinReads + ","
             + config.tableFormatVersion + "," + config.writeBlockLocalIndex + ","
-            + config.blockLocalIndexInterval + "," + config.batchSize + ","
+            + config.blockLocalIndexInterval + "," + config.writeEntryAnchorIndex + ","
+            + config.entryAnchorIndexInterval + "," + config.entryAnchorIndexAdmissionMinAnchors + ","
+            + config.writeInlineBlockSeekIndex + "," + config.inlineBlockSeekIndexInterval + ","
+            + config.inlineBlockSeekIndexAdmissionMinAnchors + ","
+            + config.batchSize + ","
             + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + "\n");
       }
     }
@@ -609,6 +654,12 @@ public final class LdbDbBenchMain {
     private final boolean writeTableProperties;
     private final boolean writeBlockLocalIndex;
     private final int blockLocalIndexInterval;
+    private final boolean writeEntryAnchorIndex;
+    private final int entryAnchorIndexInterval;
+    private final int entryAnchorIndexAdmissionMinAnchors;
+    private final boolean writeInlineBlockSeekIndex;
+    private final int inlineBlockSeekIndexInterval;
+    private final int inlineBlockSeekIndexAdmissionMinAnchors;
     private final boolean verifyChecksums;
     private final int batchSize;
     private final long seed;
@@ -632,16 +683,30 @@ public final class LdbDbBenchMain {
       this.writeTableProperties = bool(values, "write_table_properties", true);
       this.writeBlockLocalIndex = bool(values, "write_block_local_index", false);
       this.blockLocalIndexInterval = integer(values, "block_local_index_interval", 4);
+      this.writeEntryAnchorIndex = bool(values, "write_entry_anchor_index", false);
+      this.entryAnchorIndexInterval = integer(values, "entry_anchor_index_interval", 4);
+      this.entryAnchorIndexAdmissionMinAnchors = integer(values, "entry_anchor_index_admission_min_anchors", 2);
+      this.writeInlineBlockSeekIndex = bool(values, "write_inline_block_seek_index", false);
+      this.inlineBlockSeekIndexInterval = integer(values, "inline_block_seek_index_interval", 4);
+      this.inlineBlockSeekIndexAdmissionMinAnchors = integer(values, "inline_block_seek_index_admission_min_anchors", 2);
       this.verifyChecksums = bool(values, "verify_checksums", true);
       this.batchSize = integer(values, "batch_size", 64);
       this.seed = longValue(values, "seed", 20260619L);
       if (num <= 0 || reads <= 0 || valueSize <= 0 || writeBufferSizeMb <= 0
           || blockCacheSize <= 0 || blockCacheAdmissionMinReads <= 0
-          || blockLocalIndexInterval <= 0 || batchSize <= 0) {
-        throw new IllegalArgumentException("num, reads, value_size, write_buffer_size_mb, block_cache_size, block_cache_admission_min_reads, block_local_index_interval and batch_size must be > 0");
+          || blockLocalIndexInterval <= 0 || entryAnchorIndexInterval <= 0
+          || entryAnchorIndexAdmissionMinAnchors <= 0 || inlineBlockSeekIndexInterval <= 0
+          || inlineBlockSeekIndexAdmissionMinAnchors <= 0 || batchSize <= 0) {
+        throw new IllegalArgumentException("num, reads, value_size, write_buffer_size_mb, block_cache_size, block_cache_admission_min_reads, block_local_index_interval, entry_anchor_index_interval, entry_anchor_index_admission_min_anchors, inline_block_seek_index_interval, inline_block_seek_index_admission_min_anchors and batch_size must be > 0");
       }
       if (writeBlockLocalIndex && tableFormatVersion < 3) {
         throw new IllegalArgumentException("write_block_local_index requires table_format_version >= 3");
+      }
+      if (writeEntryAnchorIndex && tableFormatVersion < 4) {
+        throw new IllegalArgumentException("write_entry_anchor_index requires table_format_version >= 4");
+      }
+      if (writeInlineBlockSeekIndex && tableFormatVersion < 4) {
+        throw new IllegalArgumentException("write_inline_block_seek_index requires table_format_version >= 4");
       }
     }
 

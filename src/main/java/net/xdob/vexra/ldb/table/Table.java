@@ -23,6 +23,7 @@ import static java.util.Objects.requireNonNull;
 
 public abstract class Table implements SeekingIterable<Slice, Slice> {
   private static final int BLOCK_LOCAL_INDEX_MIN_LOOKUPS = 8;
+  private static final int POINT_GET_BLOCK_CACHE_LIMIT = 4096;
 
   protected final String name;
   protected final FileChannel fileChannel;
@@ -33,11 +34,19 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   protected final FilterPolicy filterPolicy;
   protected final Slice filterBlock;
   protected final TableProperties properties;
+  private final Slice[] pointGetIndexLimitKeys;
+  private final BlockHandle[] pointGetIndexBlockHandles;
+  private final boolean blockLocalIndexDeclared;
   private final BlockHandle blockLocalIndexDirectoryHandle;
+  private final BlockHandle entryAnchorIndexDirectoryHandle;
   private volatile Map<BlockHandle, BlockHandle> blockLocalIndexDirectory;
+  private volatile Map<BlockHandle, BlockHandle> entryAnchorIndexDirectory;
   private long blockLocalIndexSeekCount;
   private long blockLocalIndexHitCount;
   private long blockLocalIndexFallbackCount;
+  private long entryAnchorIndexSeekCount;
+  private long entryAnchorIndexHitCount;
+  private long entryAnchorIndexFallbackCount;
   private long tableIndexSeekCount;
   private long tableDataBlockOpenCount;
   private long tableDataBlockSeekCount;
@@ -45,8 +54,25 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   private long tableIndexCacheMissCount;
   private long tableLastBlockHitCount;
   private long tableLastBlockMissCount;
+  private long tablePointGetLastBlockHitCount;
+  private long tablePointGetSlotHitCount;
+  private long tablePointGetSlotMissCount;
+  private long tablePointGetSlotCollisionCount;
+  private long tableBatchDataBlockGroupCount;
+  private long tableBatchDataBlockKeyCount;
+  private long tableBatchDenseBlockGroupCount;
+  private long tableBatchDenseBlockKeyCount;
+  private long tableBatchSeekAllCount;
+  private long tableDirectReadBlockCacheHitCount;
+  private long tableDirectReadBlockCacheMissCount;
+  private long tableDirectReadBlockReadCount;
+  private long blockSeekIndexHitCount;
+  private long blockSeekIndexMissCount;
+  private long blockSeekIndexFallbackCount;
   private volatile LastPointGetIndex lastPointGetIndex;
   private volatile LastPointGetBlock lastPointGetBlock;
+  private final BlockHandle[] pointGetBlockCacheHandles = new BlockHandle[POINT_GET_BLOCK_CACHE_LIMIT];
+  private final Block[] pointGetBlockCacheBlocks = new Block[POINT_GET_BLOCK_CACHE_LIMIT];
 
   protected final BlockCache blockCache;
   private final Options options;
@@ -79,6 +105,7 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     Slice loadedFilterBlock;
     TableProperties loadedProperties;
     BlockHandle loadedBlockLocalIndexDirectoryHandle;
+    BlockHandle loadedEntryAnchorIndexDirectoryHandle;
     try {
       Footer footer = init();
       loadedIndexBlock = openBlock(footer.getIndexBlockHandle());
@@ -87,6 +114,8 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       loadedProperties = readPropertiesBlock(loadedMetaindexBlockHandle);
       loadedBlockLocalIndexDirectoryHandle =
           readBlockLocalIndexDirectoryHandle(loadedMetaindexBlockHandle, loadedProperties);
+      loadedEntryAnchorIndexDirectoryHandle =
+          readEntryAnchorIndexDirectoryHandle(loadedMetaindexBlockHandle, loadedProperties);
       if (loadedProperties.isLegacy()
           && options != null
           && !options.allowLegacyTableFormat()) {
@@ -104,11 +133,17 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     }
 
     this.indexBlock = loadedIndexBlock;
+    PointGetIndex pointGetIndex = buildPointGetIndex(loadedIndexBlock);
+    this.pointGetIndexLimitKeys = pointGetIndex.limitKeys;
+    this.pointGetIndexBlockHandles = pointGetIndex.blockHandles;
     this.metaindexBlockHandle = loadedMetaindexBlockHandle;
     this.filterBlock = loadedFilterBlock;
     this.properties = loadedProperties;
+    this.blockLocalIndexDeclared = isBlockLocalIndexDeclared(loadedProperties);
     this.blockLocalIndexDirectoryHandle = loadedBlockLocalIndexDirectoryHandle;
+    this.entryAnchorIndexDirectoryHandle = loadedEntryAnchorIndexDirectoryHandle;
     this.blockLocalIndexDirectory = null;
+    this.entryAnchorIndexDirectory = null;
   }
 
   /**
@@ -212,6 +247,31 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
         + " is missing: BLOCK_LOCAL_INDEX_DIRECTORY_MISSING");
   }
 
+  private BlockHandle readEntryAnchorIndexDirectoryHandle(
+      BlockHandle metaindexBlockHandle,
+      TableProperties properties) throws IOException {
+    boolean declared = "true".equals(properties.get(TableProperties.ENTRY_ANCHOR_INDEX_KEY))
+        || properties.getIncompatibleFeatures().contains(TableProperties.ENTRY_ANCHOR_INDEX_FEATURE);
+    if (!declared) {
+      return null;
+    }
+
+    Block metaIndexBlock = openBlock(metaindexBlockHandle);
+    BlockIterator iterator = metaIndexBlock.iterator();
+    Slice target = Slices.utf8Slice(TableProperties.ENTRY_ANCHOR_INDEX_META_INDEX_KEY);
+
+    while (iterator.hasNext()) {
+      BlockEntry entry = iterator.next();
+      if (entry.getKey().equals(target)) {
+        return BlockHandle.readBlockHandle(entry.getValue().input());
+      }
+    }
+    throw new IOException("Table " + name
+        + " declares " + TableProperties.ENTRY_ANCHOR_INDEX_FEATURE
+        + " but metaindex entry " + TableProperties.ENTRY_ANCHOR_INDEX_META_INDEX_KEY
+        + " is missing: ENTRY_ANCHOR_INDEX_DIRECTORY_MISSING");
+  }
+
   private BlockHandle parseBlockHandleDirectoryKey(Slice key) {
     String value = new String(key.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
     int separator = value.indexOf(':');
@@ -221,6 +281,20 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     long offset = Long.parseLong(value.substring(0, separator));
     int dataSize = Integer.parseInt(value.substring(separator + 1));
     return new BlockHandle(offset, dataSize);
+  }
+
+  private static PointGetIndex buildPointGetIndex(Block indexBlock) {
+    List<Slice> limitKeys = new ArrayList<Slice>();
+    List<BlockHandle> blockHandles = new ArrayList<BlockHandle>();
+    BlockIterator iterator = indexBlock.iterator();
+    while (iterator.hasNext()) {
+      BlockEntry entry = iterator.next();
+      limitKeys.add(entry.getKey());
+      blockHandles.add(BlockHandle.readBlockHandle(entry.getValue().input()));
+    }
+    return new PointGetIndex(
+        limitKeys.toArray(new Slice[limitKeys.size()]),
+        blockHandles.toArray(new BlockHandle[blockHandles.size()]));
   }
 
   private Map<BlockHandle, BlockHandle> loadBlockLocalIndexDirectory() {
@@ -245,6 +319,33 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
         }
         directory = Collections.unmodifiableMap(loaded);
         blockLocalIndexDirectory = directory;
+      }
+      return directory;
+    }
+  }
+
+  private Map<BlockHandle, BlockHandle> loadEntryAnchorIndexDirectory() {
+    if (entryAnchorIndexDirectoryHandle == null) {
+      return Collections.emptyMap();
+    }
+    Map<BlockHandle, BlockHandle> directory = entryAnchorIndexDirectory;
+    if (directory != null) {
+      return directory;
+    }
+    synchronized (this) {
+      directory = entryAnchorIndexDirectory;
+      if (directory == null) {
+        Block directoryBlock = openBlock(entryAnchorIndexDirectoryHandle);
+        Map<BlockHandle, BlockHandle> loaded = new LinkedHashMap<BlockHandle, BlockHandle>();
+        BlockIterator directoryIterator = directoryBlock.iterator();
+        while (directoryIterator.hasNext()) {
+          BlockEntry directoryEntry = directoryIterator.next();
+          loaded.put(
+              parseBlockHandleDirectoryKey(directoryEntry.getKey()),
+              BlockHandle.readBlockHandle(directoryEntry.getValue().input()));
+        }
+        directory = Collections.unmodifiableMap(loaded);
+        entryAnchorIndexDirectory = directory;
       }
       return directory;
     }
@@ -275,7 +376,9 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     }
     Block dataBlock = getPointGetDataBlock(blockHandle);
     tableDataBlockSeekCount++;
-    Entry<Slice, Slice> candidate = dataBlock.seek(internalKey);
+    Entry<Slice, Slice> candidate = isBlockLocalIndexDeclared()
+        ? seekDataBlock(blockHandle, dataBlock, internalKey, true)
+        : seekWithBlockSeekIndex(dataBlock, internalKey);
     if (candidate == null) {
       return null;
     }
@@ -292,31 +395,75 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       return cached.blockHandle;
     }
 
-    tableIndexCacheMissCount++;
-    tableIndexSeekCount++;
-    Entry<Slice, Slice> indexEntry = indexBlock.seek(internalKey);
-    if (indexEntry == null) {
+    int indexPosition = pointGetIndexPosition(internalKey);
+    if (indexPosition < 0) {
+      tableIndexCacheMissCount++;
       lastPointGetIndex = null;
       return null;
     }
 
-    BlockHandle blockHandle = BlockHandle.readBlockHandle(indexEntry.getValue().input());
-    lastPointGetIndex = new LastPointGetIndex(internalKey, indexEntry.getKey(), blockHandle);
+    tableIndexCacheHitCount++;
+    BlockHandle blockHandle = pointGetIndexBlockHandles[indexPosition];
+    LastPointGetIndex loaded = new LastPointGetIndex(internalKey, pointGetIndexLimitKeys[indexPosition], blockHandle);
+    lastPointGetIndex = loaded;
     return blockHandle;
+  }
+
+  private int pointGetIndexPosition(Slice internalKey) {
+    int low = 0;
+    int high = pointGetIndexLimitKeys.length - 1;
+    int result = -1;
+    while (low <= high) {
+      int mid = (low + high) >>> 1;
+      if (comparator.compare(pointGetIndexLimitKeys[mid], internalKey) >= 0) {
+        result = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+    return result;
   }
 
   private Block getPointGetDataBlock(BlockHandle blockHandle) {
     LastPointGetBlock cached = lastPointGetBlock;
     if (cached != null && cached.matches(blockHandle)) {
       tableLastBlockHitCount++;
+      tablePointGetLastBlockHitCount++;
       return cached.block;
+    }
+    int cacheSlot = pointGetBlockCacheSlot(blockHandle);
+    BlockHandle cachedHandle = pointGetBlockCacheHandles[cacheSlot];
+    Block cachedBlock = pointGetBlockCacheBlocks[cacheSlot];
+    if (cachedBlock != null && blockHandle.equals(cachedHandle)) {
+      tableLastBlockHitCount++;
+      tablePointGetSlotHitCount++;
+      lastPointGetBlock = new LastPointGetBlock(blockHandle, cachedBlock);
+      return cachedBlock;
     }
 
     tableLastBlockMissCount++;
+    tablePointGetSlotMissCount++;
+    if (cachedBlock != null) {
+      tablePointGetSlotCollisionCount++;
+    }
     tableDataBlockOpenCount++;
     Block dataBlock = openBlockForDirectRead(blockHandle);
+    pointGetBlockCacheHandles[cacheSlot] = blockHandle;
+    pointGetBlockCacheBlocks[cacheSlot] = dataBlock;
     lastPointGetBlock = new LastPointGetBlock(blockHandle, dataBlock);
     return dataBlock;
+  }
+
+  private int pointGetBlockCacheSlot(BlockHandle blockHandle) {
+    long offset = blockHandle.getOffset();
+    long value = offset ^ (((long) blockHandle.getDataSize()) << 32) ^ blockHandle.getDataSize();
+    value ^= (value >>> 33);
+    value *= 0xff51afd7ed558ccdL;
+    value ^= (value >>> 33);
+    value *= 0xc4ceb9fe1a85ec53L;
+    value ^= (value >>> 33);
+    return ((int) value) & (POINT_GET_BLOCK_CACHE_LIMIT - 1);
   }
 
   /**
@@ -352,16 +499,32 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     for (Entry<BlockHandle, List<TableLookup>> group : blockLookups.entrySet()) {
       tableDataBlockOpenCount++;
       Block dataBlock = openBlockForDirectRead(group.getKey());
-      for (TableLookup lookup : group.getValue()) {
+      List<TableLookup> lookups = group.getValue();
+      boolean denseBlock = lookups.size() >= BLOCK_LOCAL_INDEX_MIN_LOOKUPS;
+      tableBatchDataBlockGroupCount++;
+      tableBatchDataBlockKeyCount += lookups.size();
+      if (denseBlock) {
+        tableBatchDenseBlockGroupCount++;
+        tableBatchDenseBlockKeyCount += lookups.size();
+      }
+      if (denseBlock && !isBlockLocalIndexDeclared()) {
+        tableDataBlockSeekCount += lookups.size();
+        blockLocalIndexFallbackCount += lookups.size();
+        tableBatchSeekAllCount++;
+        seekDenseBlock(dataBlock, lookups, results);
+        continue;
+      }
+      for (TableLookup lookup : lookups) {
         tableDataBlockSeekCount++;
         Entry<Slice, Slice> candidate = seekDataBlock(
             group.getKey(),
             dataBlock,
             lookup.internalKey,
-            group.getValue().size() >= BLOCK_LOCAL_INDEX_MIN_LOOKUPS);
-        if (candidate != null
-            && comparator.compare(candidate.getKey(), lookup.internalKey) >= 0) {
-          results.set(lookup.index, candidate);
+            denseBlock);
+        if (candidate != null) {
+          if (comparator.compare(candidate.getKey(), lookup.internalKey) >= 0) {
+            results.set(lookup.index, candidate);
+          }
         }
       }
     }
@@ -375,12 +538,12 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       boolean allowLocalIndex) {
     if (!allowLocalIndex) {
       blockLocalIndexFallbackCount++;
-      return dataBlock.seek(internalKey);
+      return seekWithBlockSeekIndex(dataBlock, internalKey);
     }
     BlockHandle localIndexHandle = loadBlockLocalIndexDirectory().get(dataBlockHandle);
     if (localIndexHandle == null) {
       blockLocalIndexFallbackCount++;
-      return dataBlock.seek(internalKey);
+      return seekWithBlockSeekIndex(dataBlock, internalKey);
     }
 
     blockLocalIndexSeekCount++;
@@ -388,10 +551,51 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     Entry<Slice, Slice> anchor = localIndexBlock.floor(internalKey);
     if (anchor == null) {
       blockLocalIndexFallbackCount++;
-      return dataBlock.seek(internalKey);
+      return seekWithBlockSeekIndex(dataBlock, internalKey);
     }
     blockLocalIndexHitCount++;
     return dataBlock.seekFromOffset(internalKey, parseBlockLocalIndexAnchorOffset(anchor.getValue()));
+  }
+
+  private Entry<Slice, Slice> seekWithEntryAnchorIndex(
+      BlockHandle dataBlockHandle,
+      Block dataBlock,
+      Slice internalKey) {
+    if (!isEntryAnchorIndexDeclared()) {
+      entryAnchorIndexFallbackCount++;
+      return seekWithBlockSeekIndex(dataBlock, internalKey);
+    }
+    BlockHandle entryAnchorIndexBlockHandle = loadEntryAnchorIndexDirectory().get(dataBlockHandle);
+    if (entryAnchorIndexBlockHandle == null) {
+      entryAnchorIndexFallbackCount++;
+      return seekWithBlockSeekIndex(dataBlock, internalKey);
+    }
+
+    entryAnchorIndexSeekCount++;
+    Block entryAnchorIndexBlock = openBlock(entryAnchorIndexBlockHandle);
+    Entry<Slice, Slice> anchor = entryAnchorIndexBlock.floor(internalKey);
+    if (anchor == null) {
+      entryAnchorIndexFallbackCount++;
+      return seekWithBlockSeekIndex(dataBlock, internalKey);
+    }
+    EntryAnchorPointer pointer = parseEntryAnchorPointer(anchor.getValue());
+    entryAnchorIndexHitCount++;
+    return dataBlock.seekFromOffset(internalKey, pointer.offset, pointer.previousKey);
+  }
+
+  private Entry<Slice, Slice> seekWithBlockSeekIndex(Block dataBlock, Slice internalKey) {
+    if (!dataBlock.hasSeekIndex()) {
+      blockSeekIndexFallbackCount++;
+      return dataBlock.seek(internalKey);
+    }
+    Block.SeekResult seekResult = dataBlock.seekWithIndex(internalKey);
+    Entry<Slice, Slice> candidate = seekResult.getEntry();
+    if (candidate == null) {
+      blockSeekIndexMissCount++;
+    } else {
+      blockSeekIndexHitCount++;
+    }
+    return candidate;
   }
 
   private int parseBlockLocalIndexAnchorOffset(Slice value) {
@@ -401,6 +605,24 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       throw new IllegalArgumentException("Invalid block-local index anchor value: " + text);
     }
     return Integer.parseInt(text.substring(separator + 1));
+  }
+
+  private EntryAnchorPointer parseEntryAnchorPointer(Slice value) {
+    String text = new String(value.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    String[] parts = text.split(":", 4);
+    if (parts.length != 4) {
+      throw new IllegalArgumentException("Invalid entry-anchor value: " + text);
+    }
+    int offset = Integer.parseInt(parts[0]);
+    Slice previousKey;
+    if ("NONE".equals(parts[1])) {
+      previousKey = null;
+    } else if ("FULL".equals(parts[1])) {
+      previousKey = Slices.wrappedBuffer(java.util.Base64.getDecoder().decode(parts[2]));
+    } else {
+      throw new IllegalArgumentException("Invalid entry-anchor previous key mode: " + parts[1]);
+    }
+    return new EntryAnchorPointer(offset, previousKey);
   }
 
   /**
@@ -422,9 +644,10 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     List<Entry<Slice, Slice>> candidates = dataBlock.seekAll(sortedKeys);
     for (int i = 0; i < candidates.size(); i++) {
       Entry<Slice, Slice> candidate = candidates.get(i);
-      if (candidate != null
-          && comparator.compare(candidate.getKey(), lookups.get(i).internalKey) >= 0) {
-        results.set(lookups.get(i).index, candidate);
+      if (candidate != null) {
+        if (comparator.compare(candidate.getKey(), lookups.get(i).internalKey) >= 0) {
+          results.set(lookups.get(i).index, candidate);
+        }
       }
     }
   }
@@ -517,6 +740,40 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
         + ",fallbackCount=" + blockLocalIndexFallbackCount;
   }
 
+  public String getEntryAnchorIndexStats() {
+    return "declared=" + isEntryAnchorIndexDeclared()
+        + ",directoryHandlePresent=" + (entryAnchorIndexDirectoryHandle != null)
+        + ",directoryLoaded=" + (entryAnchorIndexDirectory != null)
+        + ",directoryEntries=" + (entryAnchorIndexDirectory == null ? 0 : entryAnchorIndexDirectory.size())
+        + ",seekCount=" + entryAnchorIndexSeekCount
+        + ",hitCount=" + entryAnchorIndexHitCount
+        + ",fallbackCount=" + entryAnchorIndexFallbackCount;
+  }
+
+  public boolean isEntryAnchorIndexDeclaredForStats() {
+    return isEntryAnchorIndexDeclared();
+  }
+
+  public boolean isEntryAnchorIndexDirectoryLoadedForStats() {
+    return entryAnchorIndexDirectory != null;
+  }
+
+  public int getEntryAnchorIndexDirectoryEntriesForStats() {
+    return entryAnchorIndexDirectory == null ? 0 : entryAnchorIndexDirectory.size();
+  }
+
+  public long getEntryAnchorIndexSeekCountForStats() {
+    return entryAnchorIndexSeekCount;
+  }
+
+  public long getEntryAnchorIndexHitCountForStats() {
+    return entryAnchorIndexHitCount;
+  }
+
+  public long getEntryAnchorIndexFallbackCountForStats() {
+    return entryAnchorIndexFallbackCount;
+  }
+
   public boolean isBlockLocalIndexDeclaredForStats() {
     return isBlockLocalIndexDeclared();
   }
@@ -569,6 +826,66 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     return tableLastBlockMissCount;
   }
 
+  public long getTablePointGetLastBlockHitCountForStats() {
+    return tablePointGetLastBlockHitCount;
+  }
+
+  public long getTablePointGetSlotHitCountForStats() {
+    return tablePointGetSlotHitCount;
+  }
+
+  public long getTablePointGetSlotMissCountForStats() {
+    return tablePointGetSlotMissCount;
+  }
+
+  public long getTablePointGetSlotCollisionCountForStats() {
+    return tablePointGetSlotCollisionCount;
+  }
+
+  public long getTableBatchDataBlockGroupCountForStats() {
+    return tableBatchDataBlockGroupCount;
+  }
+
+  public long getTableBatchDataBlockKeyCountForStats() {
+    return tableBatchDataBlockKeyCount;
+  }
+
+  public long getTableBatchDenseBlockGroupCountForStats() {
+    return tableBatchDenseBlockGroupCount;
+  }
+
+  public long getTableBatchDenseBlockKeyCountForStats() {
+    return tableBatchDenseBlockKeyCount;
+  }
+
+  public long getTableBatchSeekAllCountForStats() {
+    return tableBatchSeekAllCount;
+  }
+
+  public long getTableDirectReadBlockCacheHitCountForStats() {
+    return tableDirectReadBlockCacheHitCount;
+  }
+
+  public long getTableDirectReadBlockCacheMissCountForStats() {
+    return tableDirectReadBlockCacheMissCount;
+  }
+
+  public long getTableDirectReadBlockReadCountForStats() {
+    return tableDirectReadBlockReadCount;
+  }
+
+  public long getBlockSeekIndexHitCountForStats() {
+    return blockSeekIndexHitCount;
+  }
+
+  public long getBlockSeekIndexMissCountForStats() {
+    return blockSeekIndexMissCount;
+  }
+
+  public long getBlockSeekIndexFallbackCountForStats() {
+    return blockSeekIndexFallbackCount;
+  }
+
   /**
    * 预热当前 table 的所有 data block。
    */
@@ -610,9 +927,16 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
 
       Block cached = blockCache.get(key);
       if (cached != null) {
+        if (!forceCacheOnMiss) {
+          tableDirectReadBlockCacheHitCount++;
+        }
         return cached;
       }
 
+      if (!forceCacheOnMiss) {
+        tableDirectReadBlockCacheMissCount++;
+        tableDirectReadBlockReadCount++;
+      }
       Block block = readBlock(blockHandle);
       if (forceCacheOnMiss) {
         blockCache.put(key, block);
@@ -646,8 +970,17 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   }
 
   private boolean isBlockLocalIndexDeclared() {
+    return blockLocalIndexDeclared;
+  }
+
+  private static boolean isBlockLocalIndexDeclared(TableProperties properties) {
     return "true".equals(properties.get(TableProperties.BLOCK_LOCAL_INDEX_KEY))
         || properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE);
+  }
+
+  private boolean isEntryAnchorIndexDeclared() {
+    return "true".equals(properties.get(TableProperties.ENTRY_ANCHOR_INDEX_KEY))
+        || properties.getIncompatibleFeatures().contains(TableProperties.ENTRY_ANCHOR_INDEX_FEATURE);
   }
 
   private boolean isBlockHandleInRange(BlockHandle handle, long fileSize) {
@@ -718,6 +1051,16 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     }
   }
 
+  private static final class EntryAnchorPointer {
+    private final int offset;
+    private final Slice previousKey;
+
+    private EntryAnchorPointer(int offset, Slice previousKey) {
+      this.offset = offset;
+      this.previousKey = previousKey;
+    }
+  }
+
   private static final class LastPointGetIndex {
     private final Slice lastLookupKey;
     private final Slice indexLimitKey;
@@ -733,6 +1076,7 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       return comparator.compare(internalKey, lastLookupKey) >= 0
           && comparator.compare(internalKey, indexLimitKey) <= 0;
     }
+
   }
 
   private static final class LastPointGetBlock {
@@ -746,6 +1090,16 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
 
     private boolean matches(BlockHandle candidate) {
       return blockHandle.equals(candidate);
+    }
+  }
+
+  private static final class PointGetIndex {
+    private final Slice[] limitKeys;
+    private final BlockHandle[] blockHandles;
+
+    private PointGetIndex(Slice[] limitKeys, BlockHandle[] blockHandles) {
+      this.limitKeys = limitKeys;
+      this.blockHandles = blockHandles;
     }
   }
 }

@@ -276,3 +276,14 @@ Gradle `releaseGate` 新增 `blockLocalIndexBenchmarkEvidence` 门禁，要求 v
 | admissionMinReads=2 | 187,734.903 | 178,359.627 | 274,764.640 | 2,666,513.787 | cold 路径 `admissionSkips=5556`、`admissionAdmits=5556`；MultiGet random `admissionSkips=5564`、`admissionAdmits=5564`；scan 不触发 admission。 |
 
 结论：二次触达 admission 是一个低风险可选策略，能减少冷随机读和 sparse MultiGet 对 block cache 的一次性污染，并通过统计字段直接观测。由于默认值仍为 1，本版本保持兼容默认行为；发布后建议在 read-optimized 场景继续扩大样本，评估是否把特定 profile 的默认值提升到 2。
+### V3E-10 单点 get 强制使用 block-local index 的负实验
+
+本轮验证将 `Table.get(Slice)` 在声明 `block.local_index.v1` 的 SST 上改为直接尝试 `seekDataBlock(..., allowLocalIndex=true)`，使单点随机命中路径也加载 persisted block-local index。该实验的目标是确认 50k v3 opt-in 中 `blockLocalIndexSeekCount=0` 是否只是接入遗漏，以及 persisted local index 是否能继续提升 `readrandom_hit`。
+
+50k read-optimized 样本显示，该实验虽然让 `readrandom_hit` 记录 `blockLocalIndexDirectoryLoadedTables=1`、`blockLocalIndexDirectoryEntries=1389`、`blockLocalIndexSeekCount=50000`、`blockLocalIndexHitCount=48680`，但主指标从未强制接入 local index 的 v3 opt-in 样本 `192,795.093 ops/s` 回退到 `123,006.344 ops/s`。周边 workload 也同步走弱：`readrandom_sameblock=246,336.120 ops/s`，`readrandom_burst=234,339.995 ops/s`，`scan=1,782,257.978 ops/s`。
+
+证据路径：
+- `ldb-longrun/ldb-longrun/build/reports/ldb-db-bench-current-50k-v3-local-index/ldb-db-bench-summary.json`
+- `ldb-longrun/ldb-longrun/build/reports/ldb-db-bench-current-50k-v3-local-index-single-get/ldb-db-bench-summary.json`
+
+结论：当前 persisted block-local index 是 restart-anchor 粒度；单点 get 强制使用它会绕过 `Block` 打开阶段构建的稀疏 entry anchor 和热路径内存索引，CPU 成本高于收益。因此该实验不保留。后续若要让文件格式索引服务 `readrandom_hit`，不能只复用 restart-anchor 目录，而应设计能表达稀疏 entry anchor、必要 previousKey 或等价低成本恢复信息的下一版格式；在此之前，单点随机读继续优先使用当前 Block open-time 轻量内存索引。

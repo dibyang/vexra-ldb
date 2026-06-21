@@ -395,3 +395,57 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 ## 0.11.0-SNAPSHOT Single-key locality hit-path optimization
 
 - Added the `readrandom_sameblock` locality point-get benchmark, plus a recent index-coverage cache and recent data-block reuse on the `Table` single-key direct get path. In the 50k comparison, `readrandom_sameblock` reached `0.5421` of RocksDB JNI; `ldb.sstReadStats` recorded `tableIndexCacheHits=47839` and `tableLastBlockHits=47839`, reducing actual index seeks and data-block opens to `2161`.
+## 0.11.0-SNAPSHOT Request-level single-key read context
+
+- Added internal `PointReadContext` support so a single `Version.get` call chain can reuse the most recent candidate SST file and avoid repeated level file positioning for adjacent point gets. `ldb.sstReadStats` now reports `pointReadContextFileHits` / `pointReadContextFileMisses`, and `readrandom_burst` was added to observe application-burst locality reads.
+## 0.11.0-SNAPSHOT ThreadLocal point-read context boundary
+
+- `PointReadContext` now uses a short-lived `ThreadLocal` cache inside `VersionSet`, scoped to the same thread, current Version, column family, and an approximately 10ms idle window. This supports candidate-SST reuse across consecutive public point gets while avoiding cross-thread or cross-version reuse.
+## 0.11.0-SNAPSHOT read context 50k comparison archive
+
+- Archived the `readrandom_hit/readrandom_sameblock/readrandom_burst` 50k comparison: LDB reached `0.3939`, `0.5616`, and `0.5531` of RocksDB JNI respectively. `pointReadContextFileHits=49987` proves the API-level consecutive single-key read context was active; in the sameblock workload, `tableIndexCacheHits=47839` and `tableLastBlockHits=47839` reduced data-block opens to `2161`.
+- Read performance: formalized Block restart key/offset data as the lightweight seek index and added `blockSeekIndexHits/Misses/Fallbacks` stats; in the 50k gate, `readrandom_hit` reported `blockSeekIndexHits=50,000`, but Block restart anchors alone are still not enough to reach 50% of RocksDB JNI.
+- Read performance: added a Table point-read index-block array index and direct-mapped data-block cache, and restored Block-open-time sparse entry anchors; in the 50k gate, `tableIndexSeeks=0` and `multiget_mixed` reached 92.15% of RocksDB JNI, but `readrandom_hit` remains at 29.48%, so the P0 50% target is still incomplete.
+- Read performance: `Block.seek`/`seekFromOffset` now skip value decoding for non-candidate entries; in the 50k comparison, `readrandom_hit` improved to 35.08% of RocksDB JNI, `readrandom_sameblock` reached 58.57%, `readrandom_burst` reached 62.48%, and `multiget_mixed` reached 99.34%.
+## 0.11.0-SNAPSHOT readrandom hit-path reverted experiments
+
+- Read performance reverted and archived three follow-up optimization attempts that did not protect the primary gate. Heavier hash/mix and 4-way set-associative point data-block caches reduced some open counters but regressed `readrandom_hit`; removing the defensive candidate comparison and reusing the Table array index for MultiGet also regressed 50k runs. The current path keeps the proven restart/sparse anchors, Table single-key array index, direct-mapped data-block cache, and `Block.seek` skip-value decoding.
+## 0.11.0-SNAPSHOT Block.readKey direct-copy
+
+- Read performance further reduces the Block seek hot path: shared-prefix key reconstruction no longer creates a temporary `SliceOutput`, instead directly copying the shared prefix and writing the non-shared suffix. The 50k `readrandom_hit` result reached 161,956 ops/s; the same-host RocksDB JNI comparison reached 441,936 ops/s, so the current ratio is 36.65% and the P0 50% target remains incomplete. `readrandom_sameblock`, `readrandom_burst`, and `multiget_mixed` reached 54.94%, 78.60%, and 87.45% of RocksDB JNI respectively.
+## 0.11.0-SNAPSHOT Block.seek scratch-key reuse reverted
+
+- Read performance reverted the single-call `Block.seek` scratch-key reuse experiment because it dropped 50k `readrandom_hit` from 161,956 ops/s in the direct-copy version to 153,643 ops/s. The current version keeps `Block.readKey` direct-copy but does not keep cross-entry key-buffer reuse.
+## 0.11.0-SNAPSHOT InternalUserComparator slice-level comparison
+
+- Read performance optimized `InternalUserComparator.compare(Slice, Slice)`: internal-key comparison no longer constructs `InternalKey` objects and instead compares user-key Slice portions directly while reading the trailing packed sequence/type word. The 50k `readrandom_hit` result reached 174,459 ops/s; the same-host RocksDB JNI comparison reached 396,410 ops/s, so the current ratio is 44.01%. `readrandom_sameblock`, `readrandom_burst`, and `multiget_mixed` reached 61.81%, 63.67%, and 136.68% of RocksDB JNI respectively.
+## 0.11.0-SNAPSHOT bytewise raw-array comparison reverted
+
+- Read performance reverted the default-`BytewiseComparator` raw-array user-key fast path inside `InternalUserComparator` because it dropped 50k `readrandom_hit` from 174,459 ops/s in the slice-level internal-key comparison version to 151,875 ops/s. The current version keeps only the proven optimization that avoids constructing `InternalKey` objects.
+## 0.11.0-SNAPSHOT InternalUserComparator length-guard removal reverted
+
+- Read performance reverted the experiment that removed the `checkArgument` length guards from `InternalUserComparator.compare(Slice, Slice)`: 50k `readrandom_hit` dropped from 174,459 ops/s in the slice-level internal-key comparison baseline to 132,221 ops/s. The current version restores the explicit length guards and keeps only the proven optimization that avoids constructing `InternalKey` objects.
+## 0.11.0-SNAPSHOT Slice range-comparison fast path reverted
+
+- Read performance reverted the `Slice.compareTo(offset,length,...)` plus default-bytewise `InternalUserComparator` range-comparison experiment. Although it avoided user-key `slice(...)` wrappers, 50k `readrandom_hit` dropped to 141,790 ops/s, below the validated 174,459 ops/s baseline. The current version keeps the proven slice-level internal-key comparison path instead.
+## 0.11.0-SNAPSHOT sequence-unpack inlining reverted
+
+- Read performance reverted the manual `SequenceNumber.unpackSequenceNumber(...)` to `packed >>> 8` inlining experiment inside `InternalUserComparator`: 50k `readrandom_hit` dropped to 164,108 ops/s, below the 171,696 ops/s restored-guard run and the 174,459 ops/s historical baseline. The current version keeps `SequenceNumber.unpackSequenceNumber` and does not retain this micro-optimization.
+## 0.11.0-SNAPSHOT Block sparse-anchor interval=2 reverted
+
+- Read performance reverted the Block open-time sparse seek-anchor interval=2 experiment. The approach was still not a full-entry index, but 50k `readrandom_hit` dropped to 146,226 ops/s, below the 171,696/174,459 ops/s baselines, with sameblock, burst, and multiget_mixed also weakening. The current version restores one anchor per 4 entries.
+## 0.11.0-SNAPSHOT Block sparse-anchor interval=8 reverted
+
+- Read performance reverted the Block open-time sparse seek-anchor interval=8 experiment. The first 50k run reached 177,100 ops/s for `readrandom_hit`, but sameblock, burst, multiget_mixed, and scan were all below the restored baseline; the same-parameter rerun dropped `readrandom_hit` to 157,745 ops/s. The current version keeps the stable one-anchor-per-4-entries compromise.
+## 0.11.0-SNAPSHOT exact-hit return from Block sparse anchors reverted
+
+- Read performance reverted the experiment that returned values directly from exact-matching sparse anchors. The approach only added value offset/length to sparse anchors and was not a full-entry index, but 50k `readrandom_hit` dropped to 143,404 ops/s, with `multiget_mixed` and `scan` also weakening. The current version keeps anchors responsible only for narrowing scans, not returning candidate entries directly.
+## 0.11.0-SNAPSHOT blockSeekIndex stats semantics clarified
+
+- Read performance clarified that `blockSeekIndexHits` means the Block open-time seek index was used, not that the business key matched. An experiment that split hit/miss by whether `Block.seek` returned a candidate entry dropped 50k `readrandom_hit` to 130,404 ops/s and was reverted. Business misses remain represented by `candidateEntryMisses`, `filterSkips`, and `bloomFalsePositives`; `blockSeekIndexFallbacks` means no seek index was available.
+## 0.11.0-SNAPSHOT Block.readKey null-guard experiment reverted
+
+- Read performance reverted the experiment that replaced Guava `checkState` with a handwritten null branch in the `Block.readKey` shared-key path: 50k `readrandom_hit` dropped to 128,680 ops/s, with sameblock and scan also below the restored baseline. The current version restores `checkState` and keeps the validated direct-copy key reconstruction path.
+## 0.11.0-SNAPSHOT exact restart-key start experiment reverted
+
+- Read performance reverted the experiment that changed `Block.restartIndexBefore` from `restartKey < target` to `restartKey <= target`: 50k `readrandom_hit` reached 164,277 ops/s, below the restored baseline and the 174,459 ops/s historical baseline, while sameblock, burst, and multiget_mixed did not win overall. The current version restores the original restart binary-search strategy.

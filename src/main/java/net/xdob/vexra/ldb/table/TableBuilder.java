@@ -48,6 +48,12 @@ public class TableBuilder {
   private long dataBlockCount;
   private long blockLocalIndexBytes;
   private long blockLocalIndexCoveredBlocks;
+  private long entryAnchorIndexBytes;
+  private long entryAnchorIndexCoveredBlocks;
+  private long entryAnchorIndexAnchorCount;
+  private long inlineBlockSeekIndexBytes;
+  private long inlineBlockSeekIndexCoveredBlocks;
+  private long inlineBlockSeekIndexAnchorCount;
   private long filterBlockBytes;
 
   // Either Finish() or Abandon() has been called.
@@ -72,6 +78,7 @@ public class TableBuilder {
   private final List<Slice> filterKeys = new ArrayList<>();
   private final Set<CompressionType> dataCompressionTypes = new LinkedHashSet<>();
   private final List<BlockLocalIndexDirectoryEntry> blockLocalIndexDirectoryEntries = new ArrayList<>();
+  private final List<EntryAnchorIndexDirectoryEntry> entryAnchorIndexDirectoryEntries = new ArrayList<>();
 
   public TableBuilder(Options options, FileChannel fileChannel, UserComparator userComparator) {
     requireNonNull(options, "options is null");
@@ -90,7 +97,13 @@ public class TableBuilder {
     blockSize = options.blockSize();
     compressionType = options.compressionType();
     filterPolicy = options.filterPolicy();
-    dataBlockBuilder = new BlockBuilder((int) Math.min(blockSize * 1.1, TARGET_FILE_SIZE), blockRestartInterval, userComparator);
+    dataBlockBuilder = new BlockBuilder(
+        (int) Math.min(blockSize * 1.1, TARGET_FILE_SIZE),
+        blockRestartInterval,
+        userComparator,
+        options.writeInlineBlockSeekIndex(),
+        options.inlineBlockSeekIndexInterval(),
+        options.inlineBlockSeekIndexAdmissionMinAnchors());
 
     // with expected 50% compression
     int expectedNumberOfBlocks = 1024;
@@ -164,10 +177,18 @@ public class TableBuilder {
     checkState(!pendingIndexEntry, "Internal error: Table already has a pending index entry to flush");
 
     Slice raw = dataBlockBuilder.finish();
+    if (dataBlockBuilder.getLastInlineSeekIndexAnchorCount() > 0) {
+      inlineBlockSeekIndexBytes += dataBlockBuilder.getLastInlineSeekIndexBytes();
+      inlineBlockSeekIndexCoveredBlocks++;
+      inlineBlockSeekIndexAnchorCount += dataBlockBuilder.getLastInlineSeekIndexAnchorCount();
+    }
     pendingHandle = writeBlockContents(raw);
     CompressionType dataBlockCompressionType = lastWrittenCompressionType;
     if (options.writeBlockLocalIndex()) {
       writeBlockLocalIndexBlock(pendingHandle, raw);
+    }
+    if (options.writeEntryAnchorIndex()) {
+      writeEntryAnchorIndexBlock(pendingHandle, raw);
     }
     dataBlockBuilder.reset();
     dataBlockCount++;
@@ -258,7 +279,12 @@ public class TableBuilder {
     if (options.writeBlockLocalIndex() && options.tableFormatVersion() < 3) {
       throw new IllegalArgumentException("writeBlockLocalIndex requires tableFormatVersion >= 3");
     }
-
+    if (options.writeEntryAnchorIndex() && options.tableFormatVersion() < 4) {
+      throw new IllegalArgumentException("writeEntryAnchorIndex requires tableFormatVersion >= 4");
+    }
+    if (options.writeInlineBlockSeekIndex() && options.tableFormatVersion() < 4) {
+      throw new IllegalArgumentException("writeInlineBlockSeekIndex requires tableFormatVersion >= 4");
+    }
     // flush current data block
     flush();
 
@@ -268,6 +294,7 @@ public class TableBuilder {
     // 先写 filter block（如果启用）
     BlockHandle filterBlockHandle = writeFilterBlockIfNeeded();
     BlockHandle blockLocalIndexDirectoryHandle = writeBlockLocalIndexDirectoryIfNeeded();
+    BlockHandle entryAnchorIndexDirectoryHandle = writeEntryAnchorIndexDirectoryIfNeeded();
 
     // 写 properties block（如果显式启用 table format v2）
     BlockHandle propertiesBlockHandle = writePropertiesBlockIfNeeded(filterBlockHandle);
@@ -279,6 +306,10 @@ public class TableBuilder {
     if (blockLocalIndexDirectoryHandle != null) {
       Slice handleEncoding = BlockHandle.writeBlockHandle(blockLocalIndexDirectoryHandle);
       metaIndexBlockBuilder.add(Slices.utf8Slice(TableProperties.BLOCK_LOCAL_INDEX_META_INDEX_KEY), handleEncoding);
+    }
+    if (entryAnchorIndexDirectoryHandle != null) {
+      Slice handleEncoding = BlockHandle.writeBlockHandle(entryAnchorIndexDirectoryHandle);
+      metaIndexBlockBuilder.add(Slices.utf8Slice(TableProperties.ENTRY_ANCHOR_INDEX_META_INDEX_KEY), handleEncoding);
     }
     if (filterBlockHandle != null) {
       String key = "filter." + filterPolicy.name();
@@ -335,12 +366,14 @@ public class TableBuilder {
       return null;
     }
     boolean hasBlockLocalIndex = hasBlockLocalIndex();
+    boolean hasEntryAnchorIndex = hasEntryAnchorIndex();
+    boolean hasInlineBlockSeekIndex = hasInlineBlockSeekIndex();
     BlockBuilder propertiesBlockBuilder =
         new BlockBuilder(512, 1, new BytewiseComparator());
     addProperty(propertiesBlockBuilder, TableProperties.COMPATIBLE_FEATURES_KEY, compatibleFeatures(filterBlockHandle));
     addProperty(propertiesBlockBuilder, "ldb.format.created_by", "vexra-ldb/0.10.0-SNAPSHOT");
     addProperty(propertiesBlockBuilder, TableProperties.INCOMPATIBLE_FEATURES_KEY,
-        hasBlockLocalIndex ? TableProperties.BLOCK_LOCAL_INDEX_FEATURE : "");
+        incompatibleFeatures(hasBlockLocalIndex, hasEntryAnchorIndex, hasInlineBlockSeekIndex));
     addProperty(propertiesBlockBuilder, TableProperties.FORMAT_VERSION_KEY, Integer.toString(options.tableFormatVersion()));
     if (options.tableFormatVersion() >= 3) {
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_KEY,
@@ -359,6 +392,22 @@ public class TableBuilder {
     addProperty(propertiesBlockBuilder, "ldb.table.checksum", "crc32c-block-trailer");
     addProperty(propertiesBlockBuilder, "ldb.table.compression", compressionTypes());
     addProperty(propertiesBlockBuilder, "ldb.table.data_block_count", Long.toString(dataBlockCount));
+    if (options.tableFormatVersion() >= 4) {
+      addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_KEY,
+          Boolean.toString(hasEntryAnchorIndex));
+      addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_ANCHOR_COUNT_KEY,
+          Long.toString(entryAnchorIndexAnchorCount));
+      addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_BYTES_KEY,
+          Long.toString(entryAnchorIndexBytes));
+      addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_COVERED_BLOCKS_KEY,
+          Long.toString(entryAnchorIndexCoveredBlocks));
+      addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_INTERVAL_KEY,
+          Integer.toString(options.entryAnchorIndexInterval()));
+      addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_POLICY_KEY,
+          hasEntryAnchorIndex ? "sparse-entry-anchor" : "disabled");
+      addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_VERSION_KEY,
+          hasEntryAnchorIndex ? "1" : "");
+    }
     addProperty(propertiesBlockBuilder, "ldb.table.entry_count", Long.toString(entryCount));
     addProperty(propertiesBlockBuilder, TableProperties.FILTER_BITS_PER_KEY_KEY, filterBitsPerKey());
     addProperty(propertiesBlockBuilder, TableProperties.FILTER_BLOCK_BYTES_KEY,
@@ -368,6 +417,22 @@ public class TableBuilder {
     addProperty(propertiesBlockBuilder, TableProperties.FILTER_POLICY_KEY, filterPolicy == null ? "" : filterPolicy.name());
     addProperty(propertiesBlockBuilder, TableProperties.FILTER_SCOPE_KEY, filterBlockHandle == null ? "" : "full-key");
     addProperty(propertiesBlockBuilder, "ldb.table.index_type", "single-level");
+    if (options.tableFormatVersion() >= 4) {
+      addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_KEY,
+          Boolean.toString(hasInlineBlockSeekIndex));
+      addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_ANCHOR_COUNT_KEY,
+          Long.toString(inlineBlockSeekIndexAnchorCount));
+      addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_BYTES_KEY,
+          Long.toString(inlineBlockSeekIndexBytes));
+      addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_COVERED_BLOCKS_KEY,
+          Long.toString(inlineBlockSeekIndexCoveredBlocks));
+      addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_INTERVAL_KEY,
+          Integer.toString(options.inlineBlockSeekIndexInterval()));
+      addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_POLICY_KEY,
+          hasInlineBlockSeekIndex ? "inline-sparse-anchor" : "disabled");
+      addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_VERSION_KEY,
+          hasInlineBlockSeekIndex ? "1" : "");
+    }
     addProperty(propertiesBlockBuilder, "ldb.table.largest_key", lastKey == null ? "" : java.util.Base64.getEncoder().encodeToString(lastKey.getBytes()));
     addProperty(propertiesBlockBuilder, "ldb.table.smallest_key", firstKey == null ? "" : java.util.Base64.getEncoder().encodeToString(firstKey.getBytes()));
     return writeBlock(propertiesBlockBuilder);
@@ -375,6 +440,14 @@ public class TableBuilder {
 
   private boolean hasBlockLocalIndex() {
     return options.writeBlockLocalIndex() && blockLocalIndexCoveredBlocks > 0;
+  }
+
+  private boolean hasEntryAnchorIndex() {
+    return options.writeEntryAnchorIndex() && entryAnchorIndexCoveredBlocks > 0;
+  }
+
+  private boolean hasInlineBlockSeekIndex() {
+    return options.writeInlineBlockSeekIndex() && inlineBlockSeekIndexCoveredBlocks > 0;
   }
 
   private void addProperty(BlockBuilder propertiesBlockBuilder, String key, String value) {
@@ -391,6 +464,20 @@ public class TableBuilder {
       directoryBlockBuilder.add(
           Slices.utf8Slice(blockHandleDirectoryKey(entry.dataBlockHandle)),
           BlockHandle.writeBlockHandle(entry.localIndexBlockHandle));
+    }
+    return writeBlock(directoryBlockBuilder);
+  }
+
+  private BlockHandle writeEntryAnchorIndexDirectoryIfNeeded() throws IOException {
+    if (!options.writeEntryAnchorIndex() || entryAnchorIndexDirectoryEntries.isEmpty()) {
+      return null;
+    }
+    BlockBuilder directoryBlockBuilder =
+        new BlockBuilder(256, 1, new BytewiseComparator());
+    for (EntryAnchorIndexDirectoryEntry entry : entryAnchorIndexDirectoryEntries) {
+      directoryBlockBuilder.add(
+          Slices.utf8Slice(blockHandleDirectoryKey(entry.dataBlockHandle)),
+          BlockHandle.writeBlockHandle(entry.entryAnchorIndexBlockHandle));
     }
     return writeBlock(directoryBlockBuilder);
   }
@@ -423,6 +510,43 @@ public class TableBuilder {
     blockLocalIndexCoveredBlocks++;
   }
 
+  private void writeEntryAnchorIndexBlock(BlockHandle dataBlockHandle, Slice rawDataBlock) throws IOException {
+    Block dataBlock = new Block(rawDataBlock, userComparator);
+    List<Block.EntryAnchor> anchors = dataBlock.entryAnchors(options.entryAnchorIndexInterval());
+    if (anchors.size() < options.entryAnchorIndexAdmissionMinAnchors()) {
+      return;
+    }
+
+    BlockBuilder entryAnchorIndexBlockBuilder =
+        new BlockBuilder(Math.max(64, anchors.size() * 48), 1, userComparator);
+    for (Block.EntryAnchor anchor : anchors) {
+      entryAnchorIndexBlockBuilder.add(anchor.getKey(), encodeEntryAnchor(anchor));
+    }
+
+    BlockHandle entryAnchorIndexBlockHandle = writeBlock(entryAnchorIndexBlockBuilder);
+    entryAnchorIndexDirectoryEntries.add(
+        new EntryAnchorIndexDirectoryEntry(dataBlockHandle, entryAnchorIndexBlockHandle));
+    entryAnchorIndexBytes += entryAnchorIndexBlockHandle.getFullBlockSize();
+    entryAnchorIndexCoveredBlocks++;
+    entryAnchorIndexAnchorCount += anchors.size();
+  }
+
+  private Slice encodeEntryAnchor(Block.EntryAnchor anchor) {
+    StringBuilder builder = new StringBuilder();
+    builder.append(anchor.getOffset());
+    builder.append(':');
+    Slice previousKey = anchor.getPreviousKey();
+    if (previousKey == null || previousKey.length() == 0) {
+      builder.append("NONE:");
+    } else {
+      builder.append("FULL:");
+      builder.append(java.util.Base64.getEncoder().encodeToString(previousKey.getBytes()));
+    }
+    builder.append(':');
+    builder.append(anchor.getRestartIndex());
+    return Slices.utf8Slice(builder.toString());
+  }
+
   static String blockHandleDirectoryKey(BlockHandle blockHandle) {
     return String.format(java.util.Locale.US, "%020d:%010d",
         blockHandle.getOffset(),
@@ -439,6 +563,23 @@ public class TableBuilder {
     }
     if (dataCompressionTypes.contains(CompressionType.LZ4)) {
       features.add("compression.lz4-block");
+    }
+    return join(features);
+  }
+
+  private String incompatibleFeatures(
+      boolean hasBlockLocalIndex,
+      boolean hasEntryAnchorIndex,
+      boolean hasInlineBlockSeekIndex) {
+    List<String> features = new ArrayList<String>();
+    if (hasBlockLocalIndex) {
+      features.add(TableProperties.BLOCK_LOCAL_INDEX_FEATURE);
+    }
+    if (hasEntryAnchorIndex) {
+      features.add(TableProperties.ENTRY_ANCHOR_INDEX_FEATURE);
+    }
+    if (hasInlineBlockSeekIndex) {
+      features.add(TableProperties.INLINE_BLOCK_SEEK_INDEX_FEATURE);
     }
     return join(features);
   }
@@ -479,6 +620,16 @@ public class TableBuilder {
     private BlockLocalIndexDirectoryEntry(BlockHandle dataBlockHandle, BlockHandle localIndexBlockHandle) {
       this.dataBlockHandle = dataBlockHandle;
       this.localIndexBlockHandle = localIndexBlockHandle;
+    }
+  }
+
+  private static final class EntryAnchorIndexDirectoryEntry {
+    private final BlockHandle dataBlockHandle;
+    private final BlockHandle entryAnchorIndexBlockHandle;
+
+    private EntryAnchorIndexDirectoryEntry(BlockHandle dataBlockHandle, BlockHandle entryAnchorIndexBlockHandle) {
+      this.dataBlockHandle = dataBlockHandle;
+      this.entryAnchorIndexBlockHandle = entryAnchorIndexBlockHandle;
     }
   }
 

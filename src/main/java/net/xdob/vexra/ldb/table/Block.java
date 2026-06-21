@@ -3,7 +3,6 @@ package net.xdob.vexra.ldb.table;
 import net.xdob.vexra.ldb.impl.SeekingIterable;
 import net.xdob.vexra.ldb.util.Slice;
 import net.xdob.vexra.ldb.util.SliceInput;
-import net.xdob.vexra.ldb.util.SliceOutput;
 import net.xdob.vexra.ldb.util.Slices;
 import net.xdob.vexra.ldb.util.VariableLengthQuantity;
 
@@ -55,12 +54,16 @@ import static net.xdob.vexra.ldb.util.SizeOf.SIZE_OF_INT;
  */
 public class Block
     implements SeekingIterable<Slice, Slice> {
+  private static final int SEEK_ANCHOR_INTERVAL = 4;
+  static final int INLINE_SEEK_INDEX_BLOCK_MAGIC = 0x4C424958; // LBIX
+
   private final Slice block;
   private final Comparator<Slice> comparator;
 
   private final Slice data;
   private final Slice restartPositions;
   private final Slice[] restartKeys;
+  private final SeekAnchor[][] seekAnchors;
 
   public Block(Slice block, Comparator<Slice> comparator) {
     requireNonNull(block, "block is null");
@@ -76,21 +79,34 @@ public class Block
     // entire file sequentially.
 
     // key restart count is the last int of the block
-    int restartCount = block.getInt(block.length() - SIZE_OF_INT);
+    boolean hasInlineSeekIndex = block.getInt(block.length() - SIZE_OF_INT) == INLINE_SEEK_INDEX_BLOCK_MAGIC;
+    int restartCountOffset = hasInlineSeekIndex
+        ? block.length() - (3 * SIZE_OF_INT)
+        : block.length() - SIZE_OF_INT;
+    int restartCount = block.getInt(restartCountOffset);
 
     if (restartCount > 0) {
       // restarts are written at the end of the block
-      int restartOffset = block.length() - (1 + restartCount) * SIZE_OF_INT;
-      checkArgument(restartOffset < block.length() - SIZE_OF_INT, "Block is corrupt: restart offset count is greater than block size");
+      int restartTrailerSize = hasInlineSeekIndex ? 3 * SIZE_OF_INT : SIZE_OF_INT;
+      int restartOffset = block.length() - restartTrailerSize - restartCount * SIZE_OF_INT;
+      int dataLimit = hasInlineSeekIndex ? block.getInt(block.length() - (2 * SIZE_OF_INT)) : restartOffset;
+      checkArgument(restartOffset < restartCountOffset, "Block is corrupt: restart offset count is greater than block size");
+      checkArgument(dataLimit >= 0 && dataLimit <= restartOffset, "Block is corrupt: inline seek index offset is invalid");
       restartPositions = block.slice(restartOffset, restartCount * SIZE_OF_INT);
 
       // data starts at 0 and extends to the restart index
-      data = block.slice(0, restartOffset);
+      data = block.slice(0, dataLimit);
       restartKeys = readRestartKeys(data, restartPositions, restartCount);
+      if (hasInlineSeekIndex && dataLimit < restartOffset) {
+        seekAnchors = readInlineSeekAnchors(block.slice(dataLimit, restartOffset - dataLimit), restartCount);
+      } else {
+        seekAnchors = readSeekAnchors(data, restartPositions, restartCount);
+      }
     } else {
       data = Slices.EMPTY_SLICE;
       restartPositions = Slices.EMPTY_SLICE;
       restartKeys = new Slice[0];
+      seekAnchors = new SeekAnchor[0][];
     }
   }
 
@@ -117,40 +133,63 @@ public class Block
    * @return 第一个大于等于目标 key 的 entry；block 为空或没有候选 entry 时返回 null
    */
   public Entry<Slice, Slice> seek(Slice targetKey) {
+    return seekInternal(targetKey).getEntry();
+  }
+
+  SeekResult seekWithIndex(Slice targetKey) {
+    if (!hasSeekIndex()) {
+      return SeekResult.fallback(null);
+    }
+    return seekInternal(targetKey);
+  }
+
+  boolean hasSeekIndex() {
+    int restartCount = restartPositions.length() / SIZE_OF_INT;
+    return restartCount > 0;
+  }
+
+  private SeekResult seekInternal(Slice targetKey) {
     int restartCount = restartPositions.length() / SIZE_OF_INT;
     if (restartCount == 0) {
-      return null;
+      return SeekResult.miss(null);
     }
-
-    SliceInput input = data.input();
     int restartPosition = restartIndexBefore(targetKey, restartCount);
-    input.setPosition(restartOffset(restartPosition, restartCount));
-
-    BlockEntry previousEntry = null;
-    while (input.isReadable()) {
-      BlockEntry entry = readEntry(input, previousEntry);
-      if (comparator.compare(entry.getKey(), targetKey) >= 0) {
-        return entry;
-      }
-      previousEntry = entry;
+    SeekAnchor anchor = seekAnchorBefore(restartPosition, targetKey);
+    Slice previousKey = null;
+    int restartLimit = restartPosition + 1 < restartCount
+        ? restartOffset(restartPosition + 1, restartCount)
+        : data.length();
+    SliceInput input = data.input();
+    if (anchor == null) {
+      input.setPosition(restartOffset(restartPosition, restartCount));
+    } else {
+      input.setPosition(anchor.offset);
+      previousKey = anchor.previousKey;
     }
-    return null;
+    SeekResult result = seekWithValueOnMatch(input, previousKey, targetKey, restartLimit);
+    if (restartPosition + 1 >= restartCount) {
+      return result;
+    }
+    if (result.getEntry() != null) {
+      return result;
+    }
+
+    // 如果当前 restart 区间没有候选，按照 restart 二分语义，候选最多是下一个 restart 的首条 entry。
+    // 继续扫描后续 restart 区间只会增加纯随机点查的线性解码成本。
+    input.setPosition(restartLimit);
+    return readCandidate(input, null, targetKey);
   }
 
   Entry<Slice, Slice> seekFromOffset(Slice targetKey, int offset) {
+    return seekFromOffset(targetKey, offset, null);
+  }
+
+  Entry<Slice, Slice> seekFromOffset(Slice targetKey, int offset, Slice previousKey) {
     checkPositionIndex(offset, data.length(), "offset");
     SliceInput input = data.input();
     input.setPosition(offset);
 
-    BlockEntry previousEntry = null;
-    while (input.isReadable()) {
-      BlockEntry entry = readEntry(input, previousEntry);
-      if (comparator.compare(entry.getKey(), targetKey) >= 0) {
-        return entry;
-      }
-      previousEntry = entry;
-    }
-    return null;
+    return seekWithValueOnMatch(input, previousKey, targetKey).getEntry();
   }
 
   Entry<Slice, Slice> floor(Slice targetKey) {
@@ -251,6 +290,59 @@ public class Block
     return restartOffset(restartPosition, restartCount());
   }
 
+  List<EntryAnchor> entryAnchors(int interval) {
+    checkArgument(interval > 0, "interval must be > 0");
+    int restartCount = restartCount();
+    if (restartCount == 0) {
+      return Collections.emptyList();
+    }
+    List<EntryAnchor> anchors = new ArrayList<EntryAnchor>();
+    SliceInput input = data.input();
+    for (int restartIndex = 0; restartIndex < restartCount; restartIndex++) {
+      int restartOffset = restartPositions.getInt(restartIndex * SIZE_OF_INT);
+      int limit = restartIndex + 1 < restartCount
+          ? restartPositions.getInt((restartIndex + 1) * SIZE_OF_INT)
+          : data.length();
+      input.setPosition(restartOffset);
+      Slice previousKey = null;
+      int entryIndex = 0;
+      while (input.position() < limit) {
+        int entryOffset = input.position();
+        int sharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+        int nonSharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+        int valueLength = VariableLengthQuantity.readVariableLengthInt(input);
+        Slice key = readKey(input, previousKey, sharedKeyLength, nonSharedKeyLength);
+        if (entryIndex > 0 && entryIndex % interval == 0) {
+          anchors.add(new EntryAnchor(key, entryOffset, previousKey, restartIndex));
+        }
+        input.skipBytes(valueLength);
+        previousKey = key;
+        entryIndex++;
+      }
+    }
+    return Collections.unmodifiableList(anchors);
+  }
+
+  private SeekAnchor seekAnchorBefore(int restartPosition, Slice targetKey) {
+    SeekAnchor[] anchors = seekAnchors[restartPosition];
+    if (anchors.length == 0) {
+      return null;
+    }
+    int left = 0;
+    int right = anchors.length - 1;
+    SeekAnchor result = null;
+    while (left <= right) {
+      int mid = (left + right) >>> 1;
+      if (comparator.compare(anchors[mid].key, targetKey) <= 0) {
+        result = anchors[mid];
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+    return result;
+  }
+
   private static Slice[] readRestartKeys(Slice data, Slice restartPositions, int restartCount) {
     Slice[] keys = new Slice[restartCount];
     SliceInput input = data.input();
@@ -261,6 +353,61 @@ public class Block
     return keys;
   }
 
+  private static SeekAnchor[][] readSeekAnchors(Slice data, Slice restartPositions, int restartCount) {
+    SeekAnchor[][] anchors = new SeekAnchor[restartCount][];
+    SliceInput input = data.input();
+    for (int restartIndex = 0; restartIndex < restartCount; restartIndex++) {
+      int restartOffset = restartPositions.getInt(restartIndex * SIZE_OF_INT);
+      int limit = restartIndex + 1 < restartCount
+          ? restartPositions.getInt((restartIndex + 1) * SIZE_OF_INT)
+          : data.length();
+      input.setPosition(restartOffset);
+      List<SeekAnchor> restartAnchors = new ArrayList<SeekAnchor>();
+      Slice previousKey = null;
+      int entryIndex = 0;
+      while (input.position() < limit) {
+        int entryOffset = input.position();
+        int sharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+        int nonSharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+        int valueLength = VariableLengthQuantity.readVariableLengthInt(input);
+        Slice key = readKey(input, previousKey, sharedKeyLength, nonSharedKeyLength);
+        if (entryIndex > 0 && entryIndex % SEEK_ANCHOR_INTERVAL == 0) {
+          restartAnchors.add(new SeekAnchor(key, entryOffset, previousKey));
+        }
+        input.skipBytes(valueLength);
+        previousKey = key;
+        entryIndex++;
+      }
+      anchors[restartIndex] = restartAnchors.toArray(new SeekAnchor[restartAnchors.size()]);
+    }
+    return anchors;
+  }
+
+  private static SeekAnchor[][] readInlineSeekAnchors(Slice inlineIndex, int restartCount) {
+    List<List<SeekAnchor>> grouped = new ArrayList<List<SeekAnchor>>(restartCount);
+    for (int i = 0; i < restartCount; i++) {
+      grouped.add(new ArrayList<SeekAnchor>());
+    }
+    SliceInput input = inlineIndex.input();
+    int anchorCount = VariableLengthQuantity.readVariableLengthInt(input);
+    for (int i = 0; i < anchorCount; i++) {
+      int restartIndex = VariableLengthQuantity.readVariableLengthInt(input);
+      int offset = VariableLengthQuantity.readVariableLengthInt(input);
+      int keyLength = VariableLengthQuantity.readVariableLengthInt(input);
+      Slice key = input.readSlice(keyLength);
+      int previousKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+      Slice previousKey = input.readSlice(previousKeyLength);
+      checkPositionIndex(restartIndex, restartCount, "restartIndex");
+      grouped.get(restartIndex).add(new SeekAnchor(key, offset, previousKey));
+    }
+    SeekAnchor[][] anchors = new SeekAnchor[restartCount][];
+    for (int i = 0; i < restartCount; i++) {
+      List<SeekAnchor> restartAnchors = grouped.get(i);
+      anchors[i] = restartAnchors.toArray(new SeekAnchor[restartAnchors.size()]);
+    }
+    return anchors;
+  }
+
   private static BlockEntry readEntry(SliceInput input, BlockEntry previousEntry) {
     requireNonNull(input, "input is null");
 
@@ -268,18 +415,141 @@ public class Block
     int nonSharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
     int valueLength = VariableLengthQuantity.readVariableLengthInt(input);
 
-    final Slice key;
-    if (sharedKeyLength > 0) {
-      key = Slices.allocate(sharedKeyLength + nonSharedKeyLength);
-      SliceOutput sliceOutput = key.output();
-      checkState(previousEntry != null, "Entry has a shared key but no previous entry was provided");
-      sliceOutput.writeBytes(previousEntry.getKey(), 0, sharedKeyLength);
-      sliceOutput.writeBytes(input, nonSharedKeyLength);
-    } else {
-      key = input.readSlice(nonSharedKeyLength);
-    }
+    Slice previousKey = previousEntry == null ? null : previousEntry.getKey();
+    Slice key = readKey(input, previousKey, sharedKeyLength, nonSharedKeyLength);
 
     Slice value = input.readSlice(valueLength);
     return new BlockEntry(key, value);
+  }
+
+  private SeekResult seekWithValueOnMatch(SliceInput input, Slice previousKey, Slice targetKey) {
+    return seekWithValueOnMatch(input, previousKey, targetKey, data.length());
+  }
+
+  private SeekResult seekWithValueOnMatch(SliceInput input, Slice previousKey, Slice targetKey, int limit) {
+    while (input.position() < limit) {
+      int sharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+      int nonSharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+      int valueLength = VariableLengthQuantity.readVariableLengthInt(input);
+      Slice key = readKey(input, previousKey, sharedKeyLength, nonSharedKeyLength);
+      if (comparator.compare(key, targetKey) >= 0) {
+        return SeekResult.hit(new BlockEntry(key, input.readSlice(valueLength)));
+      }
+      input.skipBytes(valueLength);
+      previousKey = key;
+    }
+    return SeekResult.miss(null);
+  }
+
+  private SeekResult readCandidate(SliceInput input, Slice previousKey, Slice targetKey) {
+    if (!input.isReadable()) {
+      return SeekResult.miss(null);
+    }
+    int sharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+    int nonSharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
+    int valueLength = VariableLengthQuantity.readVariableLengthInt(input);
+    Slice key = readKey(input, previousKey, sharedKeyLength, nonSharedKeyLength);
+    if (comparator.compare(key, targetKey) >= 0) {
+      return SeekResult.hit(new BlockEntry(key, input.readSlice(valueLength)));
+    }
+    input.skipBytes(valueLength);
+    return SeekResult.miss(null);
+  }
+
+  private static Slice readKey(SliceInput input, Slice previousKey, int sharedKeyLength, int nonSharedKeyLength) {
+    if (sharedKeyLength > 0) {
+      Slice key = Slices.allocate(sharedKeyLength + nonSharedKeyLength);
+      checkState(previousKey != null, "Entry has a shared key but no previous key was provided");
+      key.setBytes(0, previousKey, 0, sharedKeyLength);
+      input.readBytes(key, sharedKeyLength, nonSharedKeyLength);
+      return key;
+    }
+    return input.readSlice(nonSharedKeyLength);
+  }
+
+  private static final class SeekAnchor {
+    private final Slice key;
+    private final int offset;
+    private final Slice previousKey;
+
+    private SeekAnchor(Slice key, int offset, Slice previousKey) {
+      this.key = key;
+      this.offset = offset;
+      this.previousKey = previousKey;
+    }
+  }
+
+  static final class EntryAnchor {
+    private final Slice key;
+    private final int offset;
+    private final Slice previousKey;
+    private final int restartIndex;
+
+    private EntryAnchor(Slice key, int offset, Slice previousKey, int restartIndex) {
+      this.key = key;
+      this.offset = offset;
+      this.previousKey = previousKey;
+      this.restartIndex = restartIndex;
+    }
+
+    Slice getKey() {
+      return key;
+    }
+
+    int getOffset() {
+      return offset;
+    }
+
+    Slice getPreviousKey() {
+      return previousKey;
+    }
+
+    int getRestartIndex() {
+      return restartIndex;
+    }
+  }
+
+  static final class SeekResult {
+    private enum Status {
+      HIT,
+      MISS,
+      FALLBACK
+    }
+
+    private final Entry<Slice, Slice> entry;
+    private final Status status;
+
+    private SeekResult(Entry<Slice, Slice> entry, Status status) {
+      this.entry = entry;
+      this.status = status;
+    }
+
+    private static SeekResult fallback(Entry<Slice, Slice> entry) {
+      return new SeekResult(entry, Status.FALLBACK);
+    }
+
+    private static SeekResult hit(Entry<Slice, Slice> entry) {
+      return new SeekResult(entry, Status.HIT);
+    }
+
+    private static SeekResult miss(Entry<Slice, Slice> entry) {
+      return new SeekResult(entry, Status.MISS);
+    }
+
+    Entry<Slice, Slice> getEntry() {
+      return entry;
+    }
+
+    boolean isHit() {
+      return status == Status.HIT;
+    }
+
+    boolean isMiss() {
+      return status == Status.MISS;
+    }
+
+    boolean isFallback() {
+      return status == Status.FALLBACK;
+    }
   }
 }

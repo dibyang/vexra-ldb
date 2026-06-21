@@ -3,8 +3,10 @@ package net.xdob.vexra.ldb.impl;
 import net.xdob.vexra.ldb.table.UserComparator;
 import net.xdob.vexra.ldb.util.Slice;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static net.xdob.vexra.ldb.impl.SequenceNumber.MAX_SEQUENCE_NUMBER;
+import static net.xdob.vexra.ldb.util.SizeOf.SIZE_OF_LONG;
 
 public class InternalUserComparator
     implements UserComparator {
@@ -16,7 +18,19 @@ public class InternalUserComparator
 
   @Override
   public int compare(Slice left, Slice right) {
-    return internalKeyComparator.compare(new InternalKey(left), new InternalKey(right));
+    checkArgument(left.length() >= SIZE_OF_LONG, "left must be at least %s bytes", SIZE_OF_LONG);
+    checkArgument(right.length() >= SIZE_OF_LONG, "right must be at least %s bytes", SIZE_OF_LONG);
+
+    int userKeyCompare = internalKeyComparator.getUserComparator().compare(
+        left.slice(0, left.length() - SIZE_OF_LONG),
+        right.slice(0, right.length() - SIZE_OF_LONG));
+    if (userKeyCompare != 0) {
+      return userKeyCompare;
+    }
+
+    long leftSequence = SequenceNumber.unpackSequenceNumber(left.getLong(left.length() - SIZE_OF_LONG));
+    long rightSequence = SequenceNumber.unpackSequenceNumber(right.getLong(right.length() - SIZE_OF_LONG));
+    return Long.compare(rightSequence, leftSequence);
   }
 
   @Override

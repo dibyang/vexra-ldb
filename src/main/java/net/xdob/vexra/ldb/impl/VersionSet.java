@@ -45,6 +45,7 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
   private final File databaseDir;
   private final TableCache tableCache;
   private final InternalKeyComparator internalKeyComparator;
+  private final ThreadLocal<PointReadContext> pointReadContexts = new ThreadLocal<PointReadContext>();
 
   private LogWriter descriptorLog;
   private final Options options;
@@ -176,7 +177,13 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
   }
 
   public LookupResult get(int cfId, LookupKey key) {
-    return current.get(cfId, key);
+    PointReadContext readContext = pointReadContexts.get();
+    if (readContext == null) {
+      readContext = new PointReadContext(internalKeyComparator.getUserComparator());
+      pointReadContexts.set(readContext);
+    }
+    readContext.prepare(current, cfId);
+    return current.get(cfId, key, readContext);
   }
 
   public List<LookupResult> get(int cfId, List<LookupKey> keys) {

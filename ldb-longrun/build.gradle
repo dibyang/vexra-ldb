@@ -124,6 +124,12 @@ tasks.register('ldbDbBenchReport', JavaExec) {
   def writeTableProperties = providers.gradleProperty('ldb.dbBench.writeTableProperties').orElse('true')
   def writeBlockLocalIndex = providers.gradleProperty('ldb.dbBench.writeBlockLocalIndex').orElse('false')
   def blockLocalIndexInterval = providers.gradleProperty('ldb.dbBench.blockLocalIndexInterval').orElse('4')
+  def writeEntryAnchorIndex = providers.gradleProperty('ldb.dbBench.writeEntryAnchorIndex').orElse('false')
+  def entryAnchorIndexInterval = providers.gradleProperty('ldb.dbBench.entryAnchorIndexInterval').orElse('4')
+  def entryAnchorIndexAdmissionMinAnchors = providers.gradleProperty('ldb.dbBench.entryAnchorIndexAdmissionMinAnchors').orElse('2')
+  def writeInlineBlockSeekIndex = providers.gradleProperty('ldb.dbBench.writeInlineBlockSeekIndex').orElse('false')
+  def inlineBlockSeekIndexInterval = providers.gradleProperty('ldb.dbBench.inlineBlockSeekIndexInterval').orElse('4')
+  def inlineBlockSeekIndexAdmissionMinAnchors = providers.gradleProperty('ldb.dbBench.inlineBlockSeekIndexAdmissionMinAnchors').orElse('2')
   def verifyChecksums = providers.gradleProperty('ldb.dbBench.verifyChecksums').orElse('true')
   def batchSize = providers.gradleProperty('ldb.dbBench.batchSize').orElse('64')
   def seed = providers.gradleProperty('ldb.dbBench.seed').orElse('20260619')
@@ -138,6 +144,12 @@ tasks.register('ldbDbBenchReport', JavaExec) {
       '--write_table_properties', writeTableProperties.get(),
       '--write_block_local_index', writeBlockLocalIndex.get(),
       '--block_local_index_interval', blockLocalIndexInterval.get(),
+      '--write_entry_anchor_index', writeEntryAnchorIndex.get(),
+      '--entry_anchor_index_interval', entryAnchorIndexInterval.get(),
+      '--entry_anchor_index_admission_min_anchors', entryAnchorIndexAdmissionMinAnchors.get(),
+      '--write_inline_block_seek_index', writeInlineBlockSeekIndex.get(),
+      '--inline_block_seek_index_interval', inlineBlockSeekIndexInterval.get(),
+      '--inline_block_seek_index_admission_min_anchors', inlineBlockSeekIndexAdmissionMinAnchors.get(),
       '--verify_checksums', verifyChecksums.get(), '--batch_size', batchSize.get(),
       '--seed', seed.get()
 }

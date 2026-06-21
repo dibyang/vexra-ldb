@@ -6,6 +6,7 @@ import org.testng.annotations.Test;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map.Entry;
 
 import static java.util.Arrays.asList;
 import static org.testng.Assert.assertEquals;
@@ -121,6 +122,9 @@ public class BlockTest
 
             blockIterator.seek(BlockHelper.after(entry));
             BlockHelper.assertSequence(blockIterator, nextEntries.subList(1, nextEntries.size()));
+
+            Entry<Slice, Slice> directEntry = block.seek(entry.getKey());
+            assertEquals(directEntry, entry);
         }
 
         blockIterator.seek(Slices.wrappedBuffer(new byte[] {(byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF}));

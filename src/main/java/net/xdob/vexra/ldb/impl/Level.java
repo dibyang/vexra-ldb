@@ -56,12 +56,17 @@ public class Level
   }
 
   public LookupResult get(LookupKey key, ReadStats readStats) {
+    return get(key, readStats, null);
+  }
+
+  public LookupResult get(LookupKey key, ReadStats readStats, PointReadContext readContext) {
     readStats.clear();
     if (files.isEmpty()) {
       return null;
     }
 
     List<FileMetaData> fileMetaDataList = new ArrayList<>(files.size());
+    FileMetaData contextHitFile = null;
     if (levelNumber == 0) {
       for (FileMetaData fileMetaData : files) {
         if (internalKeyComparator.getUserComparator().compare(key.getUserKey(), fileMetaData.getSmallest().getUserKey()) >= 0 &&
@@ -71,6 +76,16 @@ public class Level
         }
       }
     } else {
+      FileMetaData cachedFile = readContext == null ? null : readContext.findCoveredFile(levelNumber, key);
+      if (cachedFile != null) {
+        fileMetaDataList.add(cachedFile);
+        contextHitFile = cachedFile;
+        readStats.recordCandidateFile();
+        readStats.recordPointReadContextFileHit();
+      } else {
+        if (readContext != null) {
+          readStats.recordPointReadContextFileMiss();
+        }
       // Binary search to find earliest index whose largest key >= ikey.
       int index = ceilingFileIndex(files, key.getInternalKey(), internalKeyComparator);
 
@@ -88,13 +103,17 @@ public class Level
       // search this file
       fileMetaDataList.add(fileMetaData);
       readStats.recordCandidateFile();
+        if (readContext != null) {
+          readContext.remember(levelNumber, fileMetaData);
+        }
+      }
     }
 
     FileMetaData lastFileRead = null;
     int lastFileReadLevel = -1;
     Slice userKey = key.getUserKey();
     for (FileMetaData fileMetaData : fileMetaDataList) {
-      if (!tableCache.mayContain(fileMetaData, userKey)) {
+      if (fileMetaData != contextHitFile && !tableCache.mayContain(fileMetaData, userKey)) {
         readStats.recordFilterSkip();
         continue; // 这个 table 一定没有这个 userKey
       }

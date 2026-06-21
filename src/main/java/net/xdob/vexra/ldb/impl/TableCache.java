@@ -248,13 +248,34 @@ public class TableCache {
         + ",tableDataBlockOpens=" + blockLocalIndexStats.tableDataBlockOpens
         + ",tableLastBlockHits=" + blockLocalIndexStats.tableLastBlockHits
         + ",tableLastBlockMisses=" + blockLocalIndexStats.tableLastBlockMisses
+        + ",tablePointGetLastBlockHits=" + blockLocalIndexStats.tablePointGetLastBlockHits
+        + ",tablePointGetSlotHits=" + blockLocalIndexStats.tablePointGetSlotHits
+        + ",tablePointGetSlotMisses=" + blockLocalIndexStats.tablePointGetSlotMisses
+        + ",tablePointGetSlotCollisions=" + blockLocalIndexStats.tablePointGetSlotCollisions
+        + ",tableBatchDataBlockGroups=" + blockLocalIndexStats.tableBatchDataBlockGroups
+        + ",tableBatchDataBlockKeys=" + blockLocalIndexStats.tableBatchDataBlockKeys
+        + ",tableBatchDenseBlockGroups=" + blockLocalIndexStats.tableBatchDenseBlockGroups
+        + ",tableBatchDenseBlockKeys=" + blockLocalIndexStats.tableBatchDenseBlockKeys
+        + ",tableBatchSeekAllCount=" + blockLocalIndexStats.tableBatchSeekAllCount
+        + ",tableDirectReadBlockCacheHits=" + blockLocalIndexStats.tableDirectReadBlockCacheHits
+        + ",tableDirectReadBlockCacheMisses=" + blockLocalIndexStats.tableDirectReadBlockCacheMisses
+        + ",tableDirectReadBlockReads=" + blockLocalIndexStats.tableDirectReadBlockReads
         + ",tableDataBlockSeeks=" + blockLocalIndexStats.tableDataBlockSeeks
+        + ",blockSeekIndexHits=" + blockLocalIndexStats.blockSeekIndexHits
+        + ",blockSeekIndexMisses=" + blockLocalIndexStats.blockSeekIndexMisses
+        + ",blockSeekIndexFallbacks=" + blockLocalIndexStats.blockSeekIndexFallbacks
         + ",blockLocalIndexTables=" + blockLocalIndexStats.declaredTables
         + ",blockLocalIndexDirectoryLoadedTables=" + blockLocalIndexStats.directoryLoadedTables
         + ",blockLocalIndexDirectoryEntries=" + blockLocalIndexStats.directoryEntries
         + ",blockLocalIndexSeekCount=" + blockLocalIndexStats.seekCount
         + ",blockLocalIndexHitCount=" + blockLocalIndexStats.hitCount
-        + ",blockLocalIndexFallbackCount=" + blockLocalIndexStats.fallbackCount;
+        + ",blockLocalIndexFallbackCount=" + blockLocalIndexStats.fallbackCount
+        + ",entryAnchorIndexTables=" + blockLocalIndexStats.entryAnchorDeclaredTables
+        + ",entryAnchorIndexDirectoryLoadedTables=" + blockLocalIndexStats.entryAnchorDirectoryLoadedTables
+        + ",entryAnchorIndexDirectoryEntries=" + blockLocalIndexStats.entryAnchorDirectoryEntries
+        + ",entryAnchorIndexSeekCount=" + blockLocalIndexStats.entryAnchorSeekCount
+        + ",entryAnchorIndexHitCount=" + blockLocalIndexStats.entryAnchorHitCount
+        + ",entryAnchorIndexFallbackCount=" + blockLocalIndexStats.entryAnchorFallbackCount;
   }
 
   private BlockLocalIndexStats blockLocalIndexStats() {
@@ -278,6 +299,31 @@ public class TableCache {
       stats.tableIndexCacheMisses += table.getTableIndexCacheMissCountForStats();
       stats.tableLastBlockHits += table.getTableLastBlockHitCountForStats();
       stats.tableLastBlockMisses += table.getTableLastBlockMissCountForStats();
+      stats.tablePointGetLastBlockHits += table.getTablePointGetLastBlockHitCountForStats();
+      stats.tablePointGetSlotHits += table.getTablePointGetSlotHitCountForStats();
+      stats.tablePointGetSlotMisses += table.getTablePointGetSlotMissCountForStats();
+      stats.tablePointGetSlotCollisions += table.getTablePointGetSlotCollisionCountForStats();
+      stats.tableBatchDataBlockGroups += table.getTableBatchDataBlockGroupCountForStats();
+      stats.tableBatchDataBlockKeys += table.getTableBatchDataBlockKeyCountForStats();
+      stats.tableBatchDenseBlockGroups += table.getTableBatchDenseBlockGroupCountForStats();
+      stats.tableBatchDenseBlockKeys += table.getTableBatchDenseBlockKeyCountForStats();
+      stats.tableBatchSeekAllCount += table.getTableBatchSeekAllCountForStats();
+      stats.tableDirectReadBlockCacheHits += table.getTableDirectReadBlockCacheHitCountForStats();
+      stats.tableDirectReadBlockCacheMisses += table.getTableDirectReadBlockCacheMissCountForStats();
+      stats.tableDirectReadBlockReads += table.getTableDirectReadBlockReadCountForStats();
+      stats.blockSeekIndexHits += table.getBlockSeekIndexHitCountForStats();
+      stats.blockSeekIndexMisses += table.getBlockSeekIndexMissCountForStats();
+      stats.blockSeekIndexFallbacks += table.getBlockSeekIndexFallbackCountForStats();
+      if (table.isEntryAnchorIndexDeclaredForStats()) {
+        stats.entryAnchorDeclaredTables++;
+      }
+      if (table.isEntryAnchorIndexDirectoryLoadedForStats()) {
+        stats.entryAnchorDirectoryLoadedTables++;
+      }
+      stats.entryAnchorDirectoryEntries += table.getEntryAnchorIndexDirectoryEntriesForStats();
+      stats.entryAnchorSeekCount += table.getEntryAnchorIndexSeekCountForStats();
+      stats.entryAnchorHitCount += table.getEntryAnchorIndexHitCountForStats();
+      stats.entryAnchorFallbackCount += table.getEntryAnchorIndexFallbackCountForStats();
     }
     return stats;
   }
@@ -290,12 +336,33 @@ public class TableCache {
     private long tableIndexCacheMisses;
     private long tableLastBlockHits;
     private long tableLastBlockMisses;
+    private long tablePointGetLastBlockHits;
+    private long tablePointGetSlotHits;
+    private long tablePointGetSlotMisses;
+    private long tablePointGetSlotCollisions;
+    private long tableBatchDataBlockGroups;
+    private long tableBatchDataBlockKeys;
+    private long tableBatchDenseBlockGroups;
+    private long tableBatchDenseBlockKeys;
+    private long tableBatchSeekAllCount;
+    private long tableDirectReadBlockCacheHits;
+    private long tableDirectReadBlockCacheMisses;
+    private long tableDirectReadBlockReads;
+    private long blockSeekIndexHits;
+    private long blockSeekIndexMisses;
+    private long blockSeekIndexFallbacks;
     private long declaredTables;
     private long directoryLoadedTables;
     private long directoryEntries;
     private long seekCount;
     private long hitCount;
     private long fallbackCount;
+    private long entryAnchorDeclaredTables;
+    private long entryAnchorDirectoryLoadedTables;
+    private long entryAnchorDirectoryEntries;
+    private long entryAnchorSeekCount;
+    private long entryAnchorHitCount;
+    private long entryAnchorFallbackCount;
   }
 
   private static final class TableAndFile {

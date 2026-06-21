@@ -42,6 +42,8 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
   private final AtomicLong candidateEntryHitCount = new AtomicLong();
   private final AtomicLong candidateEntryMissCount = new AtomicLong();
   private final AtomicLong bloomFalsePositiveCount = new AtomicLong();
+  private final AtomicLong pointReadContextFileHitCount = new AtomicLong();
+  private final AtomicLong pointReadContextFileMissCount = new AtomicLong();
 
   public Version(VersionSet versionSet) {
     this.versionSet = versionSet;
@@ -146,6 +148,10 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
   }
 
   public LookupResult get(int cfId, LookupKey key) {
+    return get(cfId, key, new PointReadContext(getInternalKeyComparator().getUserComparator()));
+  }
+
+  LookupResult get(int cfId, LookupKey key, PointReadContext readContext) {
     CfVersionLevels cfLevels = findCfLevels(cfId);
     if (cfLevels == null) {
       return null;
@@ -154,12 +160,12 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
     pointGetCount.incrementAndGet();
     ReadStats readStats = new ReadStats();
     level0GetCount.incrementAndGet();
-    LookupResult lookupResult = cfLevels.level0.get(key, readStats);
+    LookupResult lookupResult = cfLevels.level0.get(key, readStats, readContext);
     recordSstReadStats(readStats);
     if (lookupResult == null) {
       for (Level level : cfLevels.levels) {
         levelGetCount.incrementAndGet();
-        lookupResult = level.get(key, readStats);
+        lookupResult = level.get(key, readStats, readContext);
         recordSstReadStats(readStats);
         if (lookupResult != null) {
           break;
@@ -235,6 +241,8 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
     candidateEntryHitCount.addAndGet(readStats.getCandidateEntryHits());
     candidateEntryMissCount.addAndGet(readStats.getCandidateEntryMisses());
     bloomFalsePositiveCount.addAndGet(readStats.getBloomFalsePositives());
+    pointReadContextFileHitCount.addAndGet(readStats.getPointReadContextFileHits());
+    pointReadContextFileMissCount.addAndGet(readStats.getPointReadContextFileMisses());
   }
 
   public String sstReadStats() {
@@ -246,7 +254,9 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
         + ",tableReads=" + tableReadCount.get()
         + ",candidateEntryHits=" + candidateEntryHitCount.get()
         + ",candidateEntryMisses=" + candidateEntryMissCount.get()
-        + ",bloomFalsePositives=" + bloomFalsePositiveCount.get();
+        + ",bloomFalsePositives=" + bloomFalsePositiveCount.get()
+        + ",pointReadContextFileHits=" + pointReadContextFileHitCount.get()
+        + ",pointReadContextFileMisses=" + pointReadContextFileMissCount.get();
   }
 
   int pickLevelForMemTableOutput(int cfId, Slice smallestUserKey, Slice largestUserKey) {

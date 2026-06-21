@@ -276,3 +276,14 @@ Adjacent 200k read-optimized samples are listed below. Both runs use table forma
 | admissionMinReads=2 | 187,734.903 | 178,359.627 | 274,764.640 | 2,666,513.787 | Cold path reports `admissionSkips=5556` and `admissionAdmits=5556`; random MultiGet reports `admissionSkips=5564` and `admissionAdmits=5564`; scan does not trigger admission. |
 
 Conclusion: second-touch admission is a low-risk optional policy that reduces one-off cache pollution from cold random reads and sparse MultiGet, with direct observability through cache stats. The default remains 1 for compatibility in this release. After release, read-optimized deployments should collect broader samples before considering a profile-specific default of 2.
+### V3E-10 Negative experiment: forcing single-key get through block-local indexes
+
+This round changed `Table.get(Slice)` to call `seekDataBlock(..., allowLocalIndex=true)` for SSTs declaring `block.local_index.v1`, so the single-key random-hit path also loaded the persisted block-local index. The goal was to verify whether the 50k v3 opt-in result with `blockLocalIndexSeekCount=0` was merely a missing usage hook, and whether persisted local indexes could further improve `readrandom_hit`.
+
+The 50k read-optimized sample shows that the experiment did drive the persisted local-index path: `readrandom_hit` recorded `blockLocalIndexDirectoryLoadedTables=1`, `blockLocalIndexDirectoryEntries=1389`, `blockLocalIndexSeekCount=50000`, and `blockLocalIndexHitCount=48680`. However, the primary metric dropped from the v3 opt-in sample without forced local-index usage at `192,795.093 ops/s` to `123,006.344 ops/s`. Surrounding workloads also weakened: `readrandom_sameblock=246,336.120 ops/s`, `readrandom_burst=234,339.995 ops/s`, and `scan=1,782,257.978 ops/s`.
+
+Evidence reports:
+- `ldb-longrun/ldb-longrun/build/reports/ldb-db-bench-current-50k-v3-local-index/ldb-db-bench-summary.json`
+- `ldb-longrun/ldb-longrun/build/reports/ldb-db-bench-current-50k-v3-local-index-single-get/ldb-db-bench-summary.json`
+
+Conclusion: the current persisted block-local index stores restart anchors. Forcing single-key gets through it bypasses the sparse entry anchors and hot in-memory seek index built when a `Block` is opened, so the extra CPU cost outweighs the benefit. This experiment is not retained. If a future file-format index should serve `readrandom_hit`, it must not merely reuse restart-anchor directories; it should encode sparse entry anchors, the required previous-key recovery information, or an equivalent low-cost restore representation. Until then, single-key random reads should keep using the current Block open-time lightweight in-memory index.

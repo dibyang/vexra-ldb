@@ -99,6 +99,48 @@ public interface OptionsView {
     return 4;
   }
 
+  /**
+   * 返回新写 v4 SST 时是否启用 sparse entry-anchor index。
+   */
+  default boolean writeEntryAnchorIndex() {
+    return false;
+  }
+
+  /**
+   * 返回 entry-anchor index 的 entry 间隔。
+   */
+  default int entryAnchorIndexInterval() {
+    return 4;
+  }
+
+  /**
+   * 返回单个 data block 写入 entry-anchor index 的最少 anchor 数。
+   */
+  default int entryAnchorIndexAdmissionMinAnchors() {
+    return 2;
+  }
+
+  /**
+   * 返回新写 v4 SST 时是否启用 data block inline seek index。
+   */
+  default boolean writeInlineBlockSeekIndex() {
+    return false;
+  }
+
+  /**
+   * 返回 inline seek anchor 的 entry 间隔。
+   */
+  default int inlineBlockSeekIndexInterval() {
+    return 4;
+  }
+
+  /**
+   * 返回单个 data block 写入 inline seek index 的最少 anchor 数。
+   */
+  default int inlineBlockSeekIndexAdmissionMinAnchors() {
+    return 2;
+  }
+
   int blockCacheSize();
 
   default int blockCacheAdmissionMinReads() {

@@ -384,3 +384,57 @@
 ## 0.11.0-SNAPSHOT 单点局部性 hit-path 优化
 
 - 新增 `readrandom_sameblock` 局部性点查 benchmark，并在 `Table` 单点 direct get 路径增加最近 index 覆盖缓存和最近 data block 复用。50k 对照中，`readrandom_sameblock` 达到 RocksDB JNI 的 `0.5421`；`ldb.sstReadStats` 记录 `tableIndexCacheHits=47839`、`tableLastBlockHits=47839`，将实际 index seek / data block open 压缩到 `2161` 次。
+## 0.11.0-SNAPSHOT 请求级 single-key read context
+
+- 新增内部 `PointReadContext`，在单次 `Version.get` 调用链内复用最近候选 SST 文件，避免连续邻近 point get 重复执行 level 文件定位；`ldb.sstReadStats` 新增 `pointReadContextFileHits` / `pointReadContextFileMisses`，并新增 `readrandom_burst` benchmark 观察应用层 burst 局部性读。
+## 0.11.0-SNAPSHOT ThreadLocal point-read context 边界
+
+- `PointReadContext` 最终采用 `VersionSet` 内部 `ThreadLocal` 短时缓存，限定同线程、同 current Version、同列族和约 10ms 空闲窗口，支撑 API 层连续 point get 复用候选 SST 文件，同时避免跨线程或跨版本误复用。
+## 0.11.0-SNAPSHOT read context 50k 对照归档
+
+- 归档 `readrandom_hit/readrandom_sameblock/readrandom_burst` 50k 对照：LDB 分别达到 RocksDB JNI 的 `0.3939`、`0.5616`、`0.5531`。`pointReadContextFileHits=49987` 证明 API 连续 single-key read context 实际触发；sameblock 场景中 `tableIndexCacheHits=47839`、`tableLastBlockHits=47839`，data block open 降至 `2161`。
+- 读性能专项：将 Block restart key/offset 正式作为轻量 seek index，并补充 `blockSeekIndexHits/Misses/Fallbacks` 统计；50k 验收中 `readrandom_hit` 主路径 `blockSeekIndexHits=50,000`，但单靠 Block restart anchor 仍不足以达到 RocksDB JNI 50%。
+- 读性能专项：新增 Table 点读 index block 数组索引与 direct-mapped data block cache，并恢复 Block 打开阶段稀疏 entry anchor；50k 验收中 `tableIndexSeeks=0`，`multiget_mixed` 达到 RocksDB JNI 的 92.15%，但 `readrandom_hit` 仍为 29.48%，P0 50% 目标未完成。
+- 读性能专项：`Block.seek`/`seekFromOffset` 跳过非候选 entry 的 value 解码；50k 对照中 `readrandom_hit` 提升到 RocksDB JNI 的 35.08%，`readrandom_sameblock` 达到 58.57%，`readrandom_burst` 达到 62.48%，`multiget_mixed` 达到 99.34%。
+## 0.11.0-SNAPSHOT readrandom hit-path 负实验回收
+
+- 读取性能专项回收三条未兑现的后续优化路线：重 hash/mix 与 4-way set-associative point data-block cache 均降低了部分 open 计数但回退 `readrandom_hit`；删除候选二次比较和 MultiGet 数组 index 复用也在 50k 短跑中回退。当前版本保留已验证正收益的 restart/sparse anchor、Table 单点数组 index、direct-mapped data-block cache 和 `Block.seek` skip-value 路径。
+## 0.11.0-SNAPSHOT Block.readKey direct-copy
+
+- 读取性能专项继续压缩 Block seek 热路径：共享前缀 key 重建不再创建 `SliceOutput` 临时对象，改为直接复制 shared prefix 并写入 non-shared suffix。50k `readrandom_hit` 达到 161,956 ops/s；同机 RocksDB JNI 对照为 441,936 ops/s，当前比例 36.65%，P0 50% 主目标仍未完成。`readrandom_sameblock`、`readrandom_burst` 和 `multiget_mixed` 分别达到 RocksDB JNI 的 54.94%、78.60% 和 87.45%。
+## 0.11.0-SNAPSHOT Block.seek scratch-key 复用实验回收
+
+- 读取性能专项回收单次 `Block.seek` 内 scratch-key 复用实验：该实验让 50k `readrandom_hit` 从 direct-copy 版本的 161,956 ops/s 回落到 153,643 ops/s。当前版本继续保留 `Block.readKey` direct-copy，不保留跨 entry key buffer 复用。
+## 0.11.0-SNAPSHOT InternalUserComparator Slice 级比较
+
+- 读取性能专项优化 `InternalUserComparator.compare(Slice, Slice)`：比较 internal key 时不再构造 `InternalKey` 对象，改为直接比较 user-key Slice 并读取尾部 packed sequence/type。50k `readrandom_hit` 达到 174,459 ops/s，同机 RocksDB JNI 对照为 396,410 ops/s，当前比例 44.01%；`readrandom_sameblock`、`readrandom_burst` 和 `multiget_mixed` 分别达到 RocksDB JNI 的 61.81%、63.67% 和 136.68%。
+## 0.11.0-SNAPSHOT bytewise raw-array 比较实验回收
+
+- 读取性能专项回收 `InternalUserComparator` 中默认 `BytewiseComparator` 的 raw-array user-key 快路径实验：该实验让 50k `readrandom_hit` 从 Slice 级 internal-key compare 的 174,459 ops/s 回落到 151,875 ops/s。当前版本只保留不构造 `InternalKey` 对象的正收益优化。
+## 0.11.0-SNAPSHOT InternalUserComparator 长度 guard 移除实验回收
+
+- 读取性能专项回收 `InternalUserComparator.compare(Slice, Slice)` 的长度 `checkArgument` 移除实验：50k `readrandom_hit` 从 Slice 级 internal-key compare 的 174,459 ops/s 回退到 132,221 ops/s。当前版本恢复显式长度校验，只保留不构造 `InternalKey` 对象的正收益优化。
+## 0.11.0-SNAPSHOT Slice 区间比较快路实验回收
+
+- 读取性能专项回收 `Slice.compareTo(offset,length,...)` 与 `InternalUserComparator` 默认 bytewise 子区间比较实验：该实验避免了 user-key `slice(...)` 包装，但 50k `readrandom_hit` 回退到 141,790 ops/s，低于已验证的 174,459 ops/s 基线。当前版本不保留该快路，继续使用已验证的 Slice 级 internal-key compare。
+## 0.11.0-SNAPSHOT sequence 解包内联实验回收
+
+- 读取性能专项回收 `InternalUserComparator` 中 `SequenceNumber.unpackSequenceNumber(...)` 到 `packed >>> 8` 的手工内联实验：50k `readrandom_hit` 回退到 164,108 ops/s，低于 guard 恢复后的 171,696 ops/s 和历史 174,459 ops/s 基线。当前版本继续使用 `SequenceNumber.unpackSequenceNumber`，不保留该微优化。
+## 0.11.0-SNAPSHOT Block sparse anchor interval=2 实验回收
+
+- 读取性能专项回收 `Block` 打开期 sparse seek anchor 每 2 条 entry 一个的实验：该方案仍非 full-entry index，但 50k `readrandom_hit` 回退到 146,226 ops/s，低于 171,696/174,459 ops/s 基线，sameblock、burst 与 multiget_mixed 也同步走弱。当前版本恢复每 4 条 entry 一个 anchor 的平衡点。
+## 0.11.0-SNAPSHOT Block sparse anchor interval=8 实验回收
+
+- 读取性能专项回收 `Block` 打开期 sparse seek anchor 每 8 条 entry 一个的实验：第一轮 50k `readrandom_hit` 达到 177,100 ops/s，但 sameblock、burst、multiget_mixed 与 scan 均低于恢复基线；同参数复测中 `readrandom_hit` 回落到 157,745 ops/s。当前版本继续保留每 4 条 entry 一个 anchor 的稳定折中。
+## 0.11.0-SNAPSHOT Block sparse anchor 精确命中直返实验回收
+
+- 读取性能专项回收 sparse anchor 精确命中直接返回 value 的实验：该方案只给稀疏 anchor 增加 value offset/length，不是 full-entry index，但 50k `readrandom_hit` 回退到 143,404 ops/s，`multiget_mixed` 与 `scan` 也走弱。当前版本继续让 anchor 只负责缩小扫描范围，不承担候选 entry 直返职责。
+## 0.11.0-SNAPSHOT blockSeekIndex 统计语义边界确认
+
+- 读取性能专项确认 `blockSeekIndexHits` 表示 Block 打开期 seek index 被使用的次数，而不是业务 key 命中次数；尝试按 `Block.seek` 是否返回候选 entry 区分 hit/miss 后，50k `readrandom_hit` 回落到 130,404 ops/s，已回收。业务未命中继续通过 `candidateEntryMisses`、`filterSkips` 和 `bloomFalsePositives` 判断，`blockSeekIndexFallbacks` 表示没有 seek index 时的回退。
+## 0.11.0-SNAPSHOT Block.readKey null guard 实验回收
+
+- 读取性能专项回收 `Block.readKey` shared-key 路径中将 Guava `checkState` 改成手写 null 分支的实验：50k `readrandom_hit` 回退到 128,680 ops/s，sameblock 与 scan 也弱于恢复基线。当前版本恢复 `checkState`，继续保留已验证的 direct-copy key 重建路径。
+## 0.11.0-SNAPSHOT restart key 精确命中起点实验回收
+
+- 读取性能专项回收 `Block.restartIndexBefore` 中将 `restartKey < target` 改为 `restartKey <= target` 的实验：50k `readrandom_hit` 为 164,277 ops/s，低于恢复基线和历史 174,459 ops/s 基线，sameblock、burst 与 multiget_mixed 也没有整体胜出。当前版本恢复原 restart 二分策略。

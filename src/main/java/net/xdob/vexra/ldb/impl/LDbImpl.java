@@ -837,6 +837,9 @@ public class LDbImpl implements LDB {
     private final boolean failOnUnknownTableFeature;
     private final boolean writeBlockLocalIndex;
     private final int blockLocalIndexInterval;
+    private final boolean writeInlineBlockSeekIndex;
+    private final int inlineBlockSeekIndexInterval;
+    private final int inlineBlockSeekIndexAdmissionMinAnchors;
     private final int blockCacheSize;
     private final long compactionSuspendTimeoutMillis;
     private final long closeTimeoutMillis;
@@ -877,6 +880,9 @@ public class LDbImpl implements LDB {
       this.failOnUnknownTableFeature = options.failOnUnknownTableFeature();
       this.writeBlockLocalIndex = options.writeBlockLocalIndex();
       this.blockLocalIndexInterval = options.blockLocalIndexInterval();
+      this.writeInlineBlockSeekIndex = options.writeInlineBlockSeekIndex();
+      this.inlineBlockSeekIndexInterval = options.inlineBlockSeekIndexInterval();
+      this.inlineBlockSeekIndexAdmissionMinAnchors = options.inlineBlockSeekIndexAdmissionMinAnchors();
       this.blockCacheSize = options.blockCacheSize();
       this.compactionSuspendTimeoutMillis = options.compactionSuspendTimeoutMillis();
       this.closeTimeoutMillis = options.closeTimeoutMillis();
@@ -1011,6 +1017,21 @@ public class LDbImpl implements LDB {
     @Override
     public int blockLocalIndexInterval() {
       return blockLocalIndexInterval;
+    }
+
+    @Override
+    public boolean writeInlineBlockSeekIndex() {
+      return writeInlineBlockSeekIndex;
+    }
+
+    @Override
+    public int inlineBlockSeekIndexInterval() {
+      return inlineBlockSeekIndexInterval;
+    }
+
+    @Override
+    public int inlineBlockSeekIndexAdmissionMinAnchors() {
+      return inlineBlockSeekIndexAdmissionMinAnchors;
     }
 
     @Override
@@ -1929,6 +1950,9 @@ public class LDbImpl implements LDB {
           + ",failOnUnknownTableFeature=supported"
           + ",writeBlockLocalIndex=supported"
           + ",blockLocalIndexInterval=supported"
+          + ",writeInlineBlockSeekIndex=supported"
+          + ",inlineBlockSeekIndexInterval=supported"
+          + ",inlineBlockSeekIndexAdmissionMinAnchors=supported"
           + ",blockCacheSize=supported"
           + ",readOnly=supported"
           + ",columnFamilies=supported"
@@ -1973,6 +1997,9 @@ public class LDbImpl implements LDB {
     else if (tableFormatVersion == 2) {
       newWrites = "v2-properties";
     }
+    else if (options.writeInlineBlockSeekIndex()) {
+      newWrites = "v4-inline-block-seek-index";
+    }
     else if (options.writeBlockLocalIndex()) {
       newWrites = "v3-block-local-index";
     }
@@ -1987,6 +2014,10 @@ public class LDbImpl implements LDB {
         + ",writeBlockLocalIndex=" + options.writeBlockLocalIndex()
         + ",blockLocalIndexInterval=" + options.blockLocalIndexInterval()
         + ",blockLocalIndexState=" + (options.writeBlockLocalIndex() ? "writer-opt-in" : "disabled")
+        + ",writeInlineBlockSeekIndex=" + options.writeInlineBlockSeekIndex()
+        + ",inlineBlockSeekIndexInterval=" + options.inlineBlockSeekIndexInterval()
+        + ",inlineBlockSeekIndexAdmissionMinAnchors=" + options.inlineBlockSeekIndexAdmissionMinAnchors()
+        + ",inlineBlockSeekIndexState=" + (options.writeInlineBlockSeekIndex() ? "writer-opt-in" : "disabled")
         + ",legacyReads=" + (options.allowLegacyTableFormat() ? "allowed" : "rejected")
         + ",unknownFeaturePolicy=" + unknownFeaturePolicy
         + ",futureVersionPolicy=" + unknownFeaturePolicy
@@ -2016,6 +2047,9 @@ public class LDbImpl implements LDB {
         + ",failOnUnknownTableFeature=" + options.failOnUnknownTableFeature()
         + ",writeBlockLocalIndex=" + options.writeBlockLocalIndex()
         + ",blockLocalIndexInterval=" + options.blockLocalIndexInterval()
+        + ",writeInlineBlockSeekIndex=" + options.writeInlineBlockSeekIndex()
+        + ",inlineBlockSeekIndexInterval=" + options.inlineBlockSeekIndexInterval()
+        + ",inlineBlockSeekIndexAdmissionMinAnchors=" + options.inlineBlockSeekIndexAdmissionMinAnchors()
         + ",blockCacheSize=" + options.blockCacheSize()
         + ",readOnly=" + options.readOnly()
         + ",columnFamilyCount=" + cfs.size()

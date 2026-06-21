@@ -9,6 +9,8 @@ public class ReadStats {
   private long candidateEntryHits;
   private long candidateEntryMisses;
   private long bloomFalsePositives;
+  private long pointReadContextFileHits;
+  private long pointReadContextFileMisses;
 
   public void clear() {
     seekFileLevel = -1;
@@ -19,6 +21,8 @@ public class ReadStats {
     candidateEntryHits = 0;
     candidateEntryMisses = 0;
     bloomFalsePositives = 0;
+    pointReadContextFileHits = 0;
+    pointReadContextFileMisses = 0;
   }
 
   public int getSeekFileLevel() {
@@ -83,5 +87,21 @@ public class ReadStats {
 
   public void recordBloomFalsePositive() {
     bloomFalsePositives++;
+  }
+
+  public long getPointReadContextFileHits() {
+    return pointReadContextFileHits;
+  }
+
+  public void recordPointReadContextFileHit() {
+    pointReadContextFileHits++;
+  }
+
+  public long getPointReadContextFileMisses() {
+    return pointReadContextFileMisses;
+  }
+
+  public void recordPointReadContextFileMiss() {
+    pointReadContextFileMisses++;
   }
 }

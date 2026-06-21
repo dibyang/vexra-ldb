@@ -7,6 +7,8 @@ import net.xdob.vexra.ldb.util.Slice;
 import net.xdob.vexra.ldb.util.VariableLengthQuantity;
 
 import java.util.Comparator;
+import java.util.ArrayList;
+import java.util.List;
 
 import static com.google.common.base.Preconditions.*;
 import static java.util.Objects.requireNonNull;
@@ -14,6 +16,9 @@ import static net.xdob.vexra.ldb.util.SizeOf.SIZE_OF_INT;
 
 public class BlockBuilder {
   private final int blockRestartInterval;
+  private final boolean writeInlineSeekIndex;
+  private final int inlineSeekIndexInterval;
+  private final int inlineSeekIndexAdmissionMinAnchors;
   private final IntVector restartPositions;
   private final Comparator<Slice> comparator;
 
@@ -23,18 +28,36 @@ public class BlockBuilder {
   private boolean finished;
   private final DynamicSliceOutput block;
   private Slice lastKey;
+  private final List<InlineSeekAnchor> inlineSeekAnchors;
+  private int lastInlineSeekIndexBytes;
+  private int lastInlineSeekIndexAnchorCount;
 
   public BlockBuilder(int estimatedSize, int blockRestartInterval, Comparator<Slice> comparator) {
+    this(estimatedSize, blockRestartInterval, comparator, false, 4, 2);
+  }
+
+  public BlockBuilder(int estimatedSize,
+                      int blockRestartInterval,
+                      Comparator<Slice> comparator,
+                      boolean writeInlineSeekIndex,
+                      int inlineSeekIndexInterval,
+                      int inlineSeekIndexAdmissionMinAnchors) {
     checkArgument(estimatedSize >= 0, "estimatedSize is negative");
     checkArgument(blockRestartInterval >= 0, "blockRestartInterval is negative");
+    checkArgument(inlineSeekIndexInterval > 0, "inlineSeekIndexInterval must be > 0");
+    checkArgument(inlineSeekIndexAdmissionMinAnchors > 0, "inlineSeekIndexAdmissionMinAnchors must be > 0");
     requireNonNull(comparator, "comparator is null");
 
     this.block = new DynamicSliceOutput(estimatedSize);
     this.blockRestartInterval = blockRestartInterval;
+    this.writeInlineSeekIndex = writeInlineSeekIndex;
+    this.inlineSeekIndexInterval = inlineSeekIndexInterval;
+    this.inlineSeekIndexAdmissionMinAnchors = inlineSeekIndexAdmissionMinAnchors;
     this.comparator = comparator;
 
     restartPositions = new IntVector(32);
     restartPositions.add(0);  // first restart point must be 0
+    inlineSeekAnchors = new ArrayList<>();
   }
 
   public void reset() {
@@ -44,6 +67,9 @@ public class BlockBuilder {
     restartPositions.add(0); // first restart point must be 0
     restartBlockEntryCount = 0;
     lastKey = null;
+    inlineSeekAnchors.clear();
+    lastInlineSeekIndexBytes = 0;
+    lastInlineSeekIndexAnchorCount = 0;
     finished = false;
   }
 
@@ -92,6 +118,14 @@ public class BlockBuilder {
       restartPositions.add(block.size());
       restartBlockEntryCount = 0;
     }
+    int entryOffset = block.size();
+    int restartIndex = restartPositions.size() - 1;
+    if (writeInlineSeekIndex
+        && entryCount > 0
+        && entryCount % inlineSeekIndexInterval == 0
+        && lastKey != null) {
+      inlineSeekAnchors.add(new InlineSeekAnchor(key, entryOffset, lastKey, restartIndex));
+    }
 
     int nonSharedKeyBytes = key.length() - sharedKeyBytes;
 
@@ -130,14 +164,62 @@ public class BlockBuilder {
   public Slice finish() {
     if (!finished) {
       finished = true;
+      lastInlineSeekIndexBytes = 0;
+      lastInlineSeekIndexAnchorCount = 0;
 
       if (entryCount > 0) {
+        int inlineIndexOffset = writeInlineSeekIndexIfNeeded();
         restartPositions.write(block);
         block.writeInt(restartPositions.size());
+        if (lastInlineSeekIndexAnchorCount > 0) {
+          block.writeInt(inlineIndexOffset);
+          block.writeInt(Block.INLINE_SEEK_INDEX_BLOCK_MAGIC);
+        }
       } else {
         block.writeInt(0);
       }
     }
     return block.slice();
+  }
+
+  public int getLastInlineSeekIndexBytes() {
+    return lastInlineSeekIndexBytes;
+  }
+
+  public int getLastInlineSeekIndexAnchorCount() {
+    return lastInlineSeekIndexAnchorCount;
+  }
+
+  private int writeInlineSeekIndexIfNeeded() {
+    if (!writeInlineSeekIndex || inlineSeekAnchors.size() < inlineSeekIndexAdmissionMinAnchors) {
+      return block.size();
+    }
+    int inlineIndexOffset = block.size();
+    VariableLengthQuantity.writeVariableLengthInt(inlineSeekAnchors.size(), block);
+    for (InlineSeekAnchor anchor : inlineSeekAnchors) {
+      VariableLengthQuantity.writeVariableLengthInt(anchor.restartIndex, block);
+      VariableLengthQuantity.writeVariableLengthInt(anchor.offset, block);
+      VariableLengthQuantity.writeVariableLengthInt(anchor.key.length(), block);
+      block.writeBytes(anchor.key, 0, anchor.key.length());
+      VariableLengthQuantity.writeVariableLengthInt(anchor.previousKey.length(), block);
+      block.writeBytes(anchor.previousKey, 0, anchor.previousKey.length());
+    }
+    lastInlineSeekIndexBytes = block.size() - inlineIndexOffset;
+    lastInlineSeekIndexAnchorCount = inlineSeekAnchors.size();
+    return inlineIndexOffset;
+  }
+
+  private static final class InlineSeekAnchor {
+    private final Slice key;
+    private final int offset;
+    private final Slice previousKey;
+    private final int restartIndex;
+
+    private InlineSeekAnchor(Slice key, int offset, Slice previousKey, int restartIndex) {
+      this.key = key;
+      this.offset = offset;
+      this.previousKey = previousKey;
+      this.restartIndex = restartIndex;
+    }
   }
 }

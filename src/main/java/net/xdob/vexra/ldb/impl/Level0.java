@@ -63,29 +63,50 @@ public class Level0
   }
 
   public LookupResult get(LookupKey key, ReadStats readStats) {
+    return get(key, readStats, null);
+  }
+
+  public LookupResult get(LookupKey key, ReadStats readStats, PointReadContext readContext) {
     readStats.clear();
     if (files.isEmpty()) {
       return null;
     }
 
     List<FileMetaData> fileMetaDataList = new ArrayList<>(files.size());
+    FileMetaData contextHitFile = null;
+    FileMetaData cachedFile = readContext == null ? null : readContext.findCoveredFile(0, key);
+    if (cachedFile != null) {
+      fileMetaDataList.add(cachedFile);
+      contextHitFile = cachedFile;
+      readStats.recordCandidateFile();
+      readStats.recordPointReadContextFileHit();
+    }
     for (FileMetaData fileMetaData : files) {
+      if (fileMetaData == cachedFile) {
+        continue;
+      }
       if (internalKeyComparator.getUserComparator().compare(key.getUserKey(), fileMetaData.getSmallest().getUserKey()) >= 0 &&
           internalKeyComparator.getUserComparator().compare(key.getUserKey(), fileMetaData.getLargest().getUserKey()) <= 0) {
         fileMetaDataList.add(fileMetaData);
         readStats.recordCandidateFile();
       }
     }
+    if (readContext != null && cachedFile == null && !fileMetaDataList.isEmpty()) {
+      readStats.recordPointReadContextFileMiss();
+    }
 
     Collections.sort(fileMetaDataList, NEWEST_FIRST);
 
     Slice userKey = key.getUserKey();
     for (FileMetaData fileMetaData : fileMetaDataList) {
-      if (!tableCache.mayContain(fileMetaData, userKey)) {
+      if (fileMetaData != contextHitFile && !tableCache.mayContain(fileMetaData, userKey)) {
         readStats.recordFilterSkip();
         continue; // 这个 table 一定没有这个 userKey
       }
       readStats.recordTableRead();
+      if (readContext != null) {
+        readContext.remember(0, fileMetaData);
+      }
 
       LookupResult pointResult = null;
       long pointSequence = -1;
