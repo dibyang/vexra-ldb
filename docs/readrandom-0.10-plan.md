@@ -217,3 +217,17 @@
 证据文件：`ldb-longrun/build/reports/ldb-db-bench-hitpath-50k/ldb-db-bench-summary.csv` 与 `build/reports/rocksdbjni-comparison-hitpath-50k/comparison.csv`。
 
 结论：下一阶段最值得做的是单点 hit-path 优化，而不是继续扩大 Bloom。优先方向是减少每个 hit 都重复执行的 index seek、data block open 与 block 内 seek 成本；`multiget_mixed` 的结果说明批量分组/复用是有效路径。
+## 单点局部性 hit-path 50k 对照结果
+
+本轮在不修改 SST 文件格式的前提下，为 `Table.get(Slice internalKey)` 增加两个低风险快路径：最近一次 index seek 的覆盖缓存，以及最近一次 data block 的直接复用。索引缓存只在新 key 不小于上一次 lookup key 且不超过当前 index limit key 时命中，避免跨越前一个 data block 边界；data block 缓存使用单个不可变 holder 通过 `volatile` 发布，避免并发读取到 handle/block 错配。
+
+新增 `readrandom_sameblock` benchmark 用于观察同一 data block 内连续点查的局部性收益；普通 `readrandom_hit` 仍保留纯随机命中口径。
+
+| 场景 | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | 关键观察 |
+| --- | ---: | ---: | ---: | --- |
+| `readrandom_hit` | 137,117.521 | 388,310.005 | 0.3531 | 纯随机命中只有 `tableIndexCacheHits=21`、`tableLastBlockHits=33`，符合预期，快路径不会污染普通随机读语义 |
+| `readrandom_sameblock` | 294,151.734 | 542,632.462 | 0.5421 | 局部性读命中 `tableIndexCacheHits=47839`、`tableLastBlockHits=47839`，实际 `tableIndexSeeks=2161`、`tableDataBlockOpens=2161` |
+
+证据文件：`ldb-longrun/build/reports/ldb-db-bench-sameblock-50k/ldb-db-bench-summary.json` 和 `build/reports/rocksdbjni-comparison-sameblock-50k/comparison.csv`。
+
+结论：最近块/最近 index 覆盖缓存能显著压缩局部性点查中的重复 index seek 与 data block open；但纯随机 `readrandom_hit` 仍主要受每 key 的 SST 定位和 block 内 seek 成本影响。后续若继续冲击普通随机 hit，比起扩大单元素缓存，更有价值的是面向 block 内 seek 的更紧凑索引或 request-level read context，不过后者涉及 API/线程语义，需要单独设计。

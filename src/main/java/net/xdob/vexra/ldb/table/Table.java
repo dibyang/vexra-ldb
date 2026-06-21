@@ -41,6 +41,12 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   private long tableIndexSeekCount;
   private long tableDataBlockOpenCount;
   private long tableDataBlockSeekCount;
+  private long tableIndexCacheHitCount;
+  private long tableIndexCacheMissCount;
+  private long tableLastBlockHitCount;
+  private long tableLastBlockMissCount;
+  private volatile LastPointGetIndex lastPointGetIndex;
+  private volatile LastPointGetBlock lastPointGetBlock;
 
   protected final BlockCache blockCache;
   private final Options options;
@@ -263,14 +269,11 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
    * @return seek 到的候选 entry；如果目标 key 超出 table/block 范围则返回 null
    */
   public Entry<Slice, Slice> get(Slice internalKey) {
-    tableIndexSeekCount++;
-    Entry<Slice, Slice> indexEntry = indexBlock.seek(internalKey);
-    if (indexEntry == null) {
+    BlockHandle blockHandle = findPointGetBlockHandle(internalKey);
+    if (blockHandle == null) {
       return null;
     }
-    BlockHandle blockHandle = BlockHandle.readBlockHandle(indexEntry.getValue().input());
-    tableDataBlockOpenCount++;
-    Block dataBlock = openBlockForDirectRead(blockHandle);
+    Block dataBlock = getPointGetDataBlock(blockHandle);
     tableDataBlockSeekCount++;
     Entry<Slice, Slice> candidate = dataBlock.seek(internalKey);
     if (candidate == null) {
@@ -280,6 +283,40 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       return null;
     }
     return candidate;
+  }
+
+  private BlockHandle findPointGetBlockHandle(Slice internalKey) {
+    LastPointGetIndex cached = lastPointGetIndex;
+    if (cached != null && cached.covers(internalKey, comparator)) {
+      tableIndexCacheHitCount++;
+      return cached.blockHandle;
+    }
+
+    tableIndexCacheMissCount++;
+    tableIndexSeekCount++;
+    Entry<Slice, Slice> indexEntry = indexBlock.seek(internalKey);
+    if (indexEntry == null) {
+      lastPointGetIndex = null;
+      return null;
+    }
+
+    BlockHandle blockHandle = BlockHandle.readBlockHandle(indexEntry.getValue().input());
+    lastPointGetIndex = new LastPointGetIndex(internalKey, indexEntry.getKey(), blockHandle);
+    return blockHandle;
+  }
+
+  private Block getPointGetDataBlock(BlockHandle blockHandle) {
+    LastPointGetBlock cached = lastPointGetBlock;
+    if (cached != null && cached.matches(blockHandle)) {
+      tableLastBlockHitCount++;
+      return cached.block;
+    }
+
+    tableLastBlockMissCount++;
+    tableDataBlockOpenCount++;
+    Block dataBlock = openBlockForDirectRead(blockHandle);
+    lastPointGetBlock = new LastPointGetBlock(blockHandle, dataBlock);
+    return dataBlock;
   }
 
   /**
@@ -516,6 +553,22 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     return tableDataBlockSeekCount;
   }
 
+  public long getTableIndexCacheHitCountForStats() {
+    return tableIndexCacheHitCount;
+  }
+
+  public long getTableIndexCacheMissCountForStats() {
+    return tableIndexCacheMissCount;
+  }
+
+  public long getTableLastBlockHitCountForStats() {
+    return tableLastBlockHitCount;
+  }
+
+  public long getTableLastBlockMissCountForStats() {
+    return tableLastBlockMissCount;
+  }
+
   /**
    * 预热当前 table 的所有 data block。
    */
@@ -662,6 +715,37 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     private TableLookup(int index, Slice internalKey) {
       this.index = index;
       this.internalKey = internalKey;
+    }
+  }
+
+  private static final class LastPointGetIndex {
+    private final Slice lastLookupKey;
+    private final Slice indexLimitKey;
+    private final BlockHandle blockHandle;
+
+    private LastPointGetIndex(Slice lastLookupKey, Slice indexLimitKey, BlockHandle blockHandle) {
+      this.lastLookupKey = lastLookupKey;
+      this.indexLimitKey = indexLimitKey;
+      this.blockHandle = blockHandle;
+    }
+
+    private boolean covers(Slice internalKey, Comparator<Slice> comparator) {
+      return comparator.compare(internalKey, lastLookupKey) >= 0
+          && comparator.compare(internalKey, indexLimitKey) <= 0;
+    }
+  }
+
+  private static final class LastPointGetBlock {
+    private final BlockHandle blockHandle;
+    private final Block block;
+
+    private LastPointGetBlock(BlockHandle blockHandle, Block block) {
+      this.blockHandle = blockHandle;
+      this.block = block;
+    }
+
+    private boolean matches(BlockHandle candidate) {
+      return blockHandle.equals(candidate);
     }
   }
 }

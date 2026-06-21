@@ -225,3 +225,17 @@ This round adds `readrandom_hit` and extends `ldb.sstReadStats` with hit-path co
 Evidence files: `ldb-longrun/build/reports/ldb-db-bench-hitpath-50k/ldb-db-bench-summary.csv` and `build/reports/rocksdbjni-comparison-hitpath-50k/comparison.csv`.
 
 Conclusion: the next valuable work is single-key hit-path optimization rather than more Bloom expansion. The priority is reducing per-hit repeated index seek, data-block open, and in-block seek cost; `multiget_mixed` shows that grouping/reuse is an effective direction.
+## Single-key locality hit-path 50k comparison result
+
+This round adds two low-risk fast paths to `Table.get(Slice internalKey)` without changing the SST file format: a recent index-seek coverage cache and recent data-block reuse. The index cache only hits when the new key is not less than the previous lookup key and does not exceed the current index-limit key, avoiding ambiguity around the previous data-block boundary. The data-block cache is published as one immutable holder through `volatile` to avoid handle/block mismatch under concurrent reads.
+
+The new `readrandom_sameblock` benchmark captures consecutive point gets inside nearby keys in the same data block; regular `readrandom_hit` remains the pure random-hit workload.
+
+| Scenario | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | Key observation |
+| --- | ---: | ---: | ---: | --- |
+| `readrandom_hit` | 137,117.521 | 388,310.005 | 0.3531 | Pure random hits produced only `tableIndexCacheHits=21` and `tableLastBlockHits=33`, as expected; the fast path does not distort ordinary random-read semantics |
+| `readrandom_sameblock` | 294,151.734 | 542,632.462 | 0.5421 | Locality reads hit `tableIndexCacheHits=47839` and `tableLastBlockHits=47839`, reducing actual `tableIndexSeeks` and `tableDataBlockOpens` to `2161` |
+
+Evidence files: `ldb-longrun/build/reports/ldb-db-bench-sameblock-50k/ldb-db-bench-summary.json` and `build/reports/rocksdbjni-comparison-sameblock-50k/comparison.csv`.
+
+Conclusion: recent-block and recent-index coverage caching significantly reduces repeated index seeks and data-block opens for locality-heavy point reads. Pure random `readrandom_hit` still mostly pays per-key SST positioning and in-block seek cost. If the next stage targets pure random hits, a compact in-block seek index or request-level read context is more valuable than expanding the one-entry cache; the request-level path needs a separate design because it touches API/threading semantics.

@@ -381,3 +381,6 @@
 - 使用 `build/reports/rocksdbjni-comparison-v3e09-random-supported-200k/comparison.csv` 归档 `read_optimized + blockCacheAdmissionMinReads=2` 的同机 RocksDB JNI 对照。
 - `cold_readrandom` 达到 RocksDB JNI 的 60.77%，`multiget_random` 达到 67.97%，继续高于 50% 专项目标。
 - 当前 RocksDB JNI runner 尚不支持 LDB 自定义 `multiget_sameblock` 场景，因此该场景只记录 LDB ops/s，不声明 RocksDB JNI ratio。
+## 0.11.0-SNAPSHOT 单点局部性 hit-path 优化
+
+- 新增 `readrandom_sameblock` 局部性点查 benchmark，并在 `Table` 单点 direct get 路径增加最近 index 覆盖缓存和最近 data block 复用。50k 对照中，`readrandom_sameblock` 达到 RocksDB JNI 的 `0.5421`；`ldb.sstReadStats` 记录 `tableIndexCacheHits=47839`、`tableLastBlockHits=47839`，将实际 index seek / data block open 压缩到 `2161` 次。

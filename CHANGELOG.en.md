@@ -391,3 +391,7 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 - Archived the local RocksDB JNI comparison for `read_optimized + blockCacheAdmissionMinReads=2` in `build/reports/rocksdbjni-comparison-v3e09-random-supported-200k/comparison.csv`.
 - `cold_readrandom` reached 60.77% of RocksDB JNI, and `multiget_random` reached 67.97%, keeping both above the 50% workstream target.
 - The current RocksDB JNI runner does not support the LDB-specific `multiget_sameblock` scenario, so that workload records LDB ops/s only and does not claim a RocksDB JNI ratio.
+
+## 0.11.0-SNAPSHOT Single-key locality hit-path optimization
+
+- Added the `readrandom_sameblock` locality point-get benchmark, plus a recent index-coverage cache and recent data-block reuse on the `Table` single-key direct get path. In the 50k comparison, `readrandom_sameblock` reached `0.5421` of RocksDB JNI; `ldb.sstReadStats` recorded `tableIndexCacheHits=47839` and `tableLastBlockHits=47839`, reducing actual index seeks and data-block opens to `2161`.

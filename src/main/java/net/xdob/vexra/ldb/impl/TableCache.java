@@ -243,7 +243,11 @@ public class TableCache {
         + ",mayContainFalse=" + mayContainFalseCount.get()
         + ",approximateOffsetRequests=" + approximateOffsetRequestCount.get()
         + ",tableIndexSeeks=" + blockLocalIndexStats.tableIndexSeeks
+        + ",tableIndexCacheHits=" + blockLocalIndexStats.tableIndexCacheHits
+        + ",tableIndexCacheMisses=" + blockLocalIndexStats.tableIndexCacheMisses
         + ",tableDataBlockOpens=" + blockLocalIndexStats.tableDataBlockOpens
+        + ",tableLastBlockHits=" + blockLocalIndexStats.tableLastBlockHits
+        + ",tableLastBlockMisses=" + blockLocalIndexStats.tableLastBlockMisses
         + ",tableDataBlockSeeks=" + blockLocalIndexStats.tableDataBlockSeeks
         + ",blockLocalIndexTables=" + blockLocalIndexStats.declaredTables
         + ",blockLocalIndexDirectoryLoadedTables=" + blockLocalIndexStats.directoryLoadedTables
@@ -270,6 +274,10 @@ public class TableCache {
       stats.tableIndexSeeks += table.getTableIndexSeekCountForStats();
       stats.tableDataBlockOpens += table.getTableDataBlockOpenCountForStats();
       stats.tableDataBlockSeeks += table.getTableDataBlockSeekCountForStats();
+      stats.tableIndexCacheHits += table.getTableIndexCacheHitCountForStats();
+      stats.tableIndexCacheMisses += table.getTableIndexCacheMissCountForStats();
+      stats.tableLastBlockHits += table.getTableLastBlockHitCountForStats();
+      stats.tableLastBlockMisses += table.getTableLastBlockMissCountForStats();
     }
     return stats;
   }
@@ -278,6 +286,10 @@ public class TableCache {
     private long tableIndexSeeks;
     private long tableDataBlockOpens;
     private long tableDataBlockSeeks;
+    private long tableIndexCacheHits;
+    private long tableIndexCacheMisses;
+    private long tableLastBlockHits;
+    private long tableLastBlockMisses;
     private long declaredTables;
     private long directoryLoadedTables;
     private long directoryEntries;
