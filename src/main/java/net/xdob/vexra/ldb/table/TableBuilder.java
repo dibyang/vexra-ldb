@@ -360,13 +360,13 @@ public class TableBuilder {
     addProperty(propertiesBlockBuilder, "ldb.table.compression", compressionTypes());
     addProperty(propertiesBlockBuilder, "ldb.table.data_block_count", Long.toString(dataBlockCount));
     addProperty(propertiesBlockBuilder, "ldb.table.entry_count", Long.toString(entryCount));
-    addProperty(propertiesBlockBuilder, TableProperties.FILTER_POLICY_KEY, filterPolicy == null ? "" : filterPolicy.name());
-    addProperty(propertiesBlockBuilder, TableProperties.FILTER_SCOPE_KEY, filterBlockHandle == null ? "" : "full-key");
-    addProperty(propertiesBlockBuilder, TableProperties.FILTER_KEY_COUNT_KEY,
-        filterBlockHandle == null ? "0" : Integer.toString(filterKeys.size()));
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_BITS_PER_KEY_KEY, filterBitsPerKey());
     addProperty(propertiesBlockBuilder, TableProperties.FILTER_BLOCK_BYTES_KEY,
         filterBlockHandle == null ? "0" : Long.toString(filterBlockBytes));
-    addProperty(propertiesBlockBuilder, TableProperties.FILTER_BITS_PER_KEY_KEY, filterBitsPerKey());
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_KEY_COUNT_KEY,
+        filterBlockHandle == null ? "0" : Integer.toString(filterKeys.size()));
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_POLICY_KEY, filterPolicy == null ? "" : filterPolicy.name());
+    addProperty(propertiesBlockBuilder, TableProperties.FILTER_SCOPE_KEY, filterBlockHandle == null ? "" : "full-key");
     addProperty(propertiesBlockBuilder, "ldb.table.index_type", "single-level");
     addProperty(propertiesBlockBuilder, "ldb.table.largest_key", lastKey == null ? "" : java.util.Base64.getEncoder().encodeToString(lastKey.getBytes()));
     addProperty(propertiesBlockBuilder, "ldb.table.smallest_key", firstKey == null ? "" : java.util.Base64.getEncoder().encodeToString(firstKey.getBytes()));

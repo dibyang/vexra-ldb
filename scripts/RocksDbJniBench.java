@@ -80,8 +80,14 @@ public final class RocksDbJniBench {
         results.add(prepareColdReadRandom(config, dbDir));
       } else if ("cold_readrandom_existing".equals(benchmark)) {
         results.add(coldReadRandomExisting(config, dbDir));
+      } else if ("readrandom_miss".equals(benchmark)) {
+        results.add(readRandomMiss(config, dbDir));
+      } else if ("readrandom_mixed".equals(benchmark)) {
+        results.add(readRandomMixed(config, dbDir));
       } else if ("multiget_random".equals(benchmark)) {
         results.add(multiGetRandom(config, dbDir));
+      } else if ("multiget_mixed".equals(benchmark)) {
+        results.add(multiGetMixed(config, dbDir));
       } else if ("overwrite".equals(benchmark)) {
         results.add(overwrite(config, dbDir));
       } else if ("readwhilewriting".equals(benchmark)) {
@@ -164,6 +170,39 @@ public final class RocksDbJniBench {
     return Result.of("cold_readrandom", config.reads, hits, start, System.nanoTime());
   }
 
+  private static Result readRandomMiss(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    prepareDb(config, db);
+    db.compactRange();
+    long start = System.nanoTime();
+    for (int i = 0; i < config.reads; i++) {
+      if (db.get(missKey(random.nextInt(Math.max(1, config.num - 1)))) != null) {
+        hits++;
+      }
+    }
+    return Result.of("readrandom_miss", config.reads, hits, start, System.nanoTime());
+  }
+
+  private static Result readRandomMixed(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    prepareDb(config, db);
+    db.compactRange();
+    long start = System.nanoTime();
+    for (int i = 0; i < config.reads; i++) {
+      byte[] lookupKey = (i & 1) == 0
+          ? key(random.nextInt(config.num))
+          : missKey(random.nextInt(Math.max(1, config.num - 1)));
+      if (db.get(lookupKey) != null) {
+        hits++;
+      }
+    }
+    return Result.of("readrandom_mixed", config.reads, hits, start, System.nanoTime());
+  }
+
   private static Result multiGetRandom(Config config, File dbDir) throws Exception {
     Random random = new Random(config.seed);
     long hits = 0;
@@ -187,6 +226,33 @@ public final class RocksDbJniBench {
       operations += batchSize;
     }
     return Result.of("multiget_random", operations, hits, start, System.nanoTime());
+  }
+
+  private static Result multiGetMixed(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    long operations = 0;
+    RocksDB db = RocksDB.open(options(config), dbDir.getAbsolutePath());
+    prepareDb(config, db);
+    db.compactRange();
+    long start = System.nanoTime();
+    while (operations < config.reads) {
+      int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
+      List<byte[]> keys = new ArrayList<>(batchSize);
+      for (int i = 0; i < batchSize; i++) {
+        keys.add(((operations + i) & 1) == 0
+            ? key(random.nextInt(config.num))
+            : missKey(random.nextInt(Math.max(1, config.num - 1))));
+      }
+      List<byte[]> values = db.multiGetAsList(keys);
+      for (byte[] value : values) {
+        if (value != null) {
+          hits++;
+        }
+      }
+      operations += batchSize;
+    }
+    return Result.of("multiget_mixed", operations, hits, start, System.nanoTime());
   }
 
   private static Result overwrite(Config config, File dbDir) throws Exception {
@@ -277,6 +343,10 @@ public final class RocksDbJniBench {
 
   private static byte[] key(int value) {
     return String.format(Locale.ROOT, "key%016d", value).getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] missKey(int value) {
+    return String.format(Locale.ROOT, "key%016d-miss", value).getBytes(StandardCharsets.UTF_8);
   }
 
   private static byte[] value(int index, int valueSize) {

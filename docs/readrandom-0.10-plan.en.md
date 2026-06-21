@@ -199,3 +199,15 @@ A current-version in-memory full-entry seek index was evaluated but is not enabl
 - Deeper block lookup optimization: reduce restart-region scans without eagerly decoding every entry in sparse random workloads.
 - Cache policy optimization: separate block cache admission for random reads and scans.
 - Long-run benchmarks: random reads, mixed read/write workloads, and MultiGet hotspot distributions.
+
+## Bloom/filter miss/mixed 50k comparison result
+
+This round fixes the `readrandom_miss`, `readrandom_mixed`, and `multiget_mixed` benchmarks so they prepare data, close/reopen, and then time the SST/Bloom read path. The new scenarios no longer force `compactRange`, avoiding flush/compaction cost in the Bloom read-path measurement. The v3 filter-property write order was also fixed so `BlockBuilder` key ordering remains valid.
+
+| Scenario | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | Bloom evidence |
+| --- | ---: | ---: | ---: | --- |
+| `readrandom_miss` | 277,468.554 | 301,242.565 | 0.9211 | `filterSkips=49604`, `mayContainFalse=49604` |
+| `readrandom_mixed` | 277,333.582 | 435,665.684 | 0.6366 | `filterSkips=24793`, `mayContainFalse=24793` |
+| `multiget_mixed` | 317,069.768 | 383,228.393 | 0.8274 | `filterSkips=24793`, `directGetBatchRequests=782` |
+
+Evidence files: `ldb-longrun/build/reports/ldb-db-bench-bloom-miss-mixed-50k/ldb-db-bench-summary.csv` and `build/reports/rocksdbjni-comparison-bloom-miss-mixed-50k/comparison.csv`.

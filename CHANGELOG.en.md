@@ -6,6 +6,8 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- Fixed the Bloom/filter miss/mixed benchmark semantics: the new scenarios now prepare data, close/reopen before timing, and avoid forced compactRange; v3 filter-property write ordering is fixed. The 50k comparison reaches 0.9211, 0.6366, and 0.8274 of RocksDB JNI for eadrandom_miss, eadrandom_mixed, and multiget_mixed.
+
 - Added `readrandom_miss`, `readrandom_mixed`, and `multiget_mixed` to `ldbDbBenchReport` for Bloom/filter miss-heavy and mixed random-read comparisons; v3 table properties now record filter policy, scope, key count, filter block bytes, and bits-per-key when a `FilterPolicy` is enabled.
 - Added `multiget_sameblock` and `scan` benchmarks to `ldbDbBenchReport`, and wired `blockLocalIndexBenchmarkEvidence` into `releaseGate` so v3 block-local-index default-enable review has dense same-block MultiGet and scan-regression evidence entry points.
 - Added the `blockLocalIndexFormatCoverage` release gate, requiring v3/block-local-index design docs, the `block.local_index.v1` feature, check/repair report fields, and offline self-check tests before storage-format release gates can pass.

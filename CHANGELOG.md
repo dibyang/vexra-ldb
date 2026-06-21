@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 修正 Bloom/filter miss/mixed benchmark 口径：新增场景现在准备数据后关闭重开再计时，并移除强制 compactRange；修复 v3 filter properties 写入顺序。50k 对照显示 eadrandom_miss、eadrandom_mixed、multiget_mixed 分别达到 RocksDB JNI 的 0.9211、0.6366、0.8274。
+
 - ldbDbBenchReport 新增 eadrandom_miss、eadrandom_mixed 与 multiget_mixed，用于 Bloom/filter miss-heavy 与 mixed 随机读专项对比；v3 table properties 在启用 FilterPolicy 时记录 filter policy、scope、key count、filter block bytes 与 bits-per-key，补齐发布前自描述证据。
 
 - `ldbDbBenchReport` 新增 `multiget_sameblock` 和 `scan` benchmark，并把 `blockLocalIndexBenchmarkEvidence` 纳入 `releaseGate`，为 v3 block-local index 默认开启评审补齐 dense same-block MultiGet 与 scan 回归证据入口。

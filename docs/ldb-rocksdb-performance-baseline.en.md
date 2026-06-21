@@ -182,3 +182,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-rocksdbjni-comparison.ps1
 Boundary note: the LDB runner also reported `multiget_sameblock=274,764.640 ops/s` and `scan=2,666,513.787 ops/s`, but the current RocksDB JNI runner supports only `cold_readrandom` and `multiget_random` for this comparison. `multiget_sameblock` is an LDB-specific dense batch scenario used to validate data-block grouping and admission behavior, so this pass does not claim a RocksDB JNI ratio for it.
 
 Conclusion: under the current Windows/JDK/RocksDB JNI 10.10.1 Java comparison profile, `read_optimized + blockCacheAdmissionMinReads=2` keeps both `cold_readrandom` and `multiget_random` above 0.5x RocksDB JNI. The random-read workstream remains closed against the local JNI target. Native RocksDB `db_bench` remains the more authoritative external comparison entry point.
+## Bloom/filter miss/mixed 50k comparison result
+
+This round fixes the `readrandom_miss`, `readrandom_mixed`, and `multiget_mixed` benchmarks so they prepare data, close/reopen, and then time the SST/Bloom read path. The new scenarios no longer force `compactRange`, avoiding flush/compaction cost in the Bloom read-path measurement. The v3 filter-property write order was also fixed so `BlockBuilder` key ordering remains valid.
+
+| Scenario | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | Bloom evidence |
+| --- | ---: | ---: | ---: | --- |
+| `readrandom_miss` | 277,468.554 | 301,242.565 | 0.9211 | `filterSkips=49604`, `mayContainFalse=49604` |
+| `readrandom_mixed` | 277,333.582 | 435,665.684 | 0.6366 | `filterSkips=24793`, `mayContainFalse=24793` |
+| `multiget_mixed` | 317,069.768 | 383,228.393 | 0.8274 | `filterSkips=24793`, `directGetBatchRequests=782` |
+
+Evidence files: `ldb-longrun/build/reports/ldb-db-bench-bloom-miss-mixed-50k/ldb-db-bench-summary.csv` and `build/reports/rocksdbjni-comparison-bloom-miss-mixed-50k/comparison.csv`.

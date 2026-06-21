@@ -191,3 +191,15 @@
 ## Bloom/filter miss/mixed 验证补充
 
 - Bloom/filter 专项进入下一阶段验证：ldbDbBenchReport 新增 eadrandom_miss、eadrandom_mixed、multiget_mixed，用于区分全命中随机读与缺失/混合随机读；启用 BloomFilterPolicy 时，v3 properties 会记录 filter policy、scope、key count、filter block bytes 与 bits-per-key，方便发布前归档 miss-heavy 场景证据。
+
+## Bloom/filter miss/mixed 50k 对照结果
+
+本轮修正 `readrandom_miss`、`readrandom_mixed` 与 `multiget_mixed` benchmark：准备数据后关闭重开再计时，确保读路径进入 SST/Bloom；同时移除新增场景中的强制 `compactRange`，避免把 flush/compaction 成本计入 Bloom 读路径验证。修复 v3 filter properties 写入顺序后，`BlockBuilder` key 递增约束不再被破坏。
+
+| 场景 | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | Bloom 证据 |
+| --- | ---: | ---: | ---: | --- |
+| `readrandom_miss` | 277,468.554 | 301,242.565 | 0.9211 | `filterSkips=49604`, `mayContainFalse=49604` |
+| `readrandom_mixed` | 277,333.582 | 435,665.684 | 0.6366 | `filterSkips=24793`, `mayContainFalse=24793` |
+| `multiget_mixed` | 317,069.768 | 383,228.393 | 0.8274 | `filterSkips=24793`, `directGetBatchRequests=782` |
+
+证据文件：`ldb-longrun/build/reports/ldb-db-bench-bloom-miss-mixed-50k/ldb-db-bench-summary.csv` 与 `build/reports/rocksdbjni-comparison-bloom-miss-mixed-50k/comparison.csv`。

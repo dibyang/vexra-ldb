@@ -162,7 +162,6 @@ public final class LdbDbBenchMain {
   private static Result readRandomMiss(Config config, File dbDir) throws Exception {
     try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
       prepareDb(config, db);
-      db.compactRange(key(0), key(config.num));
     }
     Random random = new Random(config.seed);
     long hits = 0;
@@ -178,11 +177,12 @@ public final class LdbDbBenchMain {
   }
 
   private static Result readRandomMixed(Config config, File dbDir) throws Exception {
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+    }
     Random random = new Random(config.seed);
     long hits = 0;
     try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
-      prepareDb(config, db);
-      db.compactRange(key(0), key(config.num));
       long start = System.nanoTime();
       for (int i = 0; i < config.reads; i++) {
         byte[] lookupKey = (i & 1) == 0
@@ -228,7 +228,8 @@ public final class LdbDbBenchMain {
     long operations = 0;
     try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
       prepareDb(config, db);
-      db.compactRange(key(0), key(config.num));
+    }
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
       long start = System.nanoTime();
       while (operations < config.reads) {
         int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
