@@ -70,6 +70,7 @@ class LdbToolTest {
     assertTrue(result.out.contains("\"ldb.prefixReadiness\""), result.out);
     assertTrue(result.out.contains("prefixExtractor=unsupported"), result.out);
     assertTrue(result.out.contains("\"ldb.walPolicy\""), result.out);
+    assertTrue(result.out.contains("\"ldb.fileSystemStats\""), result.out);
     assertEquals("", result.err);
     assertArrayEquals(beforeFiles, sortedFileNames(dbDir));
   }

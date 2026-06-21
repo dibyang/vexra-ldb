@@ -9,9 +9,10 @@ import net.xdob.vexra.ldb.table.Table;
 import net.xdob.vexra.ldb.table.TableProperties;
 import net.xdob.vexra.ldb.table.UserComparator;
 import net.xdob.vexra.ldb.util.Closeables;
-import net.xdob.vexra.ldb.util.Finalizer;
 import net.xdob.vexra.ldb.util.InternalTableIterator;
 import net.xdob.vexra.ldb.util.Slice;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -27,8 +28,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import static java.util.Objects.requireNonNull;
 
 public class TableCache {
+  private static final Logger LOG = LoggerFactory.getLogger(TableCache.class);
   private final LoadingCache<Long, TableAndFile> cache;
-  private final Finalizer<Table> finalizer = new Finalizer<>(1);
 
   // 新增：全局共享 block cache
   private final BlockCache blockCache;
@@ -63,8 +64,7 @@ public class TableCache {
           public void onRemoval(RemovalNotification<Long, TableAndFile> notification) {
             TableAndFile value = notification.getValue();
             if (value != null) {
-              Table table = value.getTable();
-              finalizer.addCleanup(table, table.closer());
+              closeTable(value.getTable(), notification.getKey(), notification.getCause());
             }
           }
         })
@@ -220,11 +220,19 @@ public class TableCache {
     if (blockCache != null) {
       blockCache.invalidateAll();
     }
-    finalizer.destroy();
   }
 
   public void evict(long number) {
     cache.invalidate(number);
+    cache.cleanUp();
+  }
+
+  private void closeTable(Table table, Long fileNumber, RemovalCause cause) {
+    try {
+      table.closer().call();
+    } catch (Exception e) {
+      LOG.warn("Failed to close LDB table cache entry fileNumber={} cause={}", fileNumber, cause, e);
+    }
   }
 
   public String blockCacheStats() {

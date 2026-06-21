@@ -543,6 +543,11 @@ class LdbCoreBehaviorTest {
       assertNotNull(db.getProperty("ldb.compactionBacklog"));
       assertNotNull(db.getProperty("ldb.compactionScore"));
       assertNotNull(db.getProperty("ldb.compactionLevel"));
+      assertTrue(db.getProperty("ldb.fileSystemStats").contains("directoryForceFailureCount="));
+      assertNotNull(db.getProperty("ldb.directoryForceFailureCount"));
+      assertEquals("0", db.getProperty("ldb.fileDeleteFailureCount"));
+      assertNotNull(db.getProperty("ldb.lastDirectoryForceFailure"));
+      assertEquals("", db.getProperty("ldb.lastFileDeleteFailure"));
       assertTrue(Long.parseLong(db.getProperty("ldb.columnFamily.1.memTableBytes")) > 0);
       assertNotNull(db.getProperty("ldb.columnFamily.7.memTableBytes"));
       assertTrue(db.getProperty("ldb.columnFamily.1.levelFiles").contains("0="));

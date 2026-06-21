@@ -156,6 +156,11 @@ public final class ReportAnalyzer {
     summary.put("sizePerMillionOpsGb", operations == 0 ? "0.000000"
         : String.format(java.util.Locale.ROOT, "%.6f", (finalSizeBytes / 1024.0 / 1024.0 / 1024.0) / (operations / 1_000_000.0)));
     summary.put("sizeAmplification", String.format(java.util.Locale.ROOT, "%.3f", sizeAmplification));
+    summary.put("fileSystemStats", resourceStats.fileSystemStats);
+    summary.put("directoryForceFailureCount", resourceStats.directoryForceFailureCount);
+    summary.put("fileDeleteFailureCount", resourceStats.fileDeleteFailureCount);
+    summary.put("lastDirectoryForceFailure", resourceStats.lastDirectoryForceFailure);
+    summary.put("lastFileDeleteFailure", resourceStats.lastFileDeleteFailure);
     summary.put("faultInjectionEvents", faultStats.events);
     summary.put("faultInjectionRecoveredEvents", faultStats.recovered);
     summary.put("faultInjectionDetectedEvents", faultStats.detected);
@@ -382,6 +387,11 @@ public final class ReportAnalyzer {
     }
     stats.physicalSizeBytes = Long.parseLong(properties.getProperty("physicalSizeBytes", "0"));
     stats.liveDataBytes = Long.parseLong(properties.getProperty("liveDataBytes", "0"));
+    stats.fileSystemStats = properties.getProperty("fileSystemStats", "");
+    stats.directoryForceFailureCount = properties.getProperty("directoryForceFailureCount", "");
+    stats.fileDeleteFailureCount = properties.getProperty("fileDeleteFailureCount", "");
+    stats.lastDirectoryForceFailure = properties.getProperty("lastDirectoryForceFailure", "");
+    stats.lastFileDeleteFailure = properties.getProperty("lastFileDeleteFailure", "");
     return stats;
   }
 
@@ -449,6 +459,11 @@ public final class ReportAnalyzer {
   private static final class ResourceStats {
     private long physicalSizeBytes;
     private long liveDataBytes;
+    private String fileSystemStats = "";
+    private String directoryForceFailureCount = "";
+    private String fileDeleteFailureCount = "";
+    private String lastDirectoryForceFailure = "";
+    private String lastFileDeleteFailure = "";
   }
 
   private static final class PluginState {

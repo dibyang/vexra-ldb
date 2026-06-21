@@ -415,7 +415,7 @@ releasesRepository=https://s01.oss.sonatype.org/service/local/staging/deploy/mav
 | `.\gradlew.bat releaseGate` | PASS，`BUILD SUCCESSFUL` | `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.json`，版本 `0.8.0`，`storageFormatGates` 全部 PASS |
 | `.\gradlew.bat publishToMavenLocal` | PASS，`BUILD SUCCESSFUL` | 主 jar、sources jar、javadoc jar、POM、module 和签名发布到 Maven Local |
 
-`productionGateLongRun` 结果：`SUMMARY status=PASS`，本轮 operations=3593，reads=1611，writes=1622，removes=360，activeKeys=1622。
+`productionGateLongRun` 结果：`SUMMARY status=PASS`，本轮 operations=3595，reads=1612，writes=1622，removes=361，activeKeys=1622。
 
 产物元数据检查：生成的 `build/publications/maven/pom-default.xml` 已包含 `The Apache License, Version 2.0`。
 
@@ -521,3 +521,50 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-rocksdbjni-comparison.ps1
 - 工作区版本已升级为 `0.10.0-SNAPSHOT`，避免继续在正式版本号 `0.9.0` 上开发。
 - `publishUserManagedRelease` 后续将自动执行 `submitUserManagedReleaseRepository`，把 open manual staging repository 提交到校验/后续可发布流程，并输出 `USER-MANAGED-DEPLOYMENT.json`。
 - 该自动化只提交 open repository，不执行最终 Central release/publish；最终可见发布仍以用户明确确认为准。
+## 0.10.0 发布候选准备记录（2026-06-21）
+
+### 发布主题
+
+- 本次候选版本收束随机读性能专项，并补齐发布前安全可靠性增量。
+- 可靠性增量覆盖 TableCache 文件句柄关闭路径、后台压缩线程未捕获异常观测、文件系统失败诊断、长稳报告归档和 user-managed 发布边界。
+- 当前仍保持 `0.10.0-SNAPSHOT`，正式发布前再切换为 `0.10.0`，并按 user-managed 中央仓库流程等待人工确认 release。
+
+### 已归档变更
+
+- `ldb.fileSystemStats` 暴露目录 `force` 失败数、文件删除失败数和最近失败详情。
+- `ldb.directoryForceFailureCount`、`ldb.fileDeleteFailureCount`、`ldb.lastDirectoryForceFailure`、`ldb.lastFileDeleteFailure` 可作为发布后诊断入口。
+- `ldb-longrun` 报告在 `summary.json`、`summary.properties`、`properties-after.json` 和 Markdown 摘要中归档文件系统诊断字段。
+- `LdbTool` 默认诊断属性包含 `ldb.fileSystemStats`，便于发布后快速采样。
+
+### 发布前验证
+
+- `.\gradlew.bat test`：通过。
+- `.\gradlew.bat releaseGate`：通过，`BUILD SUCCESSFUL in 33s`。
+- `productionGateLongRun` 汇总：`operations=3595`、`reads=1612`、`writes=1622`、`removes=361`、`activeKeys=1622`，`SUMMARY status=PASS`。
+- 发布门禁报告：`build/reports/ldb-release-gate/RELEASE-GATE-REPORT.json` 与 `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.md`。
+
+### 已知非阻塞项
+
+- Windows 环境下仍可能出现目录 `force` 的 `AccessDeniedException` 警告；该行为保持 best-effort，不阻断写入路径，并已通过 `ldb.fileSystemStats` 与长稳报告归档。
+- Gradle deprecated features 警告仍存在，本次不作为发布阻塞项。
+
+### 正式发布前动作
+
+- 将版本从 `0.10.0-SNAPSHOT` 切换为 `0.10.0`。
+- 本地提交并推送 GitHub，创建并推送 `v0.10.0` tag。
+- 在正式版本号、提交和 tag 均可追溯后重新运行 `.\gradlew.bat releaseGate`。
+- 运行 `.\gradlew.bat publishToMavenLocal` 验证本地产物。
+- 使用 `.\gradlew.bat publishUserManagedRelease` 上传到 Central user-managed staging，等待用户在 Central 手动确认发布。
+## 0.10.0 正式发布记录（2026-06-21）
+
+### 发布动作
+
+- 版本号从 `0.10.0-SNAPSHOT` 切换为 `0.10.0`。
+- 本次发布遵循 user-managed 中央仓库流程：上传到 Central staging 后等待用户人工确认 release，不执行自动 release。
+- 正式发布前需要保证 GitHub 分支和 `v0.10.0` tag 均已推送，供 `releaseGate` 的 `gitReleaseTraceability` 门禁校验。
+
+### 发布内容
+
+- 收束随机读性能专项，并把后续安全可靠性修复纳入正式版本。
+- 文件系统失败诊断、TableCache 资源关闭、后台压缩异常观测、长稳报告归档和 LdbTool 默认诊断属性均纳入发布证据。
+- Windows 目录 `force` best-effort 警告仍为已知非阻塞项，发布报告会保留失败计数和最近失败详情。

@@ -146,7 +146,7 @@ public final class SmokeRunner {
         out.println("FINAL phase=resource");
         long physicalSize = directorySize(dbDir);
         long liveDataBytes = parseLong(db.getProperty("ldb.liveDataBytes"));
-        writeResourceState(stateDir, physicalSize, liveDataBytes);
+        writeResourceState(stateDir, db, physicalSize, liveDataBytes);
         metrics.reclamation("success", "resource sample", physicalSize, physicalSize, liveDataBytes);
         out.println("FINAL phase=report");
         writeRunState(stateDir, config);
@@ -500,11 +500,16 @@ public final class SmokeRunner {
     }
   }
 
-  private static void writeResourceState(File stateDir, long physicalSize, long liveDataBytes)
+  private static void writeResourceState(File stateDir, LDB db, long physicalSize, long liveDataBytes)
       throws Exception {
     Properties properties = new Properties();
     properties.setProperty("physicalSizeBytes", Long.toString(physicalSize));
     properties.setProperty("liveDataBytes", Long.toString(liveDataBytes));
+    properties.setProperty("fileSystemStats", property(db, "ldb.fileSystemStats"));
+    properties.setProperty("directoryForceFailureCount", property(db, "ldb.directoryForceFailureCount"));
+    properties.setProperty("fileDeleteFailureCount", property(db, "ldb.fileDeleteFailureCount"));
+    properties.setProperty("lastDirectoryForceFailure", property(db, "ldb.lastDirectoryForceFailure"));
+    properties.setProperty("lastFileDeleteFailure", property(db, "ldb.lastFileDeleteFailure"));
     try (FileOutputStream out = new FileOutputStream(new File(stateDir, "resource.properties"))) {
       properties.store(out, "ldb-longrun resource state");
     }

@@ -415,7 +415,7 @@ Pre-release verification results:
 | `.\gradlew.bat releaseGate` | PASS, `BUILD SUCCESSFUL` | `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.json`, version `0.8.0`, all `storageFormatGates` passed |
 | `.\gradlew.bat publishToMavenLocal` | PASS, `BUILD SUCCESSFUL` | Main jar, sources jar, javadoc jar, POM, module metadata, and signatures published to Maven Local |
 
-`productionGateLongRun` result: `SUMMARY status=PASS`, with operations=3593, reads=1611, writes=1622, removes=360, activeKeys=1622.
+`productionGateLongRun` result: `SUMMARY status=PASS`, with operations=3595, reads=1612, writes=1622, removes=361, activeKeys=1622.
 
 Artifact metadata check: generated `build/publications/maven/pom-default.xml` contains `The Apache License, Version 2.0`.
 
@@ -521,3 +521,50 @@ Post-release closure:
 - The workspace version has been advanced to `0.10.0-SNAPSHOT` so development no longer continues on the formal `0.9.0` version.
 - Future `publishUserManagedRelease` runs now execute `submitUserManagedReleaseRepository` after upload, submitting the open manual staging repository into validation / follow-up publication flow and writing `USER-MANAGED-DEPLOYMENT.json`.
 - This automation only submits the open repository. It does not perform the final Central release/publish; Central visibility still requires explicit user confirmation.
+## 0.10.0 Release-Candidate Preparation Record (2026-06-21)
+
+### Release theme
+
+- This candidate closes the random-read performance tuning cycle and adds the safety and reliability hardening required before release.
+- Reliability coverage includes TableCache file-handle cleanup, uncaught background-compaction exception observability, filesystem failure diagnostics, long-run report archival, and the user-managed release boundary.
+- The project remains on `0.10.0-SNAPSHOT` for this preparation step. The formal release step should switch to `0.10.0` and use the user-managed Central flow so the final release waits for manual approval.
+
+### Archived changes
+
+- `ldb.fileSystemStats` exposes directory `force` failure count, file-delete failure count, and latest failure details.
+- `ldb.directoryForceFailureCount`, `ldb.fileDeleteFailureCount`, `ldb.lastDirectoryForceFailure`, and `ldb.lastFileDeleteFailure` provide post-release diagnostic entry points.
+- `ldb-longrun` reports archive filesystem diagnostic fields in `summary.json`, `summary.properties`, `properties-after.json`, and the Markdown summary.
+- `LdbTool` includes `ldb.fileSystemStats` in the default diagnostic properties for quick post-release sampling.
+
+### Pre-release validation
+
+- `.\gradlew.bat test`: passed.
+- `.\gradlew.bat releaseGate`: passed, `BUILD SUCCESSFUL in 33s`.
+- `productionGateLongRun` summary: `operations=3595`, `reads=1612`, `writes=1622`, `removes=361`, `activeKeys=1622`, `SUMMARY status=PASS`.
+- Release-gate reports: `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.json` and `build/reports/ldb-release-gate/RELEASE-GATE-REPORT.md`.
+
+### Known non-blocking items
+
+- Windows may still report directory `force` `AccessDeniedException` warnings. The behavior remains best-effort, does not block the write path, and is now archived through `ldb.fileSystemStats` and long-run reports.
+- Gradle deprecated-features warnings still exist and are not treated as release blockers for this version.
+
+### Required formal-release actions
+
+- Switch the version from `0.10.0-SNAPSHOT` to `0.10.0`.
+- Commit locally, push to GitHub, and create/push the `v0.10.0` tag.
+- Re-run `.\gradlew.bat releaseGate` after the formal version, commit, and tag are traceable.
+- Run `.\gradlew.bat publishToMavenLocal` to validate local artifacts.
+- Use `.\gradlew.bat publishUserManagedRelease` to upload to Central user-managed staging, then wait for the user to manually confirm the final Central release.
+## 0.10.0 Formal Release Record (2026-06-21)
+
+### Release actions
+
+- Switched the version from `0.10.0-SNAPSHOT` to `0.10.0`.
+- This release follows the user-managed Central flow: artifacts are uploaded to Central staging and wait for manual user confirmation instead of automatic release.
+- Before the final upload, the GitHub branch and the `v0.10.0` tag must both be pushed so the `gitReleaseTraceability` release gate can verify them.
+
+### Release contents
+
+- Closed the random-read performance tuning cycle and included the follow-up safety and reliability fixes in the formal release.
+- Filesystem failure diagnostics, TableCache resource cleanup, background-compaction exception observability, long-run report archival, and LdbTool default diagnostics are included in release evidence.
+- Windows directory `force` best-effort warnings remain a known non-blocking item; release reports retain the failure counters and latest failure details.

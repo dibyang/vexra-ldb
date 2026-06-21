@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-21
+
+- 发布准备与可靠性：完成 0.10.0 发布候选准备记录，补齐随机读性能优化收尾后的安全可靠性增量说明；文件系统失败可观测性覆盖 `ldb.fileSystemStats`、目录 `force` 失败、文件删除失败和最近失败原因；长稳报告与发布门禁证据归档扩展到 `summary.json`、`summary.properties`、`properties-after.json` 和 Markdown 摘要；发布前验证已通过 `.\gradlew.bat test` 与 `.\gradlew.bat releaseGate`，其中 `productionGateLongRun` 汇总为 `operations=3595`、`reads=1612`、`writes=1622`、`removes=361`、`activeKeys=1622`。
+
 - 新增 eadrandom_hit benchmark 与 SST hit-path 细分统计，ldb.sstReadStats 现在暴露 candidate entry hit/miss、Bloom false positive、table index seek、data block open/seek 等计数。50k 对照显示 eadrandom_hit 为 RocksDB JNI 的 0.3959，eadrandom_mixed 为 0.6729，multiget_mixed 为 1.2768，确认下一阶段瓶颈集中在单点 hit-path。
 
 - 修正 Bloom/filter miss/mixed benchmark 口径：新增场景现在准备数据后关闭重开再计时，并移除强制 compactRange；修复 v3 filter properties 写入顺序。50k 对照显示 eadrandom_miss、eadrandom_mixed、multiget_mixed 分别达到 RocksDB JNI 的 0.9211、0.6366、0.8274。

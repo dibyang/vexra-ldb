@@ -37,6 +37,7 @@ public final class LdbTool {
       "ldb.operationStats",
       "ldb.blockCacheStats",
       "ldb.compactionStats",
+      "ldb.fileSystemStats",
       "ldb.walPolicy",
       "ldb.recoveryEvidence",
       "ldb.backupEvidence",

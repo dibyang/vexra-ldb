@@ -107,7 +107,11 @@ public class LDbImpl implements LDB {
   private volatile String lastCheckpointSummary = "none";
   private final AtomicLong snapshotCursorOpenCount = new AtomicLong();
   private final AtomicLong snapshotCursorCloseCount = new AtomicLong();
+  private final AtomicLong directoryForceFailureCount = new AtomicLong();
+  private final AtomicLong fileDeleteFailureCount = new AtomicLong();
   private volatile String lastCompactionFailure = "";
+  private volatile String lastDirectoryForceFailure = "";
+  private volatile String lastFileDeleteFailure = "";
 
   public LDbImpl(Options options, File databaseDir) throws IOException {
     requireNonNull(options, "options is null");
@@ -128,8 +132,16 @@ public class LDbImpl implements LDB {
         .setUncaughtExceptionHandler(new UncaughtExceptionHandler() {
           @Override
           public void uncaughtException(Thread t, Throwable e) {
-            System.out.printf("%s%n", t);
-            e.printStackTrace();
+            backgroundException = e;
+            compactionFailureCount.incrementAndGet();
+            lastCompactionFailure = e.getClass().getName() + ": " + e.getMessage();
+            LOG.error("Uncaught LDB compaction thread failure: databaseDir={}, thread={}", databaseDir, t.getName(), e);
+            mutex.lock();
+            try {
+              backgroundCondition.signalAll();
+            } finally {
+              mutex.unlock();
+            }
           }
         })
         .build();
@@ -1764,6 +1776,21 @@ public class LDbImpl implements LDB {
       if ("ldb.compactionScores".equals(name)) {
         return compactionScores();
       }
+      if ("ldb.fileSystemStats".equals(name)) {
+        return fileSystemStats();
+      }
+      if ("ldb.directoryForceFailureCount".equals(name)) {
+        return Long.toString(directoryForceFailureCount.get());
+      }
+      if ("ldb.fileDeleteFailureCount".equals(name)) {
+        return Long.toString(fileDeleteFailureCount.get());
+      }
+      if ("ldb.lastDirectoryForceFailure".equals(name)) {
+        return lastDirectoryForceFailure;
+      }
+      if ("ldb.lastFileDeleteFailure".equals(name)) {
+        return lastFileDeleteFailure;
+      }
       String columnFamilyProperty = columnFamilyProperty(name);
       if (columnFamilyProperty != null) {
         return columnFamilyProperty;
@@ -2603,6 +2630,13 @@ public class LDbImpl implements LDB {
         + ",objectStoreMaintenance=rebuildAndPruneOnBackup";
   }
 
+  private String fileSystemStats() {
+    return "directoryForceFailureCount=" + directoryForceFailureCount.get()
+        + ",fileDeleteFailureCount=" + fileDeleteFailureCount.get()
+        + ",lastDirectoryForceFailure=" + lastDirectoryForceFailure
+        + ",lastFileDeleteFailure=" + lastFileDeleteFailure;
+  }
+
   private String fileState(String fileName) {
     File file = new File(databaseDir, fileName);
     if (file.isFile()) {
@@ -2903,6 +2937,8 @@ public class LDbImpl implements LDB {
 
   private void deleteFileOrWarn(File file, String reason) {
     if (file.exists() && !file.delete()) {
+      fileDeleteFailureCount.incrementAndGet();
+      lastFileDeleteFailure = "file=" + file.getAbsolutePath() + ",reason=" + reason;
       LOG.warn("Failed to delete LDB file {} during {}", file, reason);
     }
   }
@@ -4886,6 +4922,9 @@ public class LDbImpl implements LDB {
         java.nio.file.StandardOpenOption.READ)) {
       ch.force(true);
     } catch (Exception e) {
+      directoryForceFailureCount.incrementAndGet();
+      lastDirectoryForceFailure = "dir=" + dir.getAbsolutePath()
+          + ",error=" + e.getClass().getName() + ": " + e.getMessage();
       LOG.warn("Failed to force LDB directory {}", dir, e);
     }
   }

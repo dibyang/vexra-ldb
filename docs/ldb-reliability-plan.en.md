@@ -140,6 +140,14 @@ No data migration is required. Validate with LDB unit tests and ADB LdbStore tes
 - SST recovery: cover completed flush/compact output recorded in MANIFEST so data is recovered through MANIFEST/SST after a forced process exit.
 - Boundary constraints: tests assert only completed sync or completed flush/compact data, and do not assert whether unsynced tail writes are visible because that depends on operating-system cache behavior.
 
+## Current Safety And Reliability Increment
+
+- Table-cache handle governance: `TableCache` now runs the table closer synchronously when an SST table is evicted, and `evict` actively triggers cache cleanup. This reduces delayed file-handle release and obsolete-SST delete failures on platforms such as Windows.
+- Background-thread failure observability: uncaught compaction-thread failures no longer go to stdout/stderr. They are recorded in `backgroundException`, reflected in compaction failure counters, logged with structure, and wake waiting threads.
+- Filesystem failure evidence: added `ldb.fileSystemStats`, `ldb.directoryForceFailureCount`, `ldb.fileDeleteFailureCount`, `ldb.lastDirectoryForceFailure`, and `ldb.lastFileDeleteFailure`, so best-effort directory-force failures and obsolete-file delete failures are queryable diagnostics.
+- Release evidence archival: `ldb-longrun` now archives these filesystem diagnostic fields in `summary.json`, `summary.properties`, and `properties-after.json`; the default `ldb properties` output also includes `ldb.fileSystemStats`.
+- Compatibility boundary: this increment does not change the WAL/SST/MANIFEST disk formats or public APIs. If synchronous table close exposes a closer failure, LDB logs a warning and continues releasing other resources.
+
 ## RocksDB Gap And Follow-Up Roadmap
 
 ### Gap List

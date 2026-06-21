@@ -140,6 +140,14 @@
 - SST 恢复：覆盖 flush/compact 后已写入 MANIFEST 的 SST，在进程强退后应通过 MANIFEST/SST 读取恢复数据。
 - 边界约束：测试只断言已完成 sync 或已完成 flush/compact 的数据，不断言未 sync 尾部写入是否可见，避免依赖操作系统缓存行为。
 
+## 当前安全与可靠性增量
+
+- 表缓存句柄治理：`TableCache` 淘汰 SST table 时同步执行 table closer，并在 `evict` 后主动触发 cache cleanup，降低 Windows 等平台上旧 SST 因延迟释放文件句柄而删除失败的概率。
+- 后台线程故障可观测性：compaction 线程未捕获异常不再输出到 stdout/stderr，而是写入 `backgroundException`、更新 compaction 失败统计、记录结构化日志并唤醒等待线程。
+- 文件系统失败证据：新增 `ldb.fileSystemStats`、`ldb.directoryForceFailureCount`、`ldb.fileDeleteFailureCount`、`ldb.lastDirectoryForceFailure` 和 `ldb.lastFileDeleteFailure`，把目录 force best-effort 失败和旧文件删除失败纳入可查询诊断面。
+- 发布证据归档：`ldb-longrun` 的 `summary.json`、`summary.properties` 和 `properties-after.json` 已归档上述文件系统诊断字段；`ldb properties` 默认输出也包含 `ldb.fileSystemStats`。
+- 兼容性边界：本增量不改变 WAL/SST/MANIFEST 磁盘格式，不改变公开 API；若同步关闭暴露 table closer 失败，只记录警告并继续释放其他资源。
+
 ## RocksDB 差距与后继开发计划
 
 ### 差距清单

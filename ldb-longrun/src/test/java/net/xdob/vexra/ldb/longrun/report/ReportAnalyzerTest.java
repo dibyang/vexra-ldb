@@ -34,7 +34,13 @@ class ReportAnalyzerTest {
           + "1,success,sample,100,90,10,0,80,0,0,0,1\n").getBytes(StandardCharsets.UTF_8));
     }
     try (FileOutputStream out = new FileOutputStream(new File(state, "resource.properties"))) {
-      out.write(("physicalSizeBytes=100\nliveDataBytes=50\n").getBytes(StandardCharsets.UTF_8));
+      out.write(("physicalSizeBytes=100\n"
+          + "liveDataBytes=50\n"
+          + "fileSystemStats=directoryForceFailureCount=1,fileDeleteFailureCount=0\n"
+          + "directoryForceFailureCount=1\n"
+          + "fileDeleteFailureCount=0\n"
+          + "lastDirectoryForceFailure=dir=db,error=java.nio.file.AccessDeniedException: db\n"
+          + "lastFileDeleteFailure=\n").getBytes(StandardCharsets.UTF_8));
     }
     try (FileOutputStream out = new FileOutputStream(new File(state, "plugin.properties"))) {
       out.write(("plugins=0:diagnostic:order=0:capabilities=OBSERVE_WRITE\n"
@@ -79,6 +85,10 @@ class ReportAnalyzerTest {
     assertEquals("30.000", summary.get("p95RemoveOpsPerSecond"));
     assertEquals("0.000", summary.get("throughputDropRatio"));
     assertEquals("2.000", summary.get("sizeAmplification"));
+    assertEquals("directoryForceFailureCount=1,fileDeleteFailureCount=0", summary.get("fileSystemStats"));
+    assertEquals("1", summary.get("directoryForceFailureCount"));
+    assertEquals("0", summary.get("fileDeleteFailureCount"));
+    assertTrue(summary.get("lastDirectoryForceFailure").contains("AccessDeniedException"));
     assertEquals("1", summary.get("reclamationEvents"));
     assertEquals("0:diagnostic:order=0:capabilities=OBSERVE_WRITE", summary.get("plugins"));
     assertEquals("count=1,callbacks=2,failures=0", summary.get("pluginStats"));
@@ -106,6 +116,9 @@ class ReportAnalyzerTest {
     String propertiesBefore = new String(Files.readAllBytes(new File(workDir, "report/properties-before.json").toPath()),
         StandardCharsets.UTF_8);
     assertTrue(propertiesBefore.contains("\"workloadSyncWrites\": \"false\""), propertiesBefore);
+    String propertiesAfter = new String(Files.readAllBytes(new File(workDir, "report/properties-after.json").toPath()),
+        StandardCharsets.UTF_8);
+    assertTrue(propertiesAfter.contains("\"fileSystemStats\""), propertiesAfter);
   }
 
   @Test
