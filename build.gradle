@@ -450,7 +450,7 @@ private Map<String, Object> httpRequest(String method, String url, Map<String, S
 }
 
 private void writeUserManagedDeploymentReport(Map<String, Object> report) {
-  File reportDir = releaseGateReportDir.get().asFile
+  File reportDir = project.layout.buildDirectory.dir('reports/ldb-release-gate').get().asFile
   if (!reportDir.exists() && !reportDir.mkdirs()) {
     throw new GradleException("Failed to create release gate report dir: ${reportDir}")
   }
