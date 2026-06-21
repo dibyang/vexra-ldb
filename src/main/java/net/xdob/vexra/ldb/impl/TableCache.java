@@ -272,6 +272,10 @@ public class TableCache {
         + ",blockSeekIndexHits=" + blockLocalIndexStats.blockSeekIndexHits
         + ",blockSeekIndexMisses=" + blockLocalIndexStats.blockSeekIndexMisses
         + ",blockSeekIndexFallbacks=" + blockLocalIndexStats.blockSeekIndexFallbacks
+        + ",blockSeekDecodedEntries=" + blockLocalIndexStats.blockSeekDecodedEntries
+        + ",blockSeekReturnedEntries=" + blockLocalIndexStats.blockSeekReturnedEntries
+        + ",blockSeekSharedKeyRebuilds=" + blockLocalIndexStats.blockSeekSharedKeyRebuilds
+        + ",blockSeekSharedKeyRebuiltBytes=" + blockLocalIndexStats.blockSeekSharedKeyRebuiltBytes
         + ",blockLocalIndexTables=" + blockLocalIndexStats.declaredTables
         + ",blockLocalIndexDirectoryLoadedTables=" + blockLocalIndexStats.directoryLoadedTables
         + ",blockLocalIndexDirectoryEntries=" + blockLocalIndexStats.directoryEntries
@@ -322,6 +326,10 @@ public class TableCache {
       stats.blockSeekIndexHits += table.getBlockSeekIndexHitCountForStats();
       stats.blockSeekIndexMisses += table.getBlockSeekIndexMissCountForStats();
       stats.blockSeekIndexFallbacks += table.getBlockSeekIndexFallbackCountForStats();
+      stats.blockSeekDecodedEntries += table.getBlockSeekDecodedEntryCountForStats();
+      stats.blockSeekReturnedEntries += table.getBlockSeekReturnedEntryCountForStats();
+      stats.blockSeekSharedKeyRebuilds += table.getBlockSeekSharedKeyRebuildCountForStats();
+      stats.blockSeekSharedKeyRebuiltBytes += table.getBlockSeekSharedKeyRebuiltBytesForStats();
       if (table.isEntryAnchorIndexDeclaredForStats()) {
         stats.entryAnchorDeclaredTables++;
       }
@@ -359,6 +367,10 @@ public class TableCache {
     private long blockSeekIndexHits;
     private long blockSeekIndexMisses;
     private long blockSeekIndexFallbacks;
+    private long blockSeekDecodedEntries;
+    private long blockSeekReturnedEntries;
+    private long blockSeekSharedKeyRebuilds;
+    private long blockSeekSharedKeyRebuiltBytes;
     private long declaredTables;
     private long directoryLoadedTables;
     private long directoryEntries;

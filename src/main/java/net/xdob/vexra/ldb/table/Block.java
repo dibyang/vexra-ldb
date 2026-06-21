@@ -177,7 +177,8 @@ public class Block
     // 如果当前 restart 区间没有候选，按照 restart 二分语义，候选最多是下一个 restart 的首条 entry。
     // 继续扫描后续 restart 区间只会增加纯随机点查的线性解码成本。
     input.setPosition(restartLimit);
-    return readCandidate(input, null, targetKey);
+    SeekResult nextResult = readCandidate(input, null, targetKey);
+    return nextResult.withAdditionalStats(result);
   }
 
   Entry<Slice, Slice> seekFromOffset(Slice targetKey, int offset) {
@@ -427,18 +428,40 @@ public class Block
   }
 
   private SeekResult seekWithValueOnMatch(SliceInput input, Slice previousKey, Slice targetKey, int limit) {
+    int decodedEntries = 0;
+    long sharedKeyRebuilds = 0;
+    long sharedKeyRebuiltBytes = 0;
+    Slice firstKeyBuffer = null;
+    Slice secondKeyBuffer = null;
+    boolean useFirstKeyBuffer = true;
     while (input.position() < limit) {
       int sharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
       int nonSharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
       int valueLength = VariableLengthQuantity.readVariableLengthInt(input);
-      Slice key = readKey(input, previousKey, sharedKeyLength, nonSharedKeyLength);
+      Slice key;
+      if (sharedKeyLength == 0) {
+        key = input.readSlice(nonSharedKeyLength);
+      } else if (useFirstKeyBuffer) {
+        firstKeyBuffer = ensureKeyBuffer(firstKeyBuffer, sharedKeyLength + nonSharedKeyLength);
+        key = readSharedKey(input, previousKey, sharedKeyLength, nonSharedKeyLength, firstKeyBuffer);
+        useFirstKeyBuffer = false;
+      } else {
+        secondKeyBuffer = ensureKeyBuffer(secondKeyBuffer, sharedKeyLength + nonSharedKeyLength);
+        key = readSharedKey(input, previousKey, sharedKeyLength, nonSharedKeyLength, secondKeyBuffer);
+        useFirstKeyBuffer = true;
+      }
+      decodedEntries++;
+      if (sharedKeyLength > 0) {
+        sharedKeyRebuilds++;
+        sharedKeyRebuiltBytes += key.length();
+      }
       if (comparator.compare(key, targetKey) >= 0) {
-        return SeekResult.hit(new BlockEntry(key, input.readSlice(valueLength)));
+        return SeekResult.hit(new BlockEntry(key, input.readSlice(valueLength)), decodedEntries, sharedKeyRebuilds, sharedKeyRebuiltBytes);
       }
       input.skipBytes(valueLength);
       previousKey = key;
     }
-    return SeekResult.miss(null);
+    return SeekResult.miss(null, decodedEntries, sharedKeyRebuilds, sharedKeyRebuiltBytes);
   }
 
   private SeekResult readCandidate(SliceInput input, Slice previousKey, Slice targetKey) {
@@ -450,12 +473,25 @@ public class Block
     int valueLength = VariableLengthQuantity.readVariableLengthInt(input);
     Slice key = readKey(input, previousKey, sharedKeyLength, nonSharedKeyLength);
     if (comparator.compare(key, targetKey) >= 0) {
-      return SeekResult.hit(new BlockEntry(key, input.readSlice(valueLength)));
+      return SeekResult.hit(new BlockEntry(key, input.readSlice(valueLength)), 1, sharedKeyLength > 0 ? 1 : 0, sharedKeyLength > 0 ? key.length() : 0);
     }
     input.skipBytes(valueLength);
-    return SeekResult.miss(null);
+    return SeekResult.miss(null, 1, sharedKeyLength > 0 ? 1 : 0, sharedKeyLength > 0 ? key.length() : 0);
   }
 
+  private static Slice ensureKeyBuffer(Slice keyBuffer, int keyLength) {
+    if (keyBuffer == null || keyBuffer.length() < keyLength) {
+      return Slices.allocate(keyLength);
+    }
+    return keyBuffer;
+  }
+
+  private static Slice readSharedKey(SliceInput input, Slice previousKey, int sharedKeyLength, int nonSharedKeyLength, Slice keyBuffer) {
+    checkState(previousKey != null, "Entry has a shared key but no previous key was provided");
+    keyBuffer.setBytes(0, previousKey, 0, sharedKeyLength);
+    input.readBytes(keyBuffer, sharedKeyLength, nonSharedKeyLength);
+    return keyBuffer.slice(0, sharedKeyLength + nonSharedKeyLength);
+  }
   private static Slice readKey(SliceInput input, Slice previousKey, int sharedKeyLength, int nonSharedKeyLength) {
     if (sharedKeyLength > 0) {
       Slice key = Slices.allocate(sharedKeyLength + nonSharedKeyLength);
@@ -518,10 +554,24 @@ public class Block
 
     private final Entry<Slice, Slice> entry;
     private final Status status;
+    private final int decodedEntries;
+    private final long sharedKeyRebuilds;
+    private final long sharedKeyRebuiltBytes;
 
     private SeekResult(Entry<Slice, Slice> entry, Status status) {
+      this(entry, status, 0, 0, 0);
+    }
+
+    private SeekResult(Entry<Slice, Slice> entry, Status status, int decodedEntries) {
+      this(entry, status, decodedEntries, 0, 0);
+    }
+
+    private SeekResult(Entry<Slice, Slice> entry, Status status, int decodedEntries, long sharedKeyRebuilds, long sharedKeyRebuiltBytes) {
       this.entry = entry;
       this.status = status;
+      this.decodedEntries = decodedEntries;
+      this.sharedKeyRebuilds = sharedKeyRebuilds;
+      this.sharedKeyRebuiltBytes = sharedKeyRebuiltBytes;
     }
 
     private static SeekResult fallback(Entry<Slice, Slice> entry) {
@@ -532,8 +582,24 @@ public class Block
       return new SeekResult(entry, Status.HIT);
     }
 
+    private static SeekResult hit(Entry<Slice, Slice> entry, int decodedEntries) {
+      return new SeekResult(entry, Status.HIT, decodedEntries);
+    }
+
+    private static SeekResult hit(Entry<Slice, Slice> entry, int decodedEntries, long sharedKeyRebuilds, long sharedKeyRebuiltBytes) {
+      return new SeekResult(entry, Status.HIT, decodedEntries, sharedKeyRebuilds, sharedKeyRebuiltBytes);
+    }
+
     private static SeekResult miss(Entry<Slice, Slice> entry) {
       return new SeekResult(entry, Status.MISS);
+    }
+
+    private static SeekResult miss(Entry<Slice, Slice> entry, int decodedEntries) {
+      return new SeekResult(entry, Status.MISS, decodedEntries);
+    }
+
+    private static SeekResult miss(Entry<Slice, Slice> entry, int decodedEntries, long sharedKeyRebuilds, long sharedKeyRebuiltBytes) {
+      return new SeekResult(entry, Status.MISS, decodedEntries, sharedKeyRebuilds, sharedKeyRebuiltBytes);
     }
 
     Entry<Slice, Slice> getEntry() {
@@ -550,6 +616,28 @@ public class Block
 
     boolean isFallback() {
       return status == Status.FALLBACK;
+    }
+
+    int getDecodedEntries() {
+      return decodedEntries;
+    }
+
+    long getSharedKeyRebuilds() {
+      return sharedKeyRebuilds;
+    }
+
+    long getSharedKeyRebuiltBytes() {
+      return sharedKeyRebuiltBytes;
+    }
+
+    private SeekResult withAdditionalStats(SeekResult additional) {
+      if (additional.decodedEntries == 0 && additional.sharedKeyRebuilds == 0 && additional.sharedKeyRebuiltBytes == 0) {
+        return this;
+      }
+      return new SeekResult(entry, status,
+          decodedEntries + additional.decodedEntries,
+          sharedKeyRebuilds + additional.sharedKeyRebuilds,
+          sharedKeyRebuiltBytes + additional.sharedKeyRebuiltBytes);
     }
   }
 }

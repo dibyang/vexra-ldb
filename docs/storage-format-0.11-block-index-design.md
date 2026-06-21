@@ -522,3 +522,62 @@ BI 15 将 key-only restart-key 构建限制在单点 `Table.get(Slice)` 的 dire
 继续执行完整 50k 默认格式 gate：`ldb-longrun/build/reports/ldb-db-bench-hot-candidate-cache-direct-full-50k/ldb-db-bench-summary.csv`。结果为：`readrandom_hit=160,800.400 ops/s`，`readrandom_sameblock=498,942.740 ops/s`，`readrandom_burst=263,292.590 ops/s`，`multiget_mixed=243,876.505 ops/s`，`multiget_sameblock=381,849.327 ops/s`，`scan=1,038,542.385 ops/s`。
 
 结论：direct-mapped 小型候选缓存在三项样本中可达到 `readrandom_hit=181,001.175 ops/s`，但完整 gate 未稳定复现；它降低了缓存探测成本，也避免了全量 entry 索引构建，但对随机 hit 主指标的稳定提升仍不足。当前不应作为发布级默认优化提交结论；更值得继续的是将候选缓存从 exact target key 扩展为“同 block 上一个候选 entry 的邻近复用”或继续优化 block 内 seek 本身的对象分配。
+### block seek 解码计数
+
+为避免继续盲目优化 block 内 seek，`sstReadStats` 新增 `blockSeekDecodedEntries` 与 `blockSeekReturnedEntries`。验证命令通过：`compileJava`、`BlockTest`/`LdbObservabilityTest` 聚焦测试，以及 50k 样本 `ldb-longrun/build/reports/ldb-db-bench-block-seek-decode-counters-50k/ldb-db-bench-summary.csv`。
+
+计数样本中，`readrandom_hit=115,719.445 ops/s`，`blockSeekDecodedEntries=169512`，`blockSeekReturnedEntries=50000`；`multiget_mixed=171,657.553 ops/s`，`blockSeekDecodedEntries=169572`，`blockSeekReturnedEntries=50000`。平均每次 point seek 解码约 `3.39` 个 block entry，说明当前 block seek index 已经显著缩短线性扫描距离。后续优化重点应从“继续加缓存”转向减少每个 decoded entry 的 key/Slice 构造、prefix key 拼接和 comparator 输入对象成本。
+## 2026-06-21 block seek key 重建计数
+
+本轮在 block seek 统计中补充 `blockSeekSharedKeyRebuilds` 与 `blockSeekSharedKeyRebuiltBytes`，用于区分“解码 entry 数量”和“因为 shared key 前缀压缩而需要重建完整 key 的次数”。这属于观测增强，不改变磁盘格式，也不改变查询语义。
+
+50k 默认读画像样本结果：
+
+| benchmark | ops/s | decoded entries | returned entries | shared-key rebuilds | rebuilt bytes | decoded / return | rebuilds / return | bytes / rebuild |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| readrandom_hit | 147,884.060 | 169,512 | 50,000 | 150,139 | 4,053,753 | 3.390 | 3.003 | 27.0 |
+| multiget_mixed | 217,425.431 | 169,572 | 50,000 | 150,119 | 4,053,213 | 3.391 | 3.002 | 27.0 |
+
+结论：inline block seek index 已经把扫描长度压到约 3.39 条 entry，但其中约 3.00 条会触发 shared-key 完整 key 重建。下一阶段若继续追随机读性能，优先考虑“比较阶段避免为未命中候选重建完整 `Slice`”或“默认比较器专用的分段比较快路径”；该优化必须仅在默认 bytewise/internal comparator 语义下启用，不能泛化到任意自定义 comparator。
+## 2026-06-21 block seek key buffer 复用
+
+在不改变比较器语义和磁盘格式的前提下，`seekWithValueOnMatch` 对 shared-key 解码引入两个局部 key buffer 轮换复用。由于 prefix-compressed block 的下一条 entry 依赖上一条完整 key，不能直接跳过未命中候选的 key 构造；本次优化保留完整 previous-key 链，只减少每次 shared-key 重建时的 backing array 分配。
+
+50k 默认读画像样本结果：
+
+| benchmark | ops/s | decoded / return | rebuilds / return | bytes / rebuild |
+| --- | ---: | ---: | ---: | ---: |
+| readrandom_hit | 167,390.071 | 3.390 | 3.003 | 27.0 |
+| multiget_mixed | 255,101.130 | 3.391 | 3.002 | 27.0 |
+
+该结果说明 key buffer 复用不会改变 block seek 覆盖量；吞吐在小样本下有改善，但仍需以发布门禁或多轮长测确认稳定收益。
+### 200k 多轮稳定性样本
+
+为避免 50k 单轮样本误判，本轮追加 3 组 200k 默认读画像样本：
+
+| run | fillseq ops/s | readrandom_hit ops/s | multiget_mixed ops/s |
+| --- | ---: | ---: | ---: |
+| 200k-a | 195,077.017 | 231,268.335 | 179,095.523 |
+| 200k-b | 211,238.992 | 202,204.371 | 144,314.951 |
+| 200k-c | 237,941.369 | 225,243.006 | 176,328.483 |
+| average | 214,752.459 | 219,571.904 | 166,579.652 |
+
+结论：`readrandom_hit` 在 200k 多轮样本中相对上一轮正式门禁约 188k 有较明确提升；`multiget_mixed` 本轮波动较大且均值不如部分历史样本，暂不把 key buffer 复用视为 MultiGet 收益来源。下一步若继续优化 MultiGet，应回到批量分组、block cache/point-get slot 命中率和批内排序/去重方向，而不是继续扩大 block 内 key buffer 复用。
+## 2026-06-21 MultiGet 后续候选验证
+
+本轮验证两个 MultiGet 候选方向，均未进入最终代码：
+
+| 候选 | 50k 样本结论 | 是否保留 |
+| --- | --- | --- |
+| dense block 统一走 `seekAll` | 当前 `multiget_mixed` 画像中 `tableBatchDataBlockGroups=48,839`、`tableBatchDataBlockKeys=50,000`、`tableBatchDenseBlockGroups=0`，几乎每个 block 只有一个 key，dense 路径没有覆盖。 | 否 |
+| MultiGet data block 打开复用 point-get block cache | `multiget_mixed=173,148.600 ops/s`，低于相邻样本；虽然 `tablePointGetSlotHits=39,899`，但 slot 维护、碰撞和 last-block 状态扰动超过收益。 | 否 |
+
+结论：当前默认 `multiget_mixed` 更像随机单点读集合，而不是同 block 密集批量读。后续若继续追 MultiGet，应优先考虑 LSM 层批内去重、跨层候选裁剪、批内 key 顺序生成策略，或单独构造“同 block 密集 MultiGet”画像；不要在默认随机画像上继续扩大 dense block 或 point-get 小缓存复用。
+## 2026-06-21 MultiGet SST miss 去重
+
+本轮在 `LDbImpl` API 层对批量读中已经 miss memtable/immutable memtable、即将进入 SST 的 key 做去重：相同 CF + user key 只保留一个 `LookupKey` 进入 `VersionSet`，查询结果再回填到所有原始请求位置。回填时为每个位置生成独立 `byte[]`，避免重复 key 的返回值共享同一个可变数组引用。
+
+该优化不改变 LSM 可见语义：同一个 batch 中的重复 key 在同一 snapshot sequence 下应返回相同结果；memtable 已命中的位置仍按原路径立即返回。默认 `multiget_mixed` 50k 样本结果为 `readrandom_hit=196,064.053 ops/s`、`multiget_mixed=213,040.644 ops/s`。由于默认画像重复率有限，该优化主要是为真实业务中存在重复 key 的 MultiGet 降低 SST 查询放大，收益取决于批内重复率。
+### MultiGet SST miss 懒去重收口
+
+为降低无重复批次的额外成本，SST miss 去重改为懒触发：先用无分配的 `Slice` 内容比较检测 batch 内是否存在重复 user key；没有重复时直接调用原 `VersionSet` 批量查询路径，只有发现重复时才构建 unique 映射。50k 默认画像样本结果为 `readrandom_hit=169,550.724 ops/s`、`multiget_mixed=209,650.287 ops/s`。该结果说明默认随机画像仍不是重复 key 友好 workload；本优化保留的价值主要在真实重复 key MultiGet，而不是默认随机 `multiget_mixed` 峰值。

@@ -3292,13 +3292,7 @@ public class LDbImpl implements LDB {
         mutex.unlock();
       }
 
-      List<LookupResult> lookupResults = versions.get(cf.getId(), missedLookupKeys);
-      for (int i = 0; i < lookupResults.size(); i++) {
-        LookupResult lookupResult = lookupResults.get(i);
-        if (lookupResult != null) {
-          values.set(missedIndexes.get(i), valueBytes(lookupResult));
-        }
-      }
+      fillSstBatchResults(cf.getId(), missedLookupKeys, missedIndexes, values);
 
       mutex.lock();
       try {
@@ -3356,13 +3350,7 @@ public class LDbImpl implements LDB {
         mutex.unlock();
       }
 
-      List<LookupResult> lookupResults = versions.get(cf.getId(), missedLookupKeys);
-      for (int i = 0; i < lookupResults.size(); i++) {
-        LookupResult lookupResult = lookupResults.get(i);
-        if (lookupResult != null) {
-          values.set(missedIndexes.get(i), valueBytes(lookupResult));
-        }
-      }
+      fillSstBatchResults(cf.getId(), missedLookupKeys, missedIndexes, values);
 
       mutex.lock();
       try {
@@ -3378,6 +3366,93 @@ public class LDbImpl implements LDB {
     }
   }
 
+  private void fillSstBatchResults(int cfId,
+                                   List<LookupKey> missedLookupKeys,
+                                   List<Integer> missedIndexes,
+                                   List<byte[]> values) {
+    if (missedLookupKeys.isEmpty()) {
+      return;
+    }
+    if (!hasDuplicateLookupKey(missedLookupKeys)) {
+      fillSstBatchResultsWithoutDedupe(cfId, missedLookupKeys, missedIndexes, values);
+      return;
+    }
+
+    Map<BatchKey, Integer> uniqueIndexes = new LinkedHashMap<BatchKey, Integer>();
+    List<LookupKey> uniqueLookupKeys = new ArrayList<LookupKey>();
+    List<List<Integer>> resultIndexes = new ArrayList<List<Integer>>();
+    for (int i = 0; i < missedLookupKeys.size(); i++) {
+      LookupKey lookupKey = missedLookupKeys.get(i);
+      BatchKey batchKey = new BatchKey(cfId, lookupKey.getUserKey());
+      Integer uniqueIndex = uniqueIndexes.get(batchKey);
+      if (uniqueIndex == null) {
+        uniqueIndex = uniqueLookupKeys.size();
+        uniqueIndexes.put(batchKey, uniqueIndex);
+        uniqueLookupKeys.add(lookupKey);
+        resultIndexes.add(new ArrayList<Integer>());
+      }
+      resultIndexes.get(uniqueIndex).add(missedIndexes.get(i));
+    }
+
+    List<LookupResult> lookupResults = versions.get(cfId, uniqueLookupKeys);
+    for (int i = 0; i < lookupResults.size(); i++) {
+      LookupResult lookupResult = lookupResults.get(i);
+      if (lookupResult == null) {
+        continue;
+      }
+      byte[] value = valueBytes(lookupResult);
+      for (Integer resultIndex : resultIndexes.get(i)) {
+        values.set(resultIndex, copyValue(value));
+      }
+    }
+  }
+
+  private void fillSstBatchResultsWithoutDedupe(int cfId,
+                                                List<LookupKey> missedLookupKeys,
+                                                List<Integer> missedIndexes,
+                                                List<byte[]> values) {
+    List<LookupResult> lookupResults = versions.get(cfId, missedLookupKeys);
+    for (int i = 0; i < lookupResults.size(); i++) {
+      LookupResult lookupResult = lookupResults.get(i);
+      if (lookupResult != null) {
+        values.set(missedIndexes.get(i), valueBytes(lookupResult));
+      }
+    }
+  }
+
+  private static boolean hasDuplicateLookupKey(List<LookupKey> lookupKeys) {
+    for (int i = 0; i < lookupKeys.size(); i++) {
+      Slice left = lookupKeys.get(i).getUserKey();
+      for (int j = i + 1; j < lookupKeys.size(); j++) {
+        if (sliceEquals(left, lookupKeys.get(j).getUserKey())) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private static boolean sliceEquals(Slice left, Slice right) {
+    if (left == right) {
+      return true;
+    }
+    if (left.length() != right.length()) {
+      return false;
+    }
+    for (int i = 0; i < left.length(); i++) {
+      if (left.getUnsignedByte(i) != right.getUnsignedByte(i)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static byte[] copyValue(byte[] value) {
+    if (value == null) {
+      return null;
+    }
+    return Arrays.copyOf(value, value.length);
+  }
   private static byte[] valueBytes(LookupResult lookupResult) {
     Slice value = lookupResult.getValue();
     return value == null ? null : value.getBytes();

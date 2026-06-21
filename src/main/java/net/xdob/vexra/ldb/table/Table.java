@@ -69,6 +69,10 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   private long blockSeekIndexHitCount;
   private long blockSeekIndexMissCount;
   private long blockSeekIndexFallbackCount;
+  private long blockSeekDecodedEntryCount;
+  private long blockSeekReturnedEntryCount;
+  private long blockSeekSharedKeyRebuildCount;
+  private long blockSeekSharedKeyRebuiltBytes;
   private volatile LastPointGetIndex lastPointGetIndex;
   private volatile LastPointGetBlock lastPointGetBlock;
   private final BlockHandle[] pointGetBlockCacheHandles = new BlockHandle[POINT_GET_BLOCK_CACHE_LIMIT];
@@ -589,11 +593,15 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       return dataBlock.seek(internalKey);
     }
     Block.SeekResult seekResult = dataBlock.seekWithIndex(internalKey);
+    blockSeekDecodedEntryCount += seekResult.getDecodedEntries();
+    blockSeekSharedKeyRebuildCount += seekResult.getSharedKeyRebuilds();
+    blockSeekSharedKeyRebuiltBytes += seekResult.getSharedKeyRebuiltBytes();
     Entry<Slice, Slice> candidate = seekResult.getEntry();
     if (candidate == null) {
       blockSeekIndexMissCount++;
     } else {
       blockSeekIndexHitCount++;
+      blockSeekReturnedEntryCount++;
     }
     return candidate;
   }
@@ -884,6 +892,22 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
 
   public long getBlockSeekIndexFallbackCountForStats() {
     return blockSeekIndexFallbackCount;
+  }
+
+  public long getBlockSeekDecodedEntryCountForStats() {
+    return blockSeekDecodedEntryCount;
+  }
+
+  public long getBlockSeekReturnedEntryCountForStats() {
+    return blockSeekReturnedEntryCount;
+  }
+
+  public long getBlockSeekSharedKeyRebuildCountForStats() {
+    return blockSeekSharedKeyRebuildCount;
+  }
+
+  public long getBlockSeekSharedKeyRebuiltBytesForStats() {
+    return blockSeekSharedKeyRebuiltBytes;
   }
 
   /**

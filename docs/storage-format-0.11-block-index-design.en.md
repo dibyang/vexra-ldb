@@ -522,3 +522,62 @@ Validation passed with `compileJava`, focused `BlockTest`/`LdbObservabilityTest`
 A full 50k default-format gate was run at `ldb-longrun/build/reports/ldb-db-bench-hot-candidate-cache-direct-full-50k/ldb-db-bench-summary.csv`. Results: `readrandom_hit=160,800.400 ops/s`, `readrandom_sameblock=498,942.740 ops/s`, `readrandom_burst=263,292.590 ops/s`, `multiget_mixed=243,876.505 ops/s`, `multiget_sameblock=381,849.327 ops/s`, and `scan=1,038,542.385 ops/s`.
 
 Conclusion: the direct-mapped small candidate cache reached `readrandom_hit=181,001.175 ops/s` in the three-scenario sample, but the full gate did not reproduce it stably. It lowers cache probe cost and avoids full-entry-index construction, but still does not provide a stable random-hit improvement. It should not be treated as a release-grade default optimization yet; the more valuable follow-up is extending the candidate cache from exact target-key reuse to neighboring-candidate reuse within the same block, or further reducing object allocation in the in-block seek path.
+### Block seek decode counters
+
+To avoid further blind in-block seek optimization, `sstReadStats` now includes `blockSeekDecodedEntries` and `blockSeekReturnedEntries`. Validation passed with `compileJava`, focused `BlockTest`/`LdbObservabilityTest` coverage, and the 50k sample `ldb-longrun/build/reports/ldb-db-bench-block-seek-decode-counters-50k/ldb-db-bench-summary.csv`.
+
+In the counter sample, `readrandom_hit=115,719.445 ops/s` recorded `blockSeekDecodedEntries=169512` and `blockSeekReturnedEntries=50000`; `multiget_mixed=171,657.553 ops/s` recorded `blockSeekDecodedEntries=169572` and `blockSeekReturnedEntries=50000`. Each point seek decodes about `3.39` block entries on average, showing that the current block seek index already keeps linear scan distance short. Future optimization should move away from adding more caches and focus on reducing per-decoded-entry key/Slice construction, prefix-key reconstruction, and comparator input-object cost.
+## 2026-06-21 block seek key rebuild counters
+
+This round adds `blockSeekSharedKeyRebuilds` and `blockSeekSharedKeyRebuiltBytes` to block seek stats so we can separate “entries decoded” from “full keys rebuilt because of shared-prefix compression”. This is an observability-only change: it does not change the on-disk format or lookup semantics.
+
+50k default read-profile sample:
+
+| benchmark | ops/s | decoded entries | returned entries | shared-key rebuilds | rebuilt bytes | decoded / return | rebuilds / return | bytes / rebuild |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| readrandom_hit | 147,884.060 | 169,512 | 50,000 | 150,139 | 4,053,753 | 3.390 | 3.003 | 27.0 |
+| multiget_mixed | 217,425.431 | 169,572 | 50,000 | 150,119 | 4,053,213 | 3.391 | 3.002 | 27.0 |
+
+Conclusion: the inline block seek index already limits the scan length to about 3.39 decoded entries per successful point seek, but about 3.00 of those entries rebuild a full shared-prefix key. If the next phase continues optimizing random-read performance, the best candidate is to avoid full `Slice` rebuilds for non-returned candidates during comparison, or to add a segmented-comparison fast path for the default comparator only. This must be gated to default bytewise/internal comparator semantics and must not be generalized to arbitrary custom comparators.
+## 2026-06-21 block seek key buffer reuse
+
+Without changing comparator semantics or the on-disk format, `seekWithValueOnMatch` now alternates two local key buffers while decoding shared-prefix keys. Because the next entry in a prefix-compressed block depends on the previous full key, non-returned candidate keys cannot be skipped outright. This optimization preserves the full previous-key chain and only reduces backing-array allocation during shared-key rebuilds.
+
+50k default read-profile sample:
+
+| benchmark | ops/s | decoded / return | rebuilds / return | bytes / rebuild |
+| --- | ---: | ---: | ---: | ---: |
+| readrandom_hit | 167,390.071 | 3.390 | 3.003 | 27.0 |
+| multiget_mixed | 255,101.130 | 3.391 | 3.002 | 27.0 |
+
+The result shows that key-buffer reuse does not change block seek coverage. The small-sample throughput improved, but release gates or repeated longer runs are still needed before treating the gain as stable.
+### 200k repeated stability sample
+
+To avoid over-reading a single 50k sample, this round adds three 200k default read-profile samples:
+
+| run | fillseq ops/s | readrandom_hit ops/s | multiget_mixed ops/s |
+| --- | ---: | ---: | ---: |
+| 200k-a | 195,077.017 | 231,268.335 | 179,095.523 |
+| 200k-b | 211,238.992 | 202,204.371 | 144,314.951 |
+| 200k-c | 237,941.369 | 225,243.006 | 176,328.483 |
+| average | 214,752.459 | 219,571.904 | 166,579.652 |
+
+Conclusion: `readrandom_hit` shows a clearer improvement in the 200k repeated samples compared with the previous formal gate around 188k. `multiget_mixed` remains noisy and its average is below some earlier samples, so key-buffer reuse should not be treated as a MultiGet win. If the next phase targets MultiGet again, the higher-value areas are batch grouping, block-cache/point-get slot hit rates, and in-batch ordering/deduplication rather than expanding block-local key-buffer reuse.
+## 2026-06-21 MultiGet follow-up candidate validation
+
+This round validated two MultiGet candidates, neither of which remains in the final code:
+
+| Candidate | 50k sample conclusion | Kept |
+| --- | --- | --- |
+| Route every dense block group through `seekAll` | The current `multiget_mixed` profile had `tableBatchDataBlockGroups=48,839`, `tableBatchDataBlockKeys=50,000`, and `tableBatchDenseBlockGroups=0`; almost every block had only one key, so the dense path had no coverage. | No |
+| Reuse the point-get block cache for MultiGet data-block opens | `multiget_mixed=173,148.600 ops/s`, below neighboring samples. Even with `tablePointGetSlotHits=39,899`, slot maintenance, collisions, and last-block state churn outweighed the benefit. | No |
+
+Conclusion: the default `multiget_mixed` profile behaves more like a collection of random point reads than a dense same-block batch read. If the next phase continues MultiGet work, better candidates are LSM-level in-batch deduplication, cross-level candidate pruning, input key ordering strategy, or a separate dense same-block MultiGet profile. Do not keep expanding dense-block or point-get small-cache reuse for the default random profile.
+## 2026-06-21 MultiGet SST-miss deduplication
+
+This round deduplicates batch-read keys in `LDbImpl` after they miss the mutable and immutable memtables and before they enter SST lookup. For the same CF + user key, only one `LookupKey` is sent to `VersionSet`; the result is then filled back into every original request position. Each filled position receives its own `byte[]` copy so duplicate-key results do not share a mutable returned array.
+
+This does not change visible LSM semantics: duplicate keys in the same batch and snapshot sequence should return the same result, while positions already satisfied by memtables still use the original fast path. The default 50k `multiget_mixed` sample reported `readrandom_hit=196,064.053 ops/s` and `multiget_mixed=213,040.644 ops/s`. Because the default profile has limited duplicate-key coverage, this optimization is mainly intended to reduce SST lookup amplification for real MultiGet workloads with repeated keys; the benefit depends on in-batch duplicate rate.
+### MultiGet SST-miss lazy deduplication closure
+
+To reduce overhead for batches without duplicate keys, SST-miss deduplication is now lazy: it first performs allocation-free `Slice` content checks to detect duplicate user keys in the batch; if no duplicate exists, it directly uses the original `VersionSet` batch lookup path, and only builds the unique-key mapping after a duplicate is found. The 50k default-profile sample reported `readrandom_hit=169,550.724 ops/s` and `multiget_mixed=209,650.287 ops/s`. This confirms that the default random profile is still not a duplicate-key-friendly workload; the retained value of this optimization is primarily for real MultiGet batches with repeated keys rather than default random `multiget_mixed` peak throughput.
