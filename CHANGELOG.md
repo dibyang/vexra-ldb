@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 新增 eadrandom_hit benchmark 与 SST hit-path 细分统计，ldb.sstReadStats 现在暴露 candidate entry hit/miss、Bloom false positive、table index seek、data block open/seek 等计数。50k 对照显示 eadrandom_hit 为 RocksDB JNI 的 0.3959，eadrandom_mixed 为 0.6729，multiget_mixed 为 1.2768，确认下一阶段瓶颈集中在单点 hit-path。
+
 - 修正 Bloom/filter miss/mixed benchmark 口径：新增场景现在准备数据后关闭重开再计时，并移除强制 compactRange；修复 v3 filter properties 写入顺序。50k 对照显示 eadrandom_miss、eadrandom_mixed、multiget_mixed 分别达到 RocksDB JNI 的 0.9211、0.6366、0.8274。
 
 - ldbDbBenchReport 新增 eadrandom_miss、eadrandom_mixed 与 multiget_mixed，用于 Bloom/filter miss-heavy 与 mixed 随机读专项对比；v3 table properties 在启用 FilterPolicy 时记录 filter policy、scope、key count、filter block bytes 与 bits-per-key，补齐发布前自描述证据。

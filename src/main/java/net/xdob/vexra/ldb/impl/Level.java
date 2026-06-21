@@ -136,8 +136,11 @@ public class Level
         return LookupResult.deleted(key, rangeDeleteSequence);
       }
       if (pointResult != null) {
+        readStats.recordCandidateEntryHit();
         return pointResult;
       }
+      readStats.recordCandidateEntryMiss();
+      readStats.recordBloomFalsePositive();
     }
 
     return null;
@@ -190,7 +193,7 @@ public class Level
 
       List<Entry<Slice, Slice>> entries = tableCache.get(fileMetaData, internalKeys);
       for (int i = 0; i < fileKeys.size(); i++) {
-        LookupResult lookupResult = getFromTableEntry(fileMetaData, fileKeys.get(i), entries.get(i));
+        LookupResult lookupResult = getFromTableEntry(fileMetaData, fileKeys.get(i), entries.get(i), readStats);
         if (lookupResult != null) {
           results.set(keyIndexes.get(i), lookupResult);
         }
@@ -200,7 +203,10 @@ public class Level
     return results;
   }
 
-  private LookupResult getFromTableEntry(FileMetaData fileMetaData, LookupKey key, Entry<Slice, Slice> entry) {
+  private LookupResult getFromTableEntry(FileMetaData fileMetaData,
+                                         LookupKey key,
+                                         Entry<Slice, Slice> entry,
+                                         ReadStats readStats) {
     LookupResult pointResult = null;
     long pointSequence = -1;
     if (entry != null) {
@@ -222,6 +228,12 @@ public class Level
         : -1;
     if (rangeDeleteSequence >= 0) {
       return LookupResult.deleted(key, rangeDeleteSequence);
+    }
+    if (pointResult != null) {
+      readStats.recordCandidateEntryHit();
+    } else {
+      readStats.recordCandidateEntryMiss();
+      readStats.recordBloomFalsePositive();
     }
     return pointResult;
   }

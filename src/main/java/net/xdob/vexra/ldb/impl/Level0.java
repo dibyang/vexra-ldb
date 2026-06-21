@@ -114,8 +114,11 @@ public class Level0
         return LookupResult.deleted(key, rangeDeleteSequence);
       }
       if (pointResult != null) {
+        readStats.recordCandidateEntryHit();
         return pointResult;
       }
+      readStats.recordCandidateEntryMiss();
+      readStats.recordBloomFalsePositive();
 
       if (readStats.getSeekFile() == null) {
         // We have had more than one seek for this read.  Charge the first file.
@@ -171,7 +174,7 @@ public class Level0
 
       List<Entry<Slice, Slice>> entries = tableCache.get(fileMetaData, internalKeys);
       for (int i = 0; i < fileKeys.size(); i++) {
-        LookupResult lookupResult = getFromTableEntry(fileMetaData, fileKeys.get(i), entries.get(i));
+        LookupResult lookupResult = getFromTableEntry(fileMetaData, fileKeys.get(i), entries.get(i), readStats);
         if (lookupResult != null) {
           int originalIndex = candidateIndexes.get(i);
           results.set(originalIndex, lookupResult);
@@ -183,7 +186,10 @@ public class Level0
     return results;
   }
 
-  private LookupResult getFromTableEntry(FileMetaData fileMetaData, LookupKey key, Entry<Slice, Slice> entry) {
+  private LookupResult getFromTableEntry(FileMetaData fileMetaData,
+                                         LookupKey key,
+                                         Entry<Slice, Slice> entry,
+                                         ReadStats readStats) {
     LookupResult pointResult = null;
     long pointSequence = -1;
     if (entry != null) {
@@ -205,6 +211,12 @@ public class Level0
         : -1;
     if (rangeDeleteSequence >= 0) {
       return LookupResult.deleted(key, rangeDeleteSequence);
+    }
+    if (pointResult != null) {
+      readStats.recordCandidateEntryHit();
+    } else {
+      readStats.recordCandidateEntryMiss();
+      readStats.recordBloomFalsePositive();
     }
     return pointResult;
   }

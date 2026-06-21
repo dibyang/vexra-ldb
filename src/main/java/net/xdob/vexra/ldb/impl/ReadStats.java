@@ -6,6 +6,9 @@ public class ReadStats {
   private long candidateFiles;
   private long filterSkips;
   private long tableReads;
+  private long candidateEntryHits;
+  private long candidateEntryMisses;
+  private long bloomFalsePositives;
 
   public void clear() {
     seekFileLevel = -1;
@@ -13,6 +16,9 @@ public class ReadStats {
     candidateFiles = 0;
     filterSkips = 0;
     tableReads = 0;
+    candidateEntryHits = 0;
+    candidateEntryMisses = 0;
+    bloomFalsePositives = 0;
   }
 
   public int getSeekFileLevel() {
@@ -53,5 +59,29 @@ public class ReadStats {
 
   public void recordTableRead() {
     tableReads++;
+  }
+
+  public long getCandidateEntryHits() {
+    return candidateEntryHits;
+  }
+
+  public void recordCandidateEntryHit() {
+    candidateEntryHits++;
+  }
+
+  public long getCandidateEntryMisses() {
+    return candidateEntryMisses;
+  }
+
+  public void recordCandidateEntryMiss() {
+    candidateEntryMisses++;
+  }
+
+  public long getBloomFalsePositives() {
+    return bloomFalsePositives;
+  }
+
+  public void recordBloomFalsePositive() {
+    bloomFalsePositives++;
   }
 }

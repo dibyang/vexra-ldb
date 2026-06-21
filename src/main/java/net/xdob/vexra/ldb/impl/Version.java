@@ -39,6 +39,9 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
   private final AtomicLong candidateFileCount = new AtomicLong();
   private final AtomicLong filterSkipCount = new AtomicLong();
   private final AtomicLong tableReadCount = new AtomicLong();
+  private final AtomicLong candidateEntryHitCount = new AtomicLong();
+  private final AtomicLong candidateEntryMissCount = new AtomicLong();
+  private final AtomicLong bloomFalsePositiveCount = new AtomicLong();
 
   public Version(VersionSet versionSet) {
     this.versionSet = versionSet;
@@ -229,6 +232,9 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
     candidateFileCount.addAndGet(readStats.getCandidateFiles());
     filterSkipCount.addAndGet(readStats.getFilterSkips());
     tableReadCount.addAndGet(readStats.getTableReads());
+    candidateEntryHitCount.addAndGet(readStats.getCandidateEntryHits());
+    candidateEntryMissCount.addAndGet(readStats.getCandidateEntryMisses());
+    bloomFalsePositiveCount.addAndGet(readStats.getBloomFalsePositives());
   }
 
   public String sstReadStats() {
@@ -237,7 +243,10 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
         + ",levelGets=" + levelGetCount.get()
         + ",candidateFiles=" + candidateFileCount.get()
         + ",filterSkips=" + filterSkipCount.get()
-        + ",tableReads=" + tableReadCount.get();
+        + ",tableReads=" + tableReadCount.get()
+        + ",candidateEntryHits=" + candidateEntryHitCount.get()
+        + ",candidateEntryMisses=" + candidateEntryMissCount.get()
+        + ",bloomFalsePositives=" + bloomFalsePositiveCount.get();
   }
 
   int pickLevelForMemTableOutput(int cfId, Slice smallestUserKey, Slice largestUserKey) {

@@ -90,6 +90,8 @@ public final class LdbDbBenchMain {
         results.add(warmReadRandom(config, dbDir, benchmark));
       } else if ("cold_readrandom".equals(benchmark)) {
         results.add(coldReadRandom(config, dbDir));
+      } else if ("readrandom_hit".equals(benchmark)) {
+        results.add(readRandomHit(config, dbDir));
       } else if ("readrandom_miss".equals(benchmark)) {
         results.add(readRandomMiss(config, dbDir));
       } else if ("readrandom_mixed".equals(benchmark)) {
@@ -156,6 +158,23 @@ public final class LdbDbBenchMain {
         }
       }
       return Result.of("cold_readrandom", config.reads, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result readRandomHit(Config config, File dbDir) throws Exception {
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      prepareDb(config, db);
+    }
+    Random random = new Random(config.seed);
+    long hits = 0;
+    try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      long start = System.nanoTime();
+      for (int i = 0; i < config.reads; i++) {
+        if (db.get(key(random.nextInt(config.num))) != null) {
+          hits++;
+        }
+      }
+      return Result.of("readrandom_hit", config.reads, hits, start, System.nanoTime(), db);
     }
   }
 

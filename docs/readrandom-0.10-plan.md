@@ -203,3 +203,17 @@
 | `multiget_mixed` | 317,069.768 | 383,228.393 | 0.8274 | `filterSkips=24793`, `directGetBatchRequests=782` |
 
 证据文件：`ldb-longrun/build/reports/ldb-db-bench-bloom-miss-mixed-50k/ldb-db-bench-summary.csv` 与 `build/reports/rocksdbjni-comparison-bloom-miss-mixed-50k/comparison.csv`。
+## SST hit-path 50k 对照结果
+
+本轮新增 `readrandom_hit`，并在 `ldb.sstReadStats` 中补充 hit-path 细分计数：`candidateEntryHits`、`candidateEntryMisses`、`bloomFalsePositives`、`tableIndexSeeks`、`tableDataBlockOpens` 与 `tableDataBlockSeeks`。该计数用于拆分 Bloom miss 已经跳过的部分与真实命中 key 仍需承担的 SST index/data-block 定位成本。
+
+| 场景 | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | 关键观察 |
+| --- | ---: | ---: | ---: | --- |
+| `readrandom_hit` | 166,519.353 | 420,630.761 | 0.3959 | 50,000 次 hit 对应 50,000 次 index seek、data block open 与 data block seek |
+| `readrandom_miss` | 326,763.001 | 422,757.903 | 0.7729 | Bloom 跳过 49,604 次，只有 396 次 false positive 进入 table read |
+| `readrandom_mixed` | 295,314.365 | 438,877.912 | 0.6729 | 25,000 次真实 hit + 207 次 false positive，mixed 差距主要来自 hit 半边 |
+| `multiget_mixed` | 293,598.151 | 229,949.655 | 1.2768 | batch direct get 将 tableReads 压到 782，证明按批分组能显著摊薄 hit-path 成本 |
+
+证据文件：`ldb-longrun/build/reports/ldb-db-bench-hitpath-50k/ldb-db-bench-summary.csv` 与 `build/reports/rocksdbjni-comparison-hitpath-50k/comparison.csv`。
+
+结论：下一阶段最值得做的是单点 hit-path 优化，而不是继续扩大 Bloom。优先方向是减少每个 hit 都重复执行的 index seek、data block open 与 block 内 seek 成本；`multiget_mixed` 的结果说明批量分组/复用是有效路径。

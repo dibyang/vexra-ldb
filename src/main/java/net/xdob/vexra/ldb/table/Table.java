@@ -38,6 +38,9 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   private long blockLocalIndexSeekCount;
   private long blockLocalIndexHitCount;
   private long blockLocalIndexFallbackCount;
+  private long tableIndexSeekCount;
+  private long tableDataBlockOpenCount;
+  private long tableDataBlockSeekCount;
 
   protected final BlockCache blockCache;
   private final Options options;
@@ -260,12 +263,15 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
    * @return seek 到的候选 entry；如果目标 key 超出 table/block 范围则返回 null
    */
   public Entry<Slice, Slice> get(Slice internalKey) {
+    tableIndexSeekCount++;
     Entry<Slice, Slice> indexEntry = indexBlock.seek(internalKey);
     if (indexEntry == null) {
       return null;
     }
     BlockHandle blockHandle = BlockHandle.readBlockHandle(indexEntry.getValue().input());
+    tableDataBlockOpenCount++;
     Block dataBlock = openBlockForDirectRead(blockHandle);
+    tableDataBlockSeekCount++;
     Entry<Slice, Slice> candidate = dataBlock.seek(internalKey);
     if (candidate == null) {
       return null;
@@ -292,6 +298,7 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     Map<BlockHandle, List<TableLookup>> blockLookups = new LinkedHashMap<BlockHandle, List<TableLookup>>();
     for (int i = 0; i < internalKeys.size(); i++) {
       Slice internalKey = internalKeys.get(i);
+      tableIndexSeekCount++;
       Entry<Slice, Slice> indexEntry = indexBlock.seek(internalKey);
       if (indexEntry == null) {
         continue;
@@ -306,8 +313,10 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     }
 
     for (Entry<BlockHandle, List<TableLookup>> group : blockLookups.entrySet()) {
+      tableDataBlockOpenCount++;
       Block dataBlock = openBlockForDirectRead(group.getKey());
       for (TableLookup lookup : group.getValue()) {
+        tableDataBlockSeekCount++;
         Entry<Slice, Slice> candidate = seekDataBlock(
             group.getKey(),
             dataBlock,
@@ -493,6 +502,18 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
 
   public long getBlockLocalIndexFallbackCountForStats() {
     return blockLocalIndexFallbackCount;
+  }
+
+  public long getTableIndexSeekCountForStats() {
+    return tableIndexSeekCount;
+  }
+
+  public long getTableDataBlockOpenCountForStats() {
+    return tableDataBlockOpenCount;
+  }
+
+  public long getTableDataBlockSeekCountForStats() {
+    return tableDataBlockSeekCount;
   }
 
   /**

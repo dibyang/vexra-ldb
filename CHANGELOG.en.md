@@ -6,6 +6,8 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- Added the eadrandom_hit benchmark and SST hit-path counters. ldb.sstReadStats now exposes candidate entry hits/misses, Bloom false positives, table index seeks, data-block opens, and data-block seeks. The 50k comparison shows eadrandom_hit at 0.3959 of RocksDB JNI, eadrandom_mixed at 0.6729, and multiget_mixed at 1.2768, confirming the next bottleneck is the single-key hit path.
+
 - Fixed the Bloom/filter miss/mixed benchmark semantics: the new scenarios now prepare data, close/reopen before timing, and avoid forced compactRange; v3 filter-property write ordering is fixed. The 50k comparison reaches 0.9211, 0.6366, and 0.8274 of RocksDB JNI for eadrandom_miss, eadrandom_mixed, and multiget_mixed.
 
 - Added `readrandom_miss`, `readrandom_mixed`, and `multiget_mixed` to `ldbDbBenchReport` for Bloom/filter miss-heavy and mixed random-read comparisons; v3 table properties now record filter policy, scope, key count, filter block bytes, and bits-per-key when a `FilterPolicy` is enabled.

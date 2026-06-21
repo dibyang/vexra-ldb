@@ -211,3 +211,17 @@ This round fixes the `readrandom_miss`, `readrandom_mixed`, and `multiget_mixed`
 | `multiget_mixed` | 317,069.768 | 383,228.393 | 0.8274 | `filterSkips=24793`, `directGetBatchRequests=782` |
 
 Evidence files: `ldb-longrun/build/reports/ldb-db-bench-bloom-miss-mixed-50k/ldb-db-bench-summary.csv` and `build/reports/rocksdbjni-comparison-bloom-miss-mixed-50k/comparison.csv`.
+## SST hit-path 50k comparison result
+
+This round adds `readrandom_hit` and extends `ldb.sstReadStats` with hit-path counters: `candidateEntryHits`, `candidateEntryMisses`, `bloomFalsePositives`, `tableIndexSeeks`, `tableDataBlockOpens`, and `tableDataBlockSeeks`. These counters separate the Bloom-skipped miss side from the real hit side that still pays SST index/data-block lookup cost.
+
+| Scenario | LDB ops/s | RocksDB JNI ops/s | LDB/RocksDB JNI | Key observation |
+| --- | ---: | ---: | ---: | --- |
+| `readrandom_hit` | 166,519.353 | 420,630.761 | 0.3959 | 50,000 hits produce 50,000 index seeks, data-block opens, and data-block seeks |
+| `readrandom_miss` | 326,763.001 | 422,757.903 | 0.7729 | Bloom skips 49,604 reads; only 396 false positives reach table read |
+| `readrandom_mixed` | 295,314.365 | 438,877.912 | 0.6729 | 25,000 real hits plus 207 false positives; the mixed gap is mostly the hit side |
+| `multiget_mixed` | 293,598.151 | 229,949.655 | 1.2768 | batch direct get reduces tableReads to 782, proving grouped reuse amortizes hit-path cost |
+
+Evidence files: `ldb-longrun/build/reports/ldb-db-bench-hitpath-50k/ldb-db-bench-summary.csv` and `build/reports/rocksdbjni-comparison-hitpath-50k/comparison.csv`.
+
+Conclusion: the next valuable work is single-key hit-path optimization rather than more Bloom expansion. The priority is reducing per-hit repeated index seek, data-block open, and in-block seek cost; `multiget_mixed` shows that grouping/reuse is an effective direction.

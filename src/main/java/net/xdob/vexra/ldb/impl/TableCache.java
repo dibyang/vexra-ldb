@@ -242,6 +242,9 @@ public class TableCache {
         + ",mayContainTrue=" + mayContainTrueCount.get()
         + ",mayContainFalse=" + mayContainFalseCount.get()
         + ",approximateOffsetRequests=" + approximateOffsetRequestCount.get()
+        + ",tableIndexSeeks=" + blockLocalIndexStats.tableIndexSeeks
+        + ",tableDataBlockOpens=" + blockLocalIndexStats.tableDataBlockOpens
+        + ",tableDataBlockSeeks=" + blockLocalIndexStats.tableDataBlockSeeks
         + ",blockLocalIndexTables=" + blockLocalIndexStats.declaredTables
         + ",blockLocalIndexDirectoryLoadedTables=" + blockLocalIndexStats.directoryLoadedTables
         + ",blockLocalIndexDirectoryEntries=" + blockLocalIndexStats.directoryEntries
@@ -264,11 +267,17 @@ public class TableCache {
       stats.seekCount += table.getBlockLocalIndexSeekCountForStats();
       stats.hitCount += table.getBlockLocalIndexHitCountForStats();
       stats.fallbackCount += table.getBlockLocalIndexFallbackCountForStats();
+      stats.tableIndexSeeks += table.getTableIndexSeekCountForStats();
+      stats.tableDataBlockOpens += table.getTableDataBlockOpenCountForStats();
+      stats.tableDataBlockSeeks += table.getTableDataBlockSeekCountForStats();
     }
     return stats;
   }
 
   private static final class BlockLocalIndexStats {
+    private long tableIndexSeeks;
+    private long tableDataBlockOpens;
+    private long tableDataBlockSeeks;
     private long declaredTables;
     private long directoryLoadedTables;
     private long directoryEntries;
