@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- Table batch direct get 将每个 data block 分组内的 `TableLookup` 对象列表替换为 `int[]`/`Slice[]` 承载结构，并以轻量 key 视图喂给 dense seek，继续降低 MultiGet 热路径分配。
+
 - dbBench key 生成从 `String.format` 改为直接写入固定宽度 byte[]，减少 readrandom/MultiGet 热循环中的 benchmark harness 临时对象分配。
 
 - MultiGet 读路径减少批量随机读的临时集合分配：`Version` 复用下标数组记录未命中 key，`Level`/`Level0` 直接按候选下标调用 `TableCache`，避免每个候选 SST 再复制 `fileKeys` 列表。

@@ -6,6 +6,8 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- Table batch direct get now replaces per-data-block `TableLookup` object lists with `int[]`/`Slice[]` lookup groups and feeds dense seek through a lightweight key view, further reducing MultiGet hot-path allocation.
+
 - dbBench key generation now writes fixed-width byte arrays directly instead of using `String.format`, reducing benchmark-harness temporary allocation in readrandom and MultiGet hot loops.
 
 - MultiGet read path now reduces temporary collection allocation for random batch reads: `Version` reuses an index array for unresolved keys, while `Level`/`Level0` call `TableCache` by candidate indexes instead of copying per-SST `fileKeys` lists.

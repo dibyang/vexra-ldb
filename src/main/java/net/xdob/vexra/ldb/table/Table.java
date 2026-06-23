@@ -483,7 +483,7 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       return results;
     }
 
-    Map<BlockHandle, List<TableLookup>> blockLookups = new LinkedHashMap<BlockHandle, List<TableLookup>>();
+    Map<BlockHandle, BatchLookupGroup> blockLookups = new LinkedHashMap<BlockHandle, BatchLookupGroup>();
     for (int i = 0; i < internalKeys.size(); i++) {
       Slice internalKey = internalKeys.get(i);
       tableIndexSeekCount++;
@@ -492,42 +492,42 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
         continue;
       }
       BlockHandle blockHandle = BlockHandle.readBlockHandle(indexEntry.getValue().input());
-      List<TableLookup> lookups = blockLookups.get(blockHandle);
+      BatchLookupGroup lookups = blockLookups.get(blockHandle);
       if (lookups == null) {
-        lookups = new ArrayList<TableLookup>();
+        lookups = new BatchLookupGroup(internalKeys.size());
         blockLookups.put(blockHandle, lookups);
       }
-      lookups.add(new TableLookup(i, internalKey));
+      lookups.add(i, internalKey);
     }
 
-    for (Entry<BlockHandle, List<TableLookup>> group : blockLookups.entrySet()) {
+    for (Entry<BlockHandle, BatchLookupGroup> group : blockLookups.entrySet()) {
       tableDataBlockOpenCount++;
       Block dataBlock = openBlockForDirectRead(group.getKey());
-      List<TableLookup> lookups = group.getValue();
-      boolean denseBlock = lookups.size() >= BLOCK_LOCAL_INDEX_MIN_LOOKUPS;
+      BatchLookupGroup lookups = group.getValue();
+      boolean denseBlock = lookups.size >= BLOCK_LOCAL_INDEX_MIN_LOOKUPS;
       tableBatchDataBlockGroupCount++;
-      tableBatchDataBlockKeyCount += lookups.size();
+      tableBatchDataBlockKeyCount += lookups.size;
       if (denseBlock) {
         tableBatchDenseBlockGroupCount++;
-        tableBatchDenseBlockKeyCount += lookups.size();
+        tableBatchDenseBlockKeyCount += lookups.size;
       }
       if (denseBlock && !isBlockLocalIndexDeclared()) {
-        tableDataBlockSeekCount += lookups.size();
-        blockLocalIndexFallbackCount += lookups.size();
+        tableDataBlockSeekCount += lookups.size;
+        blockLocalIndexFallbackCount += lookups.size;
         tableBatchSeekAllCount++;
         seekDenseBlock(dataBlock, lookups, results);
         continue;
       }
-      for (TableLookup lookup : lookups) {
+      for (int i = 0; i < lookups.size; i++) {
         tableDataBlockSeekCount++;
         Entry<Slice, Slice> candidate = seekDataBlock(
             group.getKey(),
             dataBlock,
-            lookup.internalKey,
+            lookups.internalKeys[i],
             denseBlock);
         if (candidate != null) {
-          if (comparator.compare(candidate.getKey(), lookup.internalKey) >= 0) {
-            results.set(lookup.index, candidate);
+          if (comparator.compare(candidate.getKey(), lookups.internalKeys[i]) >= 0) {
+            results.set(lookups.indexes[i], candidate);
           }
         }
       }
@@ -644,25 +644,15 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   /**
    * 对同一 data block 内足够密集的 key 预留顺序批量 seek 能力。
    */
-  private void seekDenseBlock(Block dataBlock, List<TableLookup> lookups, List<Entry<Slice, Slice>> results) {
-    Collections.sort(lookups, new Comparator<TableLookup>() {
-      @Override
-      public int compare(TableLookup left, TableLookup right) {
-        return comparator.compare(left.internalKey, right.internalKey);
-      }
-    });
+  private void seekDenseBlock(Block dataBlock, BatchLookupGroup lookups, List<Entry<Slice, Slice>> results) {
+    lookups.sort(comparator);
 
-    List<Slice> sortedKeys = new ArrayList<Slice>(lookups.size());
-      for (TableLookup lookup : lookups) {
-        sortedKeys.add(lookup.internalKey);
-      }
-
-    List<Entry<Slice, Slice>> candidates = dataBlock.seekAll(sortedKeys);
+    List<Entry<Slice, Slice>> candidates = dataBlock.seekAll(lookups.asKeyList());
     for (int i = 0; i < candidates.size(); i++) {
       Entry<Slice, Slice> candidate = candidates.get(i);
       if (candidate != null) {
-        if (comparator.compare(candidate.getKey(), lookups.get(i).internalKey) >= 0) {
-          results.set(lookups.get(i).index, candidate);
+        if (comparator.compare(candidate.getKey(), lookups.internalKeys[i]) >= 0) {
+          results.set(lookups.indexes[i], candidate);
         }
       }
     }
@@ -1073,13 +1063,59 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     }
   }
 
-  private static final class TableLookup {
-    private final int index;
-    private final Slice internalKey;
+  private static final class BatchLookupGroup {
+    private int[] indexes;
+    private Slice[] internalKeys;
+    private int size;
 
-    private TableLookup(int index, Slice internalKey) {
-      this.index = index;
-      this.internalKey = internalKey;
+    private BatchLookupGroup(int expectedMaxSize) {
+      int initialCapacity = Math.max(4, Math.min(16, expectedMaxSize));
+      this.indexes = new int[initialCapacity];
+      this.internalKeys = new Slice[initialCapacity];
+    }
+
+    private void add(int index, Slice internalKey) {
+      if (size == indexes.length) {
+        int newCapacity = indexes.length << 1;
+        int[] newIndexes = new int[newCapacity];
+        Slice[] newInternalKeys = new Slice[newCapacity];
+        System.arraycopy(indexes, 0, newIndexes, 0, size);
+        System.arraycopy(internalKeys, 0, newInternalKeys, 0, size);
+        indexes = newIndexes;
+        internalKeys = newInternalKeys;
+      }
+      indexes[size] = index;
+      internalKeys[size] = internalKey;
+      size++;
+    }
+
+    private void sort(Comparator<Slice> comparator) {
+      for (int i = 1; i < size; i++) {
+        int index = indexes[i];
+        Slice internalKey = internalKeys[i];
+        int j = i - 1;
+        while (j >= 0 && comparator.compare(internalKeys[j], internalKey) > 0) {
+          indexes[j + 1] = indexes[j];
+          internalKeys[j + 1] = internalKeys[j];
+          j--;
+        }
+        indexes[j + 1] = index;
+        internalKeys[j + 1] = internalKey;
+      }
+    }
+
+    private List<Slice> asKeyList() {
+      return new java.util.AbstractList<Slice>() {
+        @Override
+        public Slice get(int index) {
+          return internalKeys[index];
+        }
+
+        @Override
+        public int size() {
+          return BatchLookupGroup.this.size;
+        }
+      };
     }
   }
 
