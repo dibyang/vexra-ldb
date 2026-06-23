@@ -291,6 +291,14 @@ public class Block
     return restartOffset(restartPosition, restartCount());
   }
 
+  int seekAnchorCount() {
+    int count = 0;
+    for (SeekAnchor[] restartAnchors : seekAnchors) {
+      count += restartAnchors.length;
+    }
+    return count;
+  }
+
   List<EntryAnchor> entryAnchors(int interval) {
     checkArgument(interval > 0, "interval must be > 0");
     int restartCount = restartCount();

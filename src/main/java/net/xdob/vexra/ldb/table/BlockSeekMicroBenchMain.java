@@ -45,7 +45,10 @@ public final class BlockSeekMicroBenchMain {
         + " allocatedBytesDelta=" + result.allocatedBytesDelta
         + " bytesPerOp=" + format(result.bytesPerOp)
         + " decodedEntries=" + result.decodedEntries
-        + " sharedKeyRebuilds=" + result.sharedKeyRebuilds);
+        + " decodedEntriesPerOp=" + format(result.decodedEntriesPerOp)
+        + " sharedKeyRebuilds=" + result.sharedKeyRebuilds
+        + " sharedKeyRebuildsPerOp=" + format(result.sharedKeyRebuildsPerOp)
+        + " seekAnchorCount=" + result.seekAnchorCount);
   }
 
   private static Result run(Config config) {
@@ -101,10 +104,13 @@ public final class BlockSeekMicroBenchMain {
         allocatedDelta >= 0 ? allocatedDelta / (double) config.reads : -1.0d,
         decodedEntries,
         sharedKeyRebuilds,
+        sharedKeyRebuilds / (double) config.reads,
         sharedKeyRebuiltBytes,
+        decodedEntries / (double) config.reads,
         checksum,
         block.size(),
-        block.restartCount());
+        block.restartCount(),
+        block.seekAnchorCount());
   }
 
   private static Slice key(int value) {
@@ -159,23 +165,28 @@ public final class BlockSeekMicroBenchMain {
       writer.write("  \"allocatedBytesDelta\": " + result.allocatedBytesDelta + ",\n");
       writer.write("  \"bytesPerOp\": " + format(result.bytesPerOp) + ",\n");
       writer.write("  \"decodedEntries\": " + result.decodedEntries + ",\n");
+      writer.write("  \"decodedEntriesPerOp\": " + format(result.decodedEntriesPerOp) + ",\n");
       writer.write("  \"sharedKeyRebuilds\": " + result.sharedKeyRebuilds + ",\n");
+      writer.write("  \"sharedKeyRebuildsPerOp\": " + format(result.sharedKeyRebuildsPerOp) + ",\n");
       writer.write("  \"sharedKeyRebuiltBytes\": " + result.sharedKeyRebuiltBytes + ",\n");
       writer.write("  \"checksum\": " + result.checksum + ",\n");
       writer.write("  \"blockSize\": " + result.blockSize + ",\n");
-      writer.write("  \"restartCount\": " + result.restartCount + "\n");
+      writer.write("  \"restartCount\": " + result.restartCount + ",\n");
+      writer.write("  \"seekAnchorCount\": " + result.seekAnchorCount + "\n");
       writer.write("}\n");
     }
   }
 
   private static void writeCsv(File file, Config config, Result result) throws IOException {
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("entries,reads,restartInterval,valueSize,seed,operations,hits,seconds,opsPerSecond,allocatedBytesDelta,bytesPerOp,decodedEntries,sharedKeyRebuilds,sharedKeyRebuiltBytes,checksum,blockSize,restartCount\n");
+      writer.write("entries,reads,restartInterval,valueSize,seed,operations,hits,seconds,opsPerSecond,allocatedBytesDelta,bytesPerOp,decodedEntries,decodedEntriesPerOp,sharedKeyRebuilds,sharedKeyRebuildsPerOp,sharedKeyRebuiltBytes,checksum,blockSize,restartCount,seekAnchorCount\n");
       writer.write(config.entries + "," + config.reads + "," + config.restartInterval + ","
           + config.valueSize + "," + config.seed + "," + result.operations + "," + result.hits + ","
           + format(result.seconds) + "," + format(result.opsPerSecond) + "," + result.allocatedBytesDelta + ","
-          + format(result.bytesPerOp) + "," + result.decodedEntries + "," + result.sharedKeyRebuilds + ","
-          + result.sharedKeyRebuiltBytes + "," + result.checksum + "," + result.blockSize + "," + result.restartCount + "\n");
+          + format(result.bytesPerOp) + "," + result.decodedEntries + "," + format(result.decodedEntriesPerOp) + ","
+          + result.sharedKeyRebuilds + "," + format(result.sharedKeyRebuildsPerOp) + ","
+          + result.sharedKeyRebuiltBytes + "," + result.checksum + "," + result.blockSize + "," + result.restartCount
+          + "," + result.seekAnchorCount + "\n");
     }
   }
 
@@ -271,10 +282,13 @@ public final class BlockSeekMicroBenchMain {
     private final double bytesPerOp;
     private final long decodedEntries;
     private final long sharedKeyRebuilds;
+    private final double sharedKeyRebuildsPerOp;
     private final long sharedKeyRebuiltBytes;
+    private final double decodedEntriesPerOp;
     private final long checksum;
     private final long blockSize;
     private final int restartCount;
+    private final int seekAnchorCount;
 
     private Result(int operations,
                    int hits,
@@ -284,10 +298,13 @@ public final class BlockSeekMicroBenchMain {
                    double bytesPerOp,
                    long decodedEntries,
                    long sharedKeyRebuilds,
+                   double sharedKeyRebuildsPerOp,
                    long sharedKeyRebuiltBytes,
+                   double decodedEntriesPerOp,
                    long checksum,
                    long blockSize,
-                   int restartCount) {
+                   int restartCount,
+                   int seekAnchorCount) {
       this.operations = operations;
       this.hits = hits;
       this.seconds = seconds;
@@ -296,10 +313,13 @@ public final class BlockSeekMicroBenchMain {
       this.bytesPerOp = bytesPerOp;
       this.decodedEntries = decodedEntries;
       this.sharedKeyRebuilds = sharedKeyRebuilds;
+      this.sharedKeyRebuildsPerOp = sharedKeyRebuildsPerOp;
       this.sharedKeyRebuiltBytes = sharedKeyRebuiltBytes;
+      this.decodedEntriesPerOp = decodedEntriesPerOp;
       this.checksum = checksum;
       this.blockSize = blockSize;
       this.restartCount = restartCount;
+      this.seekAnchorCount = seekAnchorCount;
     }
   }
 }

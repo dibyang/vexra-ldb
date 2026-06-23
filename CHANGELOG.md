@@ -9,6 +9,8 @@
 - Block.seek 内存态 seek anchor 间隔从 4 收紧到 2，减少随机点查在 restart 区间内的线性解码和 shared-key rebuild 次数；该优化不改变磁盘 block 格式。
 
 - 新增 `blockSeekMicroBenchReport`，用于专门度量 `Block.seek` 的吞吐、线程分配、decoded entries 与 shared-key rebuild 统计，为后续比较路径优化提供固定基线。
+- `blockSeekMicroBenchReport` 报告补充 `decodedEntriesPerOp` 与 `sharedKeyRebuildsPerOp`，便于直接观察 Block.seek 比较路径每次操作的解码与重建成本。
+- `blockSeekMicroBenchReport` 继续补充 `seekAnchorCount`，用于评估更密集内存 seek anchor 的性能/内存权衡。
 
 - MultiGet 结果列表初始化改为包内 `BatchReadLists.newNullArrayList` 直接填充 null，避免 `Collections.nCopies` 产生额外中间列表对象。
 
