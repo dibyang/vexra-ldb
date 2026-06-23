@@ -191,14 +191,15 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
     recordSstReadStats(readStats);
     mergeBatchResults(results, levelResults);
 
+    int[] missedIndexes = new int[keys.size()];
     for (Level level : cfLevels.levels) {
-      List<Integer> missedIndexes = unresolvedIndexes(results);
-      if (missedIndexes.isEmpty()) {
+      int missedCount = unresolvedIndexes(results, missedIndexes);
+      if (missedCount == 0) {
         break;
       }
-      List<LookupKey> missedKeys = new ArrayList<LookupKey>(missedIndexes.size());
-      for (Integer missedIndex : missedIndexes) {
-        missedKeys.add(keys.get(missedIndex));
+      List<LookupKey> missedKeys = new ArrayList<LookupKey>(missedCount);
+      for (int i = 0; i < missedCount; i++) {
+        missedKeys.add(keys.get(missedIndexes[i]));
       }
       levelGetCount.addAndGet(missedKeys.size());
       levelResults = level.get(missedKeys, readStats);
@@ -206,7 +207,7 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
       for (int i = 0; i < levelResults.size(); i++) {
         LookupResult lookupResult = levelResults.get(i);
         if (lookupResult != null) {
-          results.set(missedIndexes.get(i), lookupResult);
+          results.set(missedIndexes[i], lookupResult);
         }
       }
     }
@@ -224,14 +225,14 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
     }
   }
 
-  private static List<Integer> unresolvedIndexes(List<LookupResult> results) {
-    List<Integer> indexes = new ArrayList<Integer>();
+  private static int unresolvedIndexes(List<LookupResult> results, int[] indexes) {
+    int count = 0;
     for (int i = 0; i < results.size(); i++) {
       if (results.get(i) == null) {
-        indexes.add(i);
+        indexes[count++] = i;
       }
     }
-    return indexes;
+    return count;
   }
 
   private void recordSstReadStats(ReadStats readStats) {

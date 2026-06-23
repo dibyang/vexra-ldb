@@ -102,6 +102,7 @@ public final class LdbDbBenchMain {
       deleteRecursively(dbDir);
       ensureParentDirectory(dbDir);
       MemoryStats.Baseline memoryBaseline = MemoryStats.beforeBenchmark();
+      AllocationStats.Baseline allocationBaseline = AllocationStats.beforeBenchmark();
       Result result;
       if ("rocksdb".equals(config.engine)) {
         result = runRocksDbBenchmark(config, dbDir, benchmark);
@@ -137,6 +138,7 @@ public final class LdbDbBenchMain {
         throw new IllegalArgumentException("Unsupported benchmark: " + benchmark);
       }
       result = result.withMemoryStats(MemoryStats.afterBenchmark(memoryBaseline).toReportString());
+      result = result.withAllocationStats(AllocationStats.afterBenchmark(allocationBaseline).toReportString());
       results.add(result);
       out.println(result.name + " ops=" + result.operations
           + " seconds=" + format(result.seconds)
@@ -691,7 +693,16 @@ public final class LdbDbBenchMain {
   }
 
   private static byte[] key(int value) {
-    return String.format(Locale.ROOT, "key%016d", value).getBytes(StandardCharsets.UTF_8);
+    byte[] key = new byte[19];
+    key[0] = 'k';
+    key[1] = 'e';
+    key[2] = 'y';
+    int remaining = value;
+    for (int i = key.length - 1; i >= 3; i--) {
+      key[i] = (byte) ('0' + (remaining % 10));
+      remaining /= 10;
+    }
+    return key;
   }
 
   private static byte[] missKey(int value) {
@@ -762,7 +773,8 @@ public final class LdbDbBenchMain {
         writer.write("\"sstReadStats\": \"" + escape(result.sstReadStats) + "\", ");
         writer.write("\"blockCacheStats\": \"" + escape(result.blockCacheStats) + "\", ");
         writer.write("\"tableFormatStats\": \"" + escape(result.tableFormatStats) + "\", ");
-        writer.write("\"memoryStats\": \"" + escape(result.memoryStats) + "\"");
+        writer.write("\"memoryStats\": \"" + escape(result.memoryStats) + "\", ");
+        writer.write("\"allocationStats\": \"" + escape(result.allocationStats) + "\"");
         writer.write("}");
         if (i + 1 < results.size()) {
           writer.write(",");
@@ -777,7 +789,7 @@ public final class LdbDbBenchMain {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "ldb-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats,memoryStats\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats,memoryStats,allocationStats\n");
       for (Result result : results) {
         writer.write(config.engine + "," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
@@ -791,7 +803,8 @@ public final class LdbDbBenchMain {
             + config.inlineBlockSeekIndexAdmissionMinAnchors + ","
             + config.batchSize + ","
             + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + ","
-            + escapeCsv(result.tableFormatStats) + "," + escapeCsv(result.memoryStats) + "\n");
+            + escapeCsv(result.tableFormatStats) + "," + escapeCsv(result.memoryStats) + ","
+            + escapeCsv(result.allocationStats) + "\n");
       }
     }
   }
@@ -981,9 +994,11 @@ public final class LdbDbBenchMain {
     private final String blockCacheStats;
     private final String tableFormatStats;
     private final String memoryStats;
+    private final String allocationStats;
 
     private Result(String name, long operations, long hits, double seconds, double opsPerSecond,
-                   String sstReadStats, String blockCacheStats, String tableFormatStats, String memoryStats) {
+                   String sstReadStats, String blockCacheStats, String tableFormatStats, String memoryStats,
+                   String allocationStats) {
       this.name = name;
       this.operations = operations;
       this.hits = hits;
@@ -993,6 +1008,7 @@ public final class LdbDbBenchMain {
       this.blockCacheStats = blockCacheStats;
       this.tableFormatStats = tableFormatStats;
       this.memoryStats = memoryStats;
+      this.allocationStats = allocationStats;
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos) {
@@ -1001,7 +1017,7 @@ public final class LdbDbBenchMain {
 
     private static Result of(String name, long operations, long hits, long startNanos, long endNanos) {
       double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
-      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "", "");
+      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "", "", "");
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos, LDB db) {
@@ -1014,6 +1030,7 @@ public final class LdbDbBenchMain {
           valueOrEmpty(db.getProperty("ldb.sstReadStats")),
           valueOrEmpty(db.getProperty("ldb.blockCacheStats")),
           valueOrEmpty(db.getProperty("ldb.tableFormat")),
+          "",
           "");
     }
 
@@ -1023,6 +1040,7 @@ public final class LdbDbBenchMain {
           "",
           rocksDbMemoryProperties(db),
           "",
+          "",
           "");
     }
 
@@ -1031,7 +1049,17 @@ public final class LdbDbBenchMain {
           sstReadStats,
           blockCacheStats,
           tableFormatStats,
-          valueOrEmpty(memoryStats));
+          valueOrEmpty(memoryStats),
+          allocationStats);
+    }
+
+    private Result withAllocationStats(String allocationStats) {
+      return new Result(name, operations, hits, seconds, opsPerSecond,
+          sstReadStats,
+          blockCacheStats,
+          tableFormatStats,
+          memoryStats,
+          valueOrEmpty(allocationStats));
     }
 
     private static String valueOrEmpty(String value) {
@@ -1050,6 +1078,97 @@ public final class LdbDbBenchMain {
         return valueOrEmpty(db.getProperty(name));
       } catch (Exception ignored) {
         return "";
+      }
+    }
+  }
+
+  private static final class AllocationStats {
+    private final boolean supported;
+    private final long measuredThreadId;
+    private final long allocatedBytesDelta;
+    private final long allocatedBytesAfter;
+
+    private AllocationStats(boolean supported, long measuredThreadId, long allocatedBytesDelta, long allocatedBytesAfter) {
+      this.supported = supported;
+      this.measuredThreadId = measuredThreadId;
+      this.allocatedBytesDelta = allocatedBytesDelta;
+      this.allocatedBytesAfter = allocatedBytesAfter;
+    }
+
+    /**
+     * 寮€濮嬩竴娆?benchmark 鍓嶈褰撳墠 benchmark 绾跨▼鐨勫垎閰嶅瓧鑺傚熀绾裤€?
+     *
+     * <p>JDK8 鐨?ThreadMXBean 缁熻鏄綆鎵板姩鐨勭嚎绋嬬骇鎸囨爣锛屽彲鐩存帴甯姪鍖哄垎
+     * heap 峰值来自缓存驻留还是 workload 期间的大量临时对象分配。当前 dbBench 读写主路径为单线程，
+     * 多线程场景后续可扩展为 all-thread delta。</p>
+     */
+    private static Baseline beforeBenchmark() {
+      long threadId = Thread.currentThread().getId();
+      com.sun.management.ThreadMXBean bean = threadBean();
+      if (bean == null || !enable(bean)) {
+        return new Baseline(false, threadId, -1);
+      }
+      return new Baseline(true, threadId, allocatedBytes(bean, threadId));
+    }
+
+    private static AllocationStats afterBenchmark(Baseline baseline) {
+      com.sun.management.ThreadMXBean bean = threadBean();
+      if (!baseline.supported || bean == null) {
+        return new AllocationStats(false, baseline.threadId, -1, -1);
+      }
+      long after = allocatedBytes(bean, baseline.threadId);
+      long delta = baseline.allocatedBytesBefore >= 0 && after >= 0
+          ? Math.max(0, after - baseline.allocatedBytesBefore)
+          : -1;
+      return new AllocationStats(true, baseline.threadId, delta, after);
+    }
+
+    private String toReportString() {
+      return "allocationTrackingSupported=" + supported
+          + ",allocationThreadId=" + measuredThreadId
+          + ",allocatedBytesDelta=" + allocatedBytesDelta
+          + ",allocatedBytesAfter=" + allocatedBytesAfter;
+    }
+
+    private static com.sun.management.ThreadMXBean threadBean() {
+      java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+      if (bean instanceof com.sun.management.ThreadMXBean) {
+        return (com.sun.management.ThreadMXBean) bean;
+      }
+      return null;
+    }
+
+    private static boolean enable(com.sun.management.ThreadMXBean bean) {
+      if (!bean.isThreadAllocatedMemorySupported()) {
+        return false;
+      }
+      if (!bean.isThreadAllocatedMemoryEnabled()) {
+        try {
+          bean.setThreadAllocatedMemoryEnabled(true);
+        } catch (RuntimeException ignored) {
+          return false;
+        }
+      }
+      return bean.isThreadAllocatedMemoryEnabled();
+    }
+
+    private static long allocatedBytes(com.sun.management.ThreadMXBean bean, long threadId) {
+      try {
+        return bean.getThreadAllocatedBytes(threadId);
+      } catch (RuntimeException ignored) {
+        return -1;
+      }
+    }
+
+    private static final class Baseline {
+      private final boolean supported;
+      private final long threadId;
+      private final long allocatedBytesBefore;
+
+      private Baseline(boolean supported, long threadId, long allocatedBytesBefore) {
+        this.supported = supported;
+        this.threadId = threadId;
+        this.allocatedBytesBefore = allocatedBytesBefore;
       }
     }
   }

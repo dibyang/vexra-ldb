@@ -6,6 +6,12 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- dbBench key generation now writes fixed-width byte arrays directly instead of using `String.format`, reducing benchmark-harness temporary allocation in readrandom and MultiGet hot loops.
+
+- MultiGet read path now reduces temporary collection allocation for random batch reads: `Version` reuses an index array for unresolved keys, while `Level`/`Level0` call `TableCache` by candidate indexes instead of copying per-SST `fileKeys` lists.
+
+- dbBench reports now include an `allocationStats` field based on JDK `ThreadMXBean`, recording per-benchmark main-thread `allocatedBytesDelta` to identify temporary-object allocation pressure in workloads such as `multiget_random` and `scan`.
+
 - dbBench now supports `--engine rocksdb` and `rocksDbBenchReport`, allowing LDB and RocksDB JNI to be compared with the same JSON/CSV report format, including throughput, JVM `memoryStats`, and RocksDB block-cache/table-reader memory estimates.
 
 - dbBench reports now include a per-benchmark `memoryStats` field with `heapUsedBytes`, `heapCommittedBytes`, `heapMaxBytes`, `nonHeapUsedBytes`, `nonHeapCommittedBytes`, `heapPeakUsedBytes`, `gcCountDelta`, and `gcTimeMillisDelta`, so future optimization runs can compare throughput and memory/GC cost together.

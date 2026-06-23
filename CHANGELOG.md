@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+- dbBench key 生成从 `String.format` 改为直接写入固定宽度 byte[]，减少 readrandom/MultiGet 热循环中的 benchmark harness 临时对象分配。
+
+- MultiGet 读路径减少批量随机读的临时集合分配：`Version` 复用下标数组记录未命中 key，`Level`/`Level0` 直接按候选下标调用 `TableCache`，避免每个候选 SST 再复制 `fileKeys` 列表。
+
+- dbBench 报告新增 `allocationStats` 字段，基于 JDK `ThreadMXBean` 记录每个 benchmark 主线程的 `allocatedBytesDelta`，用于定位 `multiget_random`、`scan` 等场景的临时对象分配压力。
+
 - dbBench 新增 `--engine rocksdb` 与 `rocksDbBenchReport`，可在同一 JSON/CSV 报告格式下对比 LDB 与 RocksDB JNI 的吞吐、JVM `memoryStats` 以及 RocksDB 暴露的 block cache/table reader 内存估计。
 
 - dbBench 报告新增 `memoryStats` 字段，按 benchmark 记录 `heapUsedBytes`、`heapCommittedBytes`、`heapMaxBytes`、`nonHeapUsedBytes`、`nonHeapCommittedBytes`、`heapPeakUsedBytes`、`gcCountDelta` 和 `gcTimeMillisDelta`，后续优化可以同时比较吞吐和内存/GC 成本。

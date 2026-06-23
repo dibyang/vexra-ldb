@@ -60,9 +60,11 @@ class LdbDbBenchMainTest {
     assertTrue(json.contains("blockSeekIndexHits="), json);
     assertTrue(json.contains("\"tableFormatStats\""), json);
     assertTrue(json.contains("\"memoryStats\""), json);
+    assertTrue(json.contains("\"allocationStats\""), json);
     assertTrue(json.contains("heapUsedBytes="), json);
     assertTrue(json.contains("heapPeakUsedBytes="), json);
     assertTrue(json.contains("gcCountDelta="), json);
+    assertTrue(json.contains("allocatedBytesDelta="), json);
     assertTrue(json.contains("blockLocalIndexBytes="), json);
     assertTrue(json.contains("blockLocalIndexSpaceAmplificationPpm="), json);
     assertTrue(json.contains("blockLocalIndexAdmissionPolicy="), json);
@@ -72,6 +74,8 @@ class LdbDbBenchMainTest {
     String csv = new String(Files.readAllBytes(new File(output, "ldb-db-bench-summary.csv").toPath()),
         StandardCharsets.UTF_8);
     assertTrue(csv.contains(",memoryStats"), csv);
+    assertTrue(csv.contains(",allocationStats"), csv);
     assertTrue(csv.contains("heapCommittedBytes="), csv);
+    assertTrue(csv.contains("allocationTrackingSupported="), csv);
   }
 }

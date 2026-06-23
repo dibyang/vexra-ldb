@@ -965,12 +965,15 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       && fileContains(dbBenchMain, 'ofRocksDb')
       && fileContains(dbBenchMain, 'memoryStats')
       && fileContains(dbBenchMain, 'heapPeakUsedBytes')
+      && fileContains(dbBenchMain, 'allocationStats')
+      && fileContains(dbBenchMain, 'allocatedBytesDelta')
       && fileContains(tableCacheApi, 'blockLocalIndexSeekCount')
       && fileContains(dbBenchTest, 'multiget_sameblock')
       && fileContains(dbBenchTest, 'scan')
       && fileContains(dbBenchTest, 'blockLocalIndexSpaceAmplificationPpm')
       && fileContains(dbBenchTest, 'blockLocalIndexDirectoryLoadedTables')
       && fileContains(dbBenchTest, 'heapUsedBytes=')
+      && fileContains(dbBenchTest, 'allocatedBytesDelta=')
   return [
       [
           name: 'storageFormatDocs',

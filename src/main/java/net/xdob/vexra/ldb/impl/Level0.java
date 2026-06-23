@@ -185,17 +185,11 @@ public class Level0
       }
 
       readStats.recordTableRead();
-      List<LookupKey> fileKeys = new ArrayList<LookupKey>(candidateIndexes.size());
-      for (Integer index : candidateIndexes) {
-        LookupKey key = keys.get(index);
-        fileKeys.add(key);
-      }
-
-      List<Entry<Slice, Slice>> entries = tableCache.get(fileMetaData, fileKeys);
-      for (int i = 0; i < fileKeys.size(); i++) {
-        LookupResult lookupResult = getFromTableEntry(fileMetaData, fileKeys.get(i), entries.get(i), readStats);
+      List<Entry<Slice, Slice>> entries = tableCache.get(fileMetaData, keys, candidateIndexes);
+      for (int i = 0; i < candidateIndexes.size(); i++) {
+        int originalIndex = candidateIndexes.get(i);
+        LookupResult lookupResult = getFromTableEntry(fileMetaData, keys.get(originalIndex), entries.get(i), readStats);
         if (lookupResult != null) {
-          int originalIndex = candidateIndexes.get(i);
           results.set(originalIndex, lookupResult);
           resolved[originalIndex] = true;
         }

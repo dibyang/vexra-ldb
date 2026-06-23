@@ -151,6 +151,33 @@ public class TableCache {
       encodedKeys.add(key.getEncodedInternalKey());
     }
 
+    return getEncodedBatch(file, encodedKeys);
+  }
+
+  /**
+   * 通过原始 key 列表和候选下标执行 table 层 batch direct get。
+   *
+   * <p>Level/Level0 在按 SST 分组后已经持有候选 key 下标；这里直接按下标编码，避免每个候选文件再构造一份
+   * `fileKeys` 临时列表。返回顺序与 `keyIndexes` 顺序一致。</p>
+   */
+  public List<Entry<Slice, Slice>> get(FileMetaData file, List<LookupKey> keys, List<Integer> keyIndexes) {
+    if (keyIndexes.isEmpty()) {
+      return Collections.emptyList();
+    }
+
+    directGetBatchRequestCount.incrementAndGet();
+    directGetBatchKeyCount.addAndGet(keyIndexes.size());
+    directGetRequestCount.addAndGet(keyIndexes.size());
+
+    List<Slice> encodedKeys = new ArrayList<Slice>(keyIndexes.size());
+    for (Integer keyIndex : keyIndexes) {
+      encodedKeys.add(keys.get(keyIndex).getEncodedInternalKey());
+    }
+
+    return getEncodedBatch(file, encodedKeys);
+  }
+
+  private List<Entry<Slice, Slice>> getEncodedBatch(FileMetaData file, List<Slice> encodedKeys) {
     List<Entry<Slice, Slice>> results = getTable(file.getNumber()).get(encodedKeys);
     for (Entry<Slice, Slice> result : results) {
       if (result == null) {
