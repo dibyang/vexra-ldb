@@ -128,8 +128,9 @@ class TablePropertiesTest {
   void shouldWriteAndReadV3BlockLocalIndexDirectoryWhenOptedIn() throws Exception {
     File tableFile = new File(tempDir, "v3-enabled.sst");
 
-    writeDenseTable(tableFile, new Options()
+    writeDenseLargeValueTable(tableFile, new Options()
         .blockRestartInterval(1)
+        .blockSize(32 * 1024)
         .tableFormatVersion(3)
         .writeBlockLocalIndex(true)
         .blockLocalIndexInterval(1));
@@ -150,7 +151,7 @@ class TablePropertiesTest {
       assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_CANDIDATE_BLOCKS_KEY));
       assertEquals("0", values.get(TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY));
       assertTrue(Long.parseLong(values.get(TableProperties.BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY)) > 0);
-      assertTrue(values.get(TableProperties.BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY).contains("max-space-ppm="));
+      assertTrue(values.get(TableProperties.BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY).contains("max-space-ppm=250000"));
       assertFalse(table.getBlockLocalIndexDirectory().isEmpty());
 
       BlockHandle localIndexHandle = table.getBlockLocalIndexDirectory().values().iterator().next();
@@ -190,8 +191,9 @@ class TablePropertiesTest {
   void shouldFallbackToDataBlockSeekWhenBlockLocalIndexBlockIsCorrupt() throws Exception {
     File tableFile = new File(tempDir, "v3-corrupt-local-index.sst");
 
-    writeDenseTable(tableFile, new Options()
+    writeDenseLargeValueTable(tableFile, new Options()
         .blockRestartInterval(1)
+        .blockSize(32 * 1024)
         .tableFormatVersion(3)
         .writeBlockLocalIndex(true)
         .blockLocalIndexInterval(1));
@@ -222,8 +224,9 @@ class TablePropertiesTest {
   void shouldFailFastWhenBlockLocalIndexMetaindexEntryIsMissing() throws Exception {
     File tableFile = new File(tempDir, "v3-missing-local-index-directory.sst");
 
-    writeDenseTable(tableFile, new Options()
+    writeDenseLargeValueTable(tableFile, new Options()
         .blockRestartInterval(1)
+        .blockSize(32 * 1024)
         .tableFormatVersion(3)
         .writeBlockLocalIndex(true)
         .blockLocalIndexInterval(1));
@@ -367,6 +370,84 @@ class TablePropertiesTest {
   }
 
   @Test
+  void shouldSkipBlockLocalIndexWhenSpaceAmplificationWouldBeTooHigh() throws Exception {
+    File tableFile = new File(tempDir, "v3-space-guard-skip.sst");
+
+    writeDenseTable(tableFile, new Options()
+        .blockRestartInterval(1)
+        .tableFormatVersion(3)
+        .writeBlockLocalIndex(true)
+        .blockLocalIndexInterval(1));
+
+    Table table = openTable(tableFile, new Options());
+    try {
+      TableProperties properties = table.getProperties();
+      Map<String, String> values = properties.getValues();
+
+      assertEquals(3, properties.getFormatVersion());
+      assertFalse(properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE));
+      assertEquals("false", values.get(TableProperties.BLOCK_LOCAL_INDEX_KEY));
+      assertEquals("0", values.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
+      assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_CANDIDATE_BLOCKS_KEY));
+      assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY));
+      assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_SPACE_BLOCKS_KEY));
+      assertEquals("0", values.get(TableProperties.BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY));
+      assertTrue(table.getBlockLocalIndexDirectory().isEmpty());
+    } finally {
+      table.closer().call();
+    }
+  }
+
+  @Test
+  void shouldKeepLegacyFormatWhenAutoBlockLocalIndexWritesNoIndex() throws Exception {
+    File tableFile = new File(tempDir, "auto-local-index-skipped-legacy.sst");
+
+    assertTrue(new Options().writeBlockLocalIndex());
+
+    writeDenseTable(tableFile, new Options()
+        .blockRestartInterval(1)
+        .blockLocalIndexInterval(1));
+
+    Table table = openTable(tableFile, new Options());
+    try {
+      TableProperties properties = table.getProperties();
+
+      assertTrue(properties.isLegacy());
+      assertEquals(1, properties.getFormatVersion());
+      assertTrue(properties.getIncompatibleFeatures().isEmpty());
+      assertTrue(table.getBlockLocalIndexDirectory().isEmpty());
+    } finally {
+      table.closer().call();
+    }
+  }
+
+  @Test
+  void shouldPromoteAutoBlockLocalIndexToV3WhenIndexIsWritten() throws Exception {
+    File tableFile = new File(tempDir, "auto-local-index-promoted-v3.sst");
+
+    writeDenseLargeValueTable(tableFile, new Options()
+        .blockRestartInterval(1)
+        .blockSize(32 * 1024)
+        .writeBlockLocalIndex(true)
+        .blockLocalIndexInterval(1));
+
+    Table table = openTable(tableFile, new Options());
+    try {
+      TableProperties properties = table.getProperties();
+      Map<String, String> values = properties.getValues();
+
+      assertFalse(properties.isLegacy());
+      assertEquals(3, properties.getFormatVersion());
+      assertTrue(properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE));
+      assertEquals("true", values.get(TableProperties.BLOCK_LOCAL_INDEX_KEY));
+      assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_VERSION_KEY));
+      assertFalse(table.getBlockLocalIndexDirectory().isEmpty());
+    } finally {
+      table.closer().call();
+    }
+  }
+
+  @Test
   void shouldWriteAndReadV4InlineBlockSeekIndexWhenOptedIn() throws Exception {
     File tableFile = new File(tempDir, "v4-inline-seek.sst");
 
@@ -433,6 +514,23 @@ class TablePropertiesTest {
       for (int i = 0; i < 32; i++) {
         String key = String.format(java.util.Locale.ROOT, "k%03d", i);
         builder.add(internalKey(key, 1), Slices.utf8Slice("value-" + i));
+      }
+      builder.finish();
+    }
+  }
+
+  private static void writeDenseLargeValueTable(File tableFile, Options options) throws Exception {
+    try (RandomAccessFile file = new RandomAccessFile(tableFile, "rw");
+         FileChannel channel = file.getChannel()) {
+      TableBuilder builder = new TableBuilder(options, channel, new BytewiseComparator());
+      StringBuilder value = new StringBuilder();
+      for (int i = 0; i < 512; i++) {
+        value.append('v');
+      }
+      net.xdob.vexra.ldb.util.Slice largeValue = Slices.utf8Slice(value.toString());
+      for (int i = 0; i < 32; i++) {
+        String key = String.format(java.util.Locale.ROOT, "k%03d", i);
+        builder.add(internalKey(key, 1), largeValue);
       }
       builder.finish();
     }

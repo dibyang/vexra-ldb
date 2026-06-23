@@ -56,7 +56,7 @@ public class Options implements OptionsView {
   private boolean writeTableProperties = true;
   private boolean allowLegacyTableFormat = true;
   private boolean failOnUnknownTableFeature = true;
-  private boolean writeBlockLocalIndex;
+  private boolean writeBlockLocalIndex = true;
   private int blockLocalIndexInterval = 4;
   private boolean writeEntryAnchorIndex;
   private int entryAnchorIndexInterval = 4;

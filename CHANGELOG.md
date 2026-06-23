@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+- 0.11.0-SNAPSHOT 默认进入 v3 block-local index 自动候选模式：`Options.writeBlockLocalIndex()` 默认值调整为 `true`，但配合动态格式提升与 25% 空间准入，只有实际写出 local-index directory 的 SST 才升级为 v3；小表或高空间放大样本仍保持 legacy/v2，不会无收益声明不兼容 feature。
+
+- 0.11.0-SNAPSHOT v3 block-local index 增加默认化前的动态格式提升：调用方允许 `writeBlockLocalIndex=true` 时，若所有 data block 都被准入策略跳过，SST 仍保持 legacy/v2，不声明 `block.local_index.v1`；只有真实写出 local-index directory 时才自动提升为 v3，避免无收益小表被默认写成不兼容格式。
+
+- 0.11.0-SNAPSHOT v3 block-local index 默认启用路线继续收紧 writer 准入：单个 data block 的 local-index 预估空间放大上限从实验级 `2000000ppm` 降到生产评估级 `250000ppm`；超过阈值的 block 会跳过索引写入并记录 `blockLocalIndexSkippedSpaceBlocks`，避免默认化前产生高空间放大 SST。
+
 - 0.11.0-SNAPSHOT v3 block-local index 默认启用评估新增固定对比入口：`ldb-longrun` 提供 `ldbBlockLocalIndexBaselineReport`、`ldbBlockLocalIndexCandidateReport` 和 `ldbBlockLocalIndexComparisonReport`，releaseGate 会检查该入口存在，避免发布前只依赖临时手工 dbBench 参数。
 
 - 0.11.0-SNAPSHOT v3 block-local index 增加默认启用前准入证据：writer 记录 candidate/skipped blocks、data block bytes 与 `blockLocalIndexSpaceAmplificationPpm`，并通过 `blockLocalIndexAdmissionPolicy` 暴露当前保护阈值；check/repair/dbBench/releaseGate 均纳入空间放大字段，为后续是否默认启用提供证据。

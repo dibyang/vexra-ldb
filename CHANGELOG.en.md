@@ -6,6 +6,12 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- 0.11.0-SNAPSHOT now defaults into automatic v3 block-local-index candidacy: `Options.writeBlockLocalIndex()` defaults to `true`, but dynamic format promotion and the 25% space-admission guard mean only SSTs that actually write a local-index directory are promoted to v3; small tables or high-amplification samples remain legacy/v2 and do not declare an incompatible feature without benefit.
+
+- 0.11.0-SNAPSHOT adds dynamic format promotion for v3 block-local indexes before default enablement: when callers allow `writeBlockLocalIndex=true`, SSTs remain legacy/v2 and do not declare `block.local_index.v1` if all data blocks are skipped by admission; only SSTs that actually write a local-index directory are promoted to v3, preventing no-benefit small tables from becoming incompatible by default.
+
+- 0.11.0-SNAPSHOT tightens the v3 block-local-index writer admission path for eventual default enablement: the per-data-block estimated local-index space-amplification ceiling drops from the experimental `2000000ppm` to the production-review `250000ppm`; blocks above the threshold skip index writes and record `blockLocalIndexSkippedSpaceBlocks`, avoiding high-amplification SSTs before defaulting the format.
+
 - 0.11.0-SNAPSHOT v3 block-local-index default-enable review now has fixed comparison entry points: `ldb-longrun` provides `ldbBlockLocalIndexBaselineReport`, `ldbBlockLocalIndexCandidateReport`, and `ldbBlockLocalIndexComparisonReport`, and releaseGate checks that they exist so pre-release evidence does not rely on ad-hoc dbBench parameters.
 
 - 0.11.0-SNAPSHOT v3 block-local indexes now publish default-enable admission evidence: the writer records candidate/skipped blocks, data-block bytes, and `blockLocalIndexSpaceAmplificationPpm`, exposes the current guardrail through `blockLocalIndexAdmissionPolicy`, and check/repair/dbBench/releaseGate all include the space-amplification fields for future default-enable decisions.

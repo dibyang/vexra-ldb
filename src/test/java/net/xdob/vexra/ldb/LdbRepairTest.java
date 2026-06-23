@@ -190,8 +190,8 @@ class LdbRepairTest {
     assertTrue(report.contains("block.local_index.v1"), report);
 
     try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {
-      assertArrayEquals(bytes("v3-value-0"), db.get(bytes("v3-k000")));
-      assertArrayEquals(bytes("v3-value-39"), db.get(bytes("v3-k039")));
+      assertArrayEquals(bytes(v3Value(0)), db.get(bytes("v3-k000")));
+      assertArrayEquals(bytes(v3Value(39)), db.get(bytes("v3-k039")));
     }
   }
 
@@ -299,12 +299,22 @@ class LdbRepairTest {
             .writeTableProperties(true)
             .writeBlockLocalIndex(true)
             .blockRestartInterval(1)
+            .blockSize(32 * 1024)
             .blockLocalIndexInterval(1))) {
       for (int i = 0; i < 40; i++) {
-        db.put(bytes(String.format("v3-k%03d", i)), bytes("v3-value-" + i));
+        db.put(bytes(String.format("v3-k%03d", i)), bytes(v3Value(i)));
       }
       db.compactRange(bytes("v3-k000"), bytes("v3-k999"));
     }
+  }
+
+  private static String v3Value(int index) {
+    StringBuilder builder = new StringBuilder();
+    builder.append("v3-value-").append(index).append('-');
+    for (int i = 0; i < 512; i++) {
+      builder.append('v');
+    }
+    return builder.toString();
   }
 
   private static void deleteFilesWithPrefix(File dir, String prefix) {

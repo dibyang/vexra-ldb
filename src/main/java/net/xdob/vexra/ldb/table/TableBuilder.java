@@ -23,7 +23,7 @@ import static net.xdob.vexra.ldb.impl.VersionSet.TARGET_FILE_SIZE;
 
 public class TableBuilder {
   private static final int BLOCK_LOCAL_INDEX_MIN_ANCHORS = 2;
-  private static final long BLOCK_LOCAL_INDEX_MAX_SPACE_PPM = 2_000_000L;
+  private static final long BLOCK_LOCAL_INDEX_MAX_SPACE_PPM = 250_000L;
 
   /**
    * TABLE_MAGIC_NUMBER was picked by running
@@ -283,9 +283,6 @@ public class TableBuilder {
 
   public void finish() throws IOException {
     checkState(!closed, "table is finished");
-    if (options.writeBlockLocalIndex() && options.tableFormatVersion() < 3) {
-      throw new IllegalArgumentException("writeBlockLocalIndex requires tableFormatVersion >= 3");
-    }
     if (options.writeEntryAnchorIndex() && options.tableFormatVersion() < 4) {
       throw new IllegalArgumentException("writeEntryAnchorIndex requires tableFormatVersion >= 4");
     }
@@ -375,20 +372,24 @@ public class TableBuilder {
    * 便于旧 reader 忽略未知 metaindex entry，新 reader 解析格式版本和 feature set。
    */
   private BlockHandle writePropertiesBlockIfNeeded(BlockHandle filterBlockHandle) throws IOException {
-    if (options.tableFormatVersion() < 2 || !options.writeTableProperties()) {
-      return null;
-    }
     boolean hasBlockLocalIndex = hasBlockLocalIndex();
     boolean hasEntryAnchorIndex = hasEntryAnchorIndex();
     boolean hasInlineBlockSeekIndex = hasInlineBlockSeekIndex();
+    int effectiveTableFormatVersion = effectiveTableFormatVersion(
+        hasBlockLocalIndex,
+        hasEntryAnchorIndex,
+        hasInlineBlockSeekIndex);
+    if (effectiveTableFormatVersion < 2 || !options.writeTableProperties()) {
+      return null;
+    }
     BlockBuilder propertiesBlockBuilder =
         new BlockBuilder(512, 1, new BytewiseComparator());
     addProperty(propertiesBlockBuilder, TableProperties.COMPATIBLE_FEATURES_KEY, compatibleFeatures(filterBlockHandle));
     addProperty(propertiesBlockBuilder, "ldb.format.created_by", "vexra-ldb/0.11.0-SNAPSHOT");
     addProperty(propertiesBlockBuilder, TableProperties.INCOMPATIBLE_FEATURES_KEY,
         incompatibleFeatures(hasBlockLocalIndex, hasEntryAnchorIndex, hasInlineBlockSeekIndex));
-    addProperty(propertiesBlockBuilder, TableProperties.FORMAT_VERSION_KEY, Integer.toString(options.tableFormatVersion()));
-    if (options.tableFormatVersion() >= 3) {
+    addProperty(propertiesBlockBuilder, TableProperties.FORMAT_VERSION_KEY, Integer.toString(effectiveTableFormatVersion));
+    if (effectiveTableFormatVersion >= 3) {
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_KEY,
           Boolean.toString(hasBlockLocalIndex));
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY,
@@ -420,7 +421,7 @@ public class TableBuilder {
     addProperty(propertiesBlockBuilder, "ldb.table.checksum", "crc32c-block-trailer");
     addProperty(propertiesBlockBuilder, "ldb.table.compression", compressionTypes());
     addProperty(propertiesBlockBuilder, "ldb.table.data_block_count", Long.toString(dataBlockCount));
-    if (options.tableFormatVersion() >= 4) {
+    if (effectiveTableFormatVersion >= 4) {
       addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_KEY,
           Boolean.toString(hasEntryAnchorIndex));
       addProperty(propertiesBlockBuilder, TableProperties.ENTRY_ANCHOR_INDEX_ANCHOR_COUNT_KEY,
@@ -445,7 +446,7 @@ public class TableBuilder {
     addProperty(propertiesBlockBuilder, TableProperties.FILTER_POLICY_KEY, filterPolicy == null ? "" : filterPolicy.name());
     addProperty(propertiesBlockBuilder, TableProperties.FILTER_SCOPE_KEY, filterBlockHandle == null ? "" : "full-key");
     addProperty(propertiesBlockBuilder, "ldb.table.index_type", "single-level");
-    if (options.tableFormatVersion() >= 4) {
+    if (effectiveTableFormatVersion >= 4) {
       addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_KEY,
           Boolean.toString(hasInlineBlockSeekIndex));
       addProperty(propertiesBlockBuilder, TableProperties.INLINE_BLOCK_SEEK_INDEX_ANCHOR_COUNT_KEY,
@@ -464,6 +465,28 @@ public class TableBuilder {
     addProperty(propertiesBlockBuilder, "ldb.table.largest_key", lastKey == null ? "" : java.util.Base64.getEncoder().encodeToString(lastKey.getBytes()));
     addProperty(propertiesBlockBuilder, "ldb.table.smallest_key", firstKey == null ? "" : java.util.Base64.getEncoder().encodeToString(firstKey.getBytes()));
     return writeBlock(propertiesBlockBuilder);
+  }
+
+  /**
+   * 根据实际落盘 feature 选择 table format 版本。
+   *
+   * <p>block-local index 的默认化路径必须避免“没有任何索引收益的 SST 也被提升为 v3”。
+   * 因此当调用方允许写 block-local index、但所有 data block 都被准入策略跳过时，仍按调用方
+   * 指定的版本写出；只有真实写出了 local-index directory 时才自动提升到 v3 并声明
+   * incompatible feature。</p>
+   */
+  private int effectiveTableFormatVersion(
+      boolean hasBlockLocalIndex,
+      boolean hasEntryAnchorIndex,
+      boolean hasInlineBlockSeekIndex) {
+    int version = options.tableFormatVersion();
+    if (hasBlockLocalIndex && version < 3) {
+      version = 3;
+    }
+    if ((hasEntryAnchorIndex || hasInlineBlockSeekIndex) && version < 4) {
+      version = 4;
+    }
+    return version;
   }
 
   private boolean hasBlockLocalIndex() {
