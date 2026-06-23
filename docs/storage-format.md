@@ -374,3 +374,6 @@ repair 不会原地修改 SST；恢复 MANIFEST 时写新的 VersionEdit snapsho
 v3 `block.local_index.v1` 是 opt-in 的 SST 加速特性。新 reader 默认继续读取 v1/v2；只有新写入显式设置 `tableFormatVersion(3)` 与 `writeBlockLocalIndex(true)` 时才会生成 local-index directory 和 local-index blocks。
 
 运行时读取时，block-local index 只作为 point get/MultiGet 的旁路定位结构。local-index 缺失、损坏、checksum 失败或 anchor 解析异常不会改变 data block 中的真实数据，读路径必须回退普通 data-block seek，并通过 `ldb.sstReadStats` 中的 `blockLocalIndexFallbackCount` 暴露。离线 check/repair 仍负责把损坏分类归档到 `storageFormat`、`tableFormats` 和 block-local-index failure 字段。
+## v3 block-local index 空间放大证据
+
+v3 properties 会记录 `ldb.table.block_local_index.space_amplification_ppm`、candidate/skipped block 计数和 admission policy。ppm 以 local-index bytes / data-block bytes * 1,000,000 表示，便于 releaseGate 与 benchmark 报告做整数阈值比较。当前 writer 只过滤极端空间放大 block；默认启用仍需要后续 benchmark 证明。

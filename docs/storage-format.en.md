@@ -374,3 +374,6 @@ When v2 writes are enabled for production, operators should observe `newWrites=v
 The v3 `block.local_index.v1` feature is an opt-in SST acceleration feature. New readers keep reading v1/v2 by default; local-index directories and local-index blocks are written only when new writes explicitly use `tableFormatVersion(3)` and `writeBlockLocalIndex(true)`.
 
 At runtime, block-local indexes are sidecar positioning structures for point get and MultiGet. Missing or corrupt local-index data, checksum failures, or malformed anchors must not change the data-block truth; the read path falls back to ordinary data-block seek and exposes the event through `blockLocalIndexFallbackCount` in `ldb.sstReadStats`. Offline check/repair remains responsible for archiving corruption classes in `storageFormat`, `tableFormats`, and block-local-index failure fields.
+## v3 Block-Local Index Space-Amplification Evidence
+
+v3 properties record `ldb.table.block_local_index.space_amplification_ppm`, candidate/skipped block counts, and the admission policy. ppm means local-index bytes / data-block bytes * 1,000,000, which allows releaseGate and benchmark reports to compare integer thresholds. The current writer only filters extremely amplified blocks; default enablement still requires later benchmark proof.

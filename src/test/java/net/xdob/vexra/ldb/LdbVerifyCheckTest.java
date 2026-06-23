@@ -135,6 +135,8 @@ class LdbVerifyCheckTest {
     assertTrue(json.contains("\"blockLocalIndexTables\""), json);
     assertTrue(json.matches("(?s).*\"blockLocalIndexTables\": [1-9][0-9]*.*"), json);
     assertTrue(json.matches("(?s).*\"blockLocalIndexCoveredBlocks\": [1-9][0-9]*.*"), json);
+    assertTrue(json.contains("\"blockLocalIndexSpaceAmplificationPpm\""), json);
+    assertTrue(json.contains("blockLocalIndexAdmissionPolicy="), json);
     assertTrue(json.contains("block.local_index.v1"), json);
   }
 

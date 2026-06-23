@@ -175,3 +175,6 @@ ldb repair <db>
 - 线上观察入口优先看 `ldb.sstReadStats`：`blockLocalIndexSeekCount`、`blockLocalIndexHitCount`、`blockLocalIndexFallbackCount` 和 `blockLocalIndexDirectoryLoadedTables`。
 - 如果 fallback 计数持续增长，先运行离线 `check` 获取 `BLOCK_LOCAL_INDEX_*` 分类，再决定是否停止 v3 compaction/flush、回滚新写入到 v1/v2，或从 checkpoint/backup 恢复。
 - point get/MultiGet 遇到 local-index 损坏会回退普通 data-block seek；该回退是降级保护，不代表文件格式健康。
+### block-local index 默认启用前观察
+
+运维判断 v3 block-local index 是否适合扩大启用时，不只看 hit count，还要同时看 `blockLocalIndexSpaceAmplificationPpm`、`blockLocalIndexSkippedBlocks` 和 scan benchmark。若 ppm 偏高或 scan 回退明显，应继续保持 `writeBlockLocalIndex=false` 默认策略，只对明确收益 workload 显式 opt-in。

@@ -60,6 +60,8 @@ class LdbDbBenchMainTest {
     assertTrue(json.contains("blockSeekIndexHits="), json);
     assertTrue(json.contains("\"tableFormatStats\""), json);
     assertTrue(json.contains("blockLocalIndexBytes="), json);
+    assertTrue(json.contains("blockLocalIndexSpaceAmplificationPpm="), json);
+    assertTrue(json.contains("blockLocalIndexAdmissionPolicy="), json);
     assertTrue(json.contains("inlineBlockSeekIndexBytes="), json);
   }
 }

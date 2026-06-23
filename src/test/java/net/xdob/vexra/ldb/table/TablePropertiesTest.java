@@ -146,6 +146,11 @@ class TablePropertiesTest {
       assertEquals("restart-anchor", values.get(TableProperties.BLOCK_LOCAL_INDEX_POLICY_KEY));
       assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_INTERVAL_KEY));
       assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
+      assertTrue(Long.parseLong(values.get(TableProperties.BLOCK_LOCAL_INDEX_DATA_BLOCK_BYTES_KEY)) > 0);
+      assertEquals("1", values.get(TableProperties.BLOCK_LOCAL_INDEX_CANDIDATE_BLOCKS_KEY));
+      assertEquals("0", values.get(TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY));
+      assertTrue(Long.parseLong(values.get(TableProperties.BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY)) > 0);
+      assertTrue(values.get(TableProperties.BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY).contains("max-space-ppm="));
       assertFalse(table.getBlockLocalIndexDirectory().isEmpty());
 
       BlockHandle localIndexHandle = table.getBlockLocalIndexDirectory().values().iterator().next();

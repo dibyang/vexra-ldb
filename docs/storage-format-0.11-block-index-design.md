@@ -583,3 +583,8 @@ BI 15 将 key-only restart-key 构建限制在单点 `Table.get(Slice)` 的 dire
 当前实现把 block-local index 定位为热读加速旁路，而不是数据正确性的唯一来源。对于 point get 和 MultiGet，Table 已定位到 data block 后才尝试读取 local-index directory 与 local-index block；如果 directory/index block 损坏、block trailer checksum 校验失败、anchor floor 查询失败或 anchor value 无法解析，热读路径会增加 `blockLocalIndexFallbackCount` 并回退到普通 data-block seek。
 
 该回退只保证线上读路径不因加速索引单点损坏而放大故障；它不吞掉格式问题。离线 `check`/`repair` 仍必须通过 `BLOCK_LOCAL_INDEX_DIRECTORY_MISSING`、`BLOCK_LOCAL_INDEX_COVERAGE_MISMATCH`、`BLOCK_LOCAL_INDEX_HANDLE_OUT_OF_RANGE`、`BLOCK_LOCAL_INDEX_BLOCK_CORRUPT` 等分类把损坏暴露到报告与 releaseGate。`blockLocalIndexFormatCoverage` 门禁现在要求 corrupt fallback 行为测试存在，防止热读 fallback 与离线自检证据脱节。
+## BI 07 默认启用前准入证据
+
+block-local index 仍保持显式 opt-in，不作为默认写入策略。为了判断未来是否可以默认启用，writer 现在会在 v3 properties 中记录 `blockLocalIndexCandidateBlocks`、`blockLocalIndexSkippedBlocks`、`blockLocalIndexDataBlockBytes` 和 `blockLocalIndexSpaceAmplificationPpm`。当前准入策略通过 `blockLocalIndexAdmissionPolicy` 暴露，包含 `min-anchors=2` 与 `max-space-ppm=2000000`，用于先过滤极端空间放大的 data block。
+
+该阈值不是默认启用 SLA，而是默认启用评估前的保护栏。releaseGate、check/repair 和 dbBench 报告必须持续归档 ppm 与 skip 证据；后续只有在 cold_readrandom、sparse MultiGet、dense same-block MultiGet 和 scan 回归证据稳定后，才能把阈值收紧并讨论局部默认启用。

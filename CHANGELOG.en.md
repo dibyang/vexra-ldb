@@ -6,6 +6,8 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- 0.11.0-SNAPSHOT v3 block-local indexes now publish default-enable admission evidence: the writer records candidate/skipped blocks, data-block bytes, and `blockLocalIndexSpaceAmplificationPpm`, exposes the current guardrail through `blockLocalIndexAdmissionPolicy`, and check/repair/dbBench/releaseGate all include the space-amplification fields for future default-enable decisions.
+
 - 0.11.0-SNAPSHOT v3 block-local-index hot reads now fall back safely when the local-index directory or index block is corrupt, checksum validation fails, or an anchor cannot be parsed; `blockLocalIndexFormatCoverage` now requires the corrupt-fallback test while offline check/repair reports remain responsible for surfacing corruption classes.
 
 ## [0.10.0] - 2026-06-21

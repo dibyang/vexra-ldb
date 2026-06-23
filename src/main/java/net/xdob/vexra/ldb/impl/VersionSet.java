@@ -205,6 +205,7 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
     int total = 0;
     int legacy = 0;
     int v2 = 0;
+    int v3 = 0;
     int incompatible = 0;
     long dataBlockCount = 0;
     long inlineBlockSeekIndexBytes = 0;
@@ -212,6 +213,9 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
     long inlineBlockSeekIndexAnchorCount = 0;
     long blockLocalIndexBytes = 0;
     long blockLocalIndexCoveredBlocks = 0;
+    long blockLocalIndexDataBlockBytes = 0;
+    long blockLocalIndexCandidateBlocks = 0;
+    long blockLocalIndexSkippedBlocks = 0;
     long entryAnchorIndexBytes = 0;
     long entryAnchorIndexCoveredBlocks = 0;
     long entryAnchorIndexAnchorCount = 0;
@@ -228,6 +232,9 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
       if (properties.getFormatVersion() == 2) {
         v2++;
       }
+      if (properties.getFormatVersion() == 3) {
+        v3++;
+      }
       if (!properties.getIncompatibleFeatures().isEmpty()) {
         incompatible++;
       }
@@ -237,6 +244,9 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
       inlineBlockSeekIndexAnchorCount += propertyLong(properties, TableProperties.INLINE_BLOCK_SEEK_INDEX_ANCHOR_COUNT_KEY);
       blockLocalIndexBytes += propertyLong(properties, TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY);
       blockLocalIndexCoveredBlocks += propertyLong(properties, TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY);
+      blockLocalIndexDataBlockBytes += propertyLong(properties, TableProperties.BLOCK_LOCAL_INDEX_DATA_BLOCK_BYTES_KEY);
+      blockLocalIndexCandidateBlocks += propertyLong(properties, TableProperties.BLOCK_LOCAL_INDEX_CANDIDATE_BLOCKS_KEY);
+      blockLocalIndexSkippedBlocks += propertyLong(properties, TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY);
       entryAnchorIndexBytes += propertyLong(properties, TableProperties.ENTRY_ANCHOR_INDEX_BYTES_KEY);
       entryAnchorIndexCoveredBlocks += propertyLong(properties, TableProperties.ENTRY_ANCHOR_INDEX_COVERED_BLOCKS_KEY);
       entryAnchorIndexAnchorCount += propertyLong(properties, TableProperties.ENTRY_ANCHOR_INDEX_ANCHOR_COUNT_KEY);
@@ -249,11 +259,16 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
           .append("|formatVersion=").append(properties.getFormatVersion())
           .append("|legacy=").append(properties.isLegacy())
           .append("|compatible=").append(properties.getCompatibleFeatures())
-          .append("|incompatible=").append(properties.getIncompatibleFeatures());
+          .append("|incompatible=").append(properties.getIncompatibleFeatures())
+          .append("|blockLocalIndexSpaceAmplificationPpm=")
+          .append(propertyLong(properties, TableProperties.BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY))
+          .append("|blockLocalIndexAdmissionPolicy=")
+          .append(valueOrEmpty(properties.get(TableProperties.BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY)));
     }
     return "tables=" + total
         + ",legacy=" + legacy
         + ",v2=" + v2
+        + ",v3=" + v3
         + ",incompatible=" + incompatible
         + ",formatVersions=" + versions
         + ",dataBlockCount=" + dataBlockCount
@@ -262,6 +277,11 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
         + ",inlineBlockSeekIndexAnchorCount=" + inlineBlockSeekIndexAnchorCount
         + ",blockLocalIndexBytes=" + blockLocalIndexBytes
         + ",blockLocalIndexCoveredBlocks=" + blockLocalIndexCoveredBlocks
+        + ",blockLocalIndexDataBlockBytes=" + blockLocalIndexDataBlockBytes
+        + ",blockLocalIndexCandidateBlocks=" + blockLocalIndexCandidateBlocks
+        + ",blockLocalIndexSkippedBlocks=" + blockLocalIndexSkippedBlocks
+        + ",blockLocalIndexSpaceAmplificationPpm="
+        + blockLocalIndexSpaceAmplificationPpm(blockLocalIndexBytes, blockLocalIndexDataBlockBytes)
         + ",entryAnchorIndexBytes=" + entryAnchorIndexBytes
         + ",entryAnchorIndexCoveredBlocks=" + entryAnchorIndexCoveredBlocks
         + ",entryAnchorIndexAnchorCount=" + entryAnchorIndexAnchorCount
@@ -274,6 +294,17 @@ public class VersionSet implements SeekingIterable<InternalKey, Slice> {
       return 0;
     }
     return Long.parseLong(value.trim());
+  }
+
+  private static long blockLocalIndexSpaceAmplificationPpm(long blockLocalIndexBytes, long dataBlockBytes) {
+    if (dataBlockBytes <= 0) {
+      return 0;
+    }
+    return (blockLocalIndexBytes * 1_000_000L) / dataBlockBytes;
+  }
+
+  private static String valueOrEmpty(String value) {
+    return value == null ? "" : value;
   }
 
   /**

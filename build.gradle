@@ -925,7 +925,9 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       && fileContains(tableApi, 'getBlockLocalIndexFormatFailures')
       && fileContains(ldbFactoryApi, 'blockLocalIndexEvidence')
       && fileContains(ldbFactoryApi, 'blockLocalIndexFailures')
+      && fileContains(ldbFactoryApi, 'blockLocalIndexSpaceAmplificationPpm')
       && fileContains(tablePropertiesTest, 'BLOCK_LOCAL_INDEX_FEATURE')
+      && fileContains(tablePropertiesTest, 'BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY')
       && fileContains(tablePropertiesTest, 'shouldFallbackToDataBlockSeekWhenBlockLocalIndexBlockIsCorrupt')
       && fileContains(tablePropertiesTest, 'shouldFailFastWhenBlockLocalIndexMetaindexEntryIsMissing')
       && fileContains(verifyCheckTest, 'shouldIncludeV3BlockLocalIndexEvidenceInCheckReport')
@@ -948,6 +950,7 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       && fileContains(tableCacheApi, 'blockLocalIndexSeekCount')
       && fileContains(dbBenchTest, 'multiget_sameblock')
       && fileContains(dbBenchTest, 'scan')
+      && fileContains(dbBenchTest, 'blockLocalIndexSpaceAmplificationPpm')
       && fileContains(dbBenchTest, 'blockLocalIndexDirectoryLoadedTables')
   return [
       [

@@ -185,6 +185,8 @@ class LdbRepairTest {
     assertTrue(report.contains("blocksReadable=true"), report);
     assertTrue(report.contains("\"v3Tables\": 1"), report);
     assertTrue(report.contains("\"blockLocalIndexTables\": 1"), report);
+    assertTrue(report.contains("\"blockLocalIndexSpaceAmplificationPpm\""), report);
+    assertTrue(report.contains("blockLocalIndexAdmissionPolicy="), report);
     assertTrue(report.contains("block.local_index.v1"), report);
 
     try (LDB db = LDBFactory.factory.open(dbDir, new Options().createIfMissing(false))) {

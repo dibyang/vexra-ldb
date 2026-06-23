@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 0.11.0-SNAPSHOT v3 block-local index 增加默认启用前准入证据：writer 记录 candidate/skipped blocks、data block bytes 与 `blockLocalIndexSpaceAmplificationPpm`，并通过 `blockLocalIndexAdmissionPolicy` 暴露当前保护阈值；check/repair/dbBench/releaseGate 均纳入空间放大字段，为后续是否默认启用提供证据。
+
 - 0.11.0-SNAPSHOT v3 block-local index 热读路径补齐损坏回退：point get/MultiGet 运行时遇到 local-index directory/index block 损坏、checksum 失败或锚点解析异常时，安全回退普通 data-block seek；`blockLocalIndexFormatCoverage` 门禁新增 corrupt fallback 测试绑定，正式格式自检仍通过 check/repair 报告暴露损坏分类。
 
 ## [0.10.0] - 2026-06-21

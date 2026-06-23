@@ -200,6 +200,8 @@ public class LDBFactory
     private long blockLocalIndexTables;
     private long blockLocalIndexBytes;
     private long blockLocalIndexCoveredBlocks;
+    private long blockLocalIndexDataBlockBytes;
+    private long blockLocalIndexSkippedBlocks;
 
     private void setDatabaseDir(File databaseDir) {
       this.databaseDir = databaseDir;
@@ -252,6 +254,8 @@ public class LDBFactory
         blockLocalIndexBytes += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY));
         blockLocalIndexCoveredBlocks += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
       }
+      blockLocalIndexDataBlockBytes += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_DATA_BLOCK_BYTES_KEY));
+      blockLocalIndexSkippedBlocks += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY));
       tableFormats.add(file.getName()
           + ":formatVersion=" + properties.getFormatVersion()
           + ",legacy=" + properties.isLegacy()
@@ -263,6 +267,16 @@ public class LDBFactory
           + ",blockLocalIndexBytes=" + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY))
           + ",blockLocalIndexCoveredBlocks="
           + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY))
+          + ",blockLocalIndexDataBlockBytes="
+          + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_DATA_BLOCK_BYTES_KEY))
+          + ",blockLocalIndexCandidateBlocks="
+          + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_CANDIDATE_BLOCKS_KEY))
+          + ",blockLocalIndexSkippedBlocks="
+          + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY))
+          + ",blockLocalIndexSpaceAmplificationPpm="
+          + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY))
+          + ",blockLocalIndexAdmissionPolicy="
+          + valueOrEmpty(properties.get(TableProperties.BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY))
           + ",blockLocalIndexEvidence=" + valueOrEmpty(blockLocalIndexEvidence)
           + ",blockLocalIndexFailures=" + blockLocalIndexFailures);
       for (String failure : blockLocalIndexFailures) {
@@ -365,7 +379,11 @@ public class LDBFactory
       appendJsonField(builder, "incompatibleTables", incompatibleTables, true);
       appendJsonField(builder, "blockLocalIndexTables", blockLocalIndexTables, true);
       appendJsonField(builder, "blockLocalIndexBytes", blockLocalIndexBytes, true);
-      appendJsonField(builder, "blockLocalIndexCoveredBlocks", blockLocalIndexCoveredBlocks, false);
+      appendJsonField(builder, "blockLocalIndexCoveredBlocks", blockLocalIndexCoveredBlocks, true);
+      appendJsonField(builder, "blockLocalIndexDataBlockBytes", blockLocalIndexDataBlockBytes, true);
+      appendJsonField(builder, "blockLocalIndexSkippedBlocks", blockLocalIndexSkippedBlocks, true);
+      appendJsonField(builder, "blockLocalIndexSpaceAmplificationPpm",
+          blockLocalIndexSpaceAmplificationPpm(), false);
       builder.append("\n}\n");
       return builder.toString();
     }
@@ -379,6 +397,9 @@ public class LDBFactory
           + ",blockLocalIndexTables=" + blockLocalIndexTables
           + ",blockLocalIndexBytes=" + blockLocalIndexBytes
           + ",blockLocalIndexCoveredBlocks=" + blockLocalIndexCoveredBlocks
+          + ",blockLocalIndexDataBlockBytes=" + blockLocalIndexDataBlockBytes
+          + ",blockLocalIndexSkippedBlocks=" + blockLocalIndexSkippedBlocks
+          + ",blockLocalIndexSpaceAmplificationPpm=" + blockLocalIndexSpaceAmplificationPpm()
           + "},wal=log-v1"
           + ",manifest=version-edit-log-v1"
           + ",current=text-manifest-pointer-v1"
@@ -419,6 +440,13 @@ public class LDBFactory
     private static boolean hasBlockLocalIndex(TableProperties properties) {
       return "true".equals(properties.get(TableProperties.BLOCK_LOCAL_INDEX_KEY))
           || properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE);
+    }
+
+    private long blockLocalIndexSpaceAmplificationPpm() {
+      if (blockLocalIndexDataBlockBytes <= 0) {
+        return 0;
+      }
+      return (blockLocalIndexBytes * 1_000_000L) / blockLocalIndexDataBlockBytes;
     }
 
     private static long parseLong(String value) {
@@ -2345,6 +2373,8 @@ public class LDBFactory
       private long blockLocalIndexTables;
       private long blockLocalIndexBytes;
       private long blockLocalIndexCoveredBlocks;
+      private long blockLocalIndexDataBlockBytes;
+      private long blockLocalIndexSkippedBlocks;
 
       private void setDatabaseDir(File databaseDir) {
         this.databaseDir = databaseDir;
@@ -2382,6 +2412,8 @@ public class LDBFactory
           blockLocalIndexBytes += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY));
           blockLocalIndexCoveredBlocks += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY));
         }
+        blockLocalIndexDataBlockBytes += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_DATA_BLOCK_BYTES_KEY));
+        blockLocalIndexSkippedBlocks += parseLong(properties.get(TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY));
         tableFormats.add(file.getName()
             + ":formatVersion=" + properties.getFormatVersion()
             + ",legacy=" + properties.isLegacy()
@@ -2393,6 +2425,16 @@ public class LDBFactory
             + ",blockLocalIndexBytes=" + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY))
             + ",blockLocalIndexCoveredBlocks="
             + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY))
+            + ",blockLocalIndexDataBlockBytes="
+            + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_DATA_BLOCK_BYTES_KEY))
+            + ",blockLocalIndexCandidateBlocks="
+            + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_CANDIDATE_BLOCKS_KEY))
+            + ",blockLocalIndexSkippedBlocks="
+            + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY))
+            + ",blockLocalIndexSpaceAmplificationPpm="
+            + valueOrZero(properties.get(TableProperties.BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY))
+            + ",blockLocalIndexAdmissionPolicy="
+            + valueOrEmpty(properties.get(TableProperties.BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY))
             + ",blockLocalIndexEvidence=" + valueOrEmpty(blockLocalIndexEvidence)
             + ",blockLocalIndexFailures=" + blockLocalIndexFailures);
       }
@@ -2459,6 +2501,12 @@ public class LDBFactory
         appendField(builder, "blockLocalIndexBytes", Long.toString(blockLocalIndexBytes), false, true);
         appendField(builder, "blockLocalIndexCoveredBlocks",
             Long.toString(blockLocalIndexCoveredBlocks), false, true);
+        appendField(builder, "blockLocalIndexDataBlockBytes",
+            Long.toString(blockLocalIndexDataBlockBytes), false, true);
+        appendField(builder, "blockLocalIndexSkippedBlocks",
+            Long.toString(blockLocalIndexSkippedBlocks), false, true);
+        appendField(builder, "blockLocalIndexSpaceAmplificationPpm",
+            Long.toString(blockLocalIndexSpaceAmplificationPpm()), false, true);
         appendField(builder, "discardedWalBytes", Long.toString(discardedWalBytes), false, true);
         appendField(builder, "manifestFileNumber", Long.toString(manifestFileNumber), false, true);
         appendField(builder, "currentFile", currentFile == null ? "" : currentFile, true);
@@ -2480,6 +2528,9 @@ public class LDBFactory
             + ",blockLocalIndexTables=" + blockLocalIndexTables
             + ",blockLocalIndexBytes=" + blockLocalIndexBytes
             + ",blockLocalIndexCoveredBlocks=" + blockLocalIndexCoveredBlocks
+            + ",blockLocalIndexDataBlockBytes=" + blockLocalIndexDataBlockBytes
+            + ",blockLocalIndexSkippedBlocks=" + blockLocalIndexSkippedBlocks
+            + ",blockLocalIndexSpaceAmplificationPpm=" + blockLocalIndexSpaceAmplificationPpm()
             + "},wal=log-v1"
             + ",manifest=version-edit-log-v1"
             + ",current=text-manifest-pointer-v1"
@@ -2530,6 +2581,13 @@ public class LDBFactory
       private static boolean hasBlockLocalIndex(TableProperties properties) {
         return "true".equals(properties.get(TableProperties.BLOCK_LOCAL_INDEX_KEY))
             || properties.getIncompatibleFeatures().contains(TableProperties.BLOCK_LOCAL_INDEX_FEATURE);
+      }
+
+      private long blockLocalIndexSpaceAmplificationPpm() {
+        if (blockLocalIndexDataBlockBytes <= 0) {
+          return 0;
+        }
+        return (blockLocalIndexBytes * 1_000_000L) / blockLocalIndexDataBlockBytes;
       }
 
       private static long parseLong(String value) {

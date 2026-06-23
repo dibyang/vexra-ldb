@@ -30,6 +30,13 @@ public final class TableProperties {
   public static final String BLOCK_LOCAL_INDEX_INTERVAL_KEY = "ldb.table.block_local_index.interval";
   public static final String BLOCK_LOCAL_INDEX_BYTES_KEY = "ldb.table.block_local_index.bytes";
   public static final String BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY = "ldb.table.block_local_index.covered_blocks";
+  public static final String BLOCK_LOCAL_INDEX_DATA_BLOCK_BYTES_KEY = "ldb.table.block_local_index.data_block_bytes";
+  public static final String BLOCK_LOCAL_INDEX_CANDIDATE_BLOCKS_KEY = "ldb.table.block_local_index.candidate_blocks";
+  public static final String BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY = "ldb.table.block_local_index.skipped_blocks";
+  public static final String BLOCK_LOCAL_INDEX_SKIPPED_ANCHOR_BLOCKS_KEY = "ldb.table.block_local_index.skipped_anchor_blocks";
+  public static final String BLOCK_LOCAL_INDEX_SKIPPED_SPACE_BLOCKS_KEY = "ldb.table.block_local_index.skipped_space_blocks";
+  public static final String BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY = "ldb.table.block_local_index.space_amplification_ppm";
+  public static final String BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY = "ldb.table.block_local_index.admission_policy";
   public static final String ENTRY_ANCHOR_INDEX_FEATURE = "block.entry_anchor_index.v1";
   public static final String ENTRY_ANCHOR_INDEX_META_INDEX_KEY = "entry_anchor_index";
   public static final String ENTRY_ANCHOR_INDEX_KEY = "ldb.table.entry_anchor_index";

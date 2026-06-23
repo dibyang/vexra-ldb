@@ -23,6 +23,7 @@ import static net.xdob.vexra.ldb.impl.VersionSet.TARGET_FILE_SIZE;
 
 public class TableBuilder {
   private static final int BLOCK_LOCAL_INDEX_MIN_ANCHORS = 2;
+  private static final long BLOCK_LOCAL_INDEX_MAX_SPACE_PPM = 2_000_000L;
 
   /**
    * TABLE_MAGIC_NUMBER was picked by running
@@ -46,8 +47,13 @@ public class TableBuilder {
 
   private long entryCount;
   private long dataBlockCount;
+  private long dataBlockBytes;
   private long blockLocalIndexBytes;
   private long blockLocalIndexCoveredBlocks;
+  private long blockLocalIndexCandidateBlocks;
+  private long blockLocalIndexSkippedBlocks;
+  private long blockLocalIndexSkippedAnchorBlocks;
+  private long blockLocalIndexSkippedSpaceBlocks;
   private long entryAnchorIndexBytes;
   private long entryAnchorIndexCoveredBlocks;
   private long entryAnchorIndexAnchorCount;
@@ -184,6 +190,7 @@ public class TableBuilder {
     }
     pendingHandle = writeBlockContents(raw);
     CompressionType dataBlockCompressionType = lastWrittenCompressionType;
+    dataBlockBytes += pendingHandle.getFullBlockSize();
     if (options.writeBlockLocalIndex()) {
       writeBlockLocalIndexBlock(pendingHandle, raw);
     }
@@ -377,21 +384,36 @@ public class TableBuilder {
     BlockBuilder propertiesBlockBuilder =
         new BlockBuilder(512, 1, new BytewiseComparator());
     addProperty(propertiesBlockBuilder, TableProperties.COMPATIBLE_FEATURES_KEY, compatibleFeatures(filterBlockHandle));
-    addProperty(propertiesBlockBuilder, "ldb.format.created_by", "vexra-ldb/0.10.0-SNAPSHOT");
+    addProperty(propertiesBlockBuilder, "ldb.format.created_by", "vexra-ldb/0.11.0-SNAPSHOT");
     addProperty(propertiesBlockBuilder, TableProperties.INCOMPATIBLE_FEATURES_KEY,
         incompatibleFeatures(hasBlockLocalIndex, hasEntryAnchorIndex, hasInlineBlockSeekIndex));
     addProperty(propertiesBlockBuilder, TableProperties.FORMAT_VERSION_KEY, Integer.toString(options.tableFormatVersion()));
     if (options.tableFormatVersion() >= 3) {
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_KEY,
           Boolean.toString(hasBlockLocalIndex));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_ADMISSION_POLICY_KEY,
+          "min-anchors=" + BLOCK_LOCAL_INDEX_MIN_ANCHORS
+              + ",max-space-ppm=" + BLOCK_LOCAL_INDEX_MAX_SPACE_PPM);
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_BYTES_KEY,
           Long.toString(blockLocalIndexBytes));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_CANDIDATE_BLOCKS_KEY,
+          Long.toString(blockLocalIndexCandidateBlocks));
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_COVERED_BLOCKS_KEY,
           Long.toString(blockLocalIndexCoveredBlocks));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_DATA_BLOCK_BYTES_KEY,
+          Long.toString(dataBlockBytes));
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_INTERVAL_KEY,
           Integer.toString(options.blockLocalIndexInterval()));
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_POLICY_KEY,
           hasBlockLocalIndex ? "restart-anchor" : "disabled");
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_ANCHOR_BLOCKS_KEY,
+          Long.toString(blockLocalIndexSkippedAnchorBlocks));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_BLOCKS_KEY,
+          Long.toString(blockLocalIndexSkippedBlocks));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_SKIPPED_SPACE_BLOCKS_KEY,
+          Long.toString(blockLocalIndexSkippedSpaceBlocks));
+      addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_SPACE_AMPLIFICATION_PPM_KEY,
+          Long.toString(blockLocalIndexSpaceAmplificationPpm()));
       addProperty(propertiesBlockBuilder, TableProperties.BLOCK_LOCAL_INDEX_VERSION_KEY,
           hasBlockLocalIndex ? "1" : "");
     }
@@ -471,7 +493,9 @@ public class TableBuilder {
           Slices.utf8Slice(blockHandleDirectoryKey(entry.dataBlockHandle)),
           BlockHandle.writeBlockHandle(entry.localIndexBlockHandle));
     }
-    return writeBlock(directoryBlockBuilder);
+    BlockHandle directoryHandle = writeBlock(directoryBlockBuilder);
+    blockLocalIndexBytes += directoryHandle.getFullBlockSize();
+    return directoryHandle;
   }
 
   private BlockHandle writeEntryAnchorIndexDirectoryIfNeeded() throws IOException {
@@ -494,10 +518,13 @@ public class TableBuilder {
     if (restartCount == 0) {
       return;
     }
+    blockLocalIndexCandidateBlocks++;
 
     int interval = options.blockLocalIndexInterval();
     int anchorCount = ((restartCount - 1) / interval) + 1;
     if (anchorCount < BLOCK_LOCAL_INDEX_MIN_ANCHORS) {
+      blockLocalIndexSkippedBlocks++;
+      blockLocalIndexSkippedAnchorBlocks++;
       return;
     }
 
@@ -509,11 +536,25 @@ public class TableBuilder {
           Slices.utf8Slice(restartIndex + ":" + dataBlock.restartOffset(restartIndex)));
     }
 
+    long estimatedIndexBytes = (long) anchorCount * 48L + BlockTrailer.ENCODED_LENGTH;
+    if (estimatedIndexBytes * 1_000_000L > dataBlockHandle.getFullBlockSize() * BLOCK_LOCAL_INDEX_MAX_SPACE_PPM) {
+      blockLocalIndexSkippedBlocks++;
+      blockLocalIndexSkippedSpaceBlocks++;
+      return;
+    }
+
     BlockHandle localIndexBlockHandle = writeBlock(localIndexBlockBuilder);
     blockLocalIndexDirectoryEntries.add(
         new BlockLocalIndexDirectoryEntry(dataBlockHandle, localIndexBlockHandle));
     blockLocalIndexBytes += localIndexBlockHandle.getFullBlockSize();
     blockLocalIndexCoveredBlocks++;
+  }
+
+  private long blockLocalIndexSpaceAmplificationPpm() {
+    if (dataBlockBytes <= 0) {
+      return 0;
+    }
+    return (blockLocalIndexBytes * 1_000_000L) / dataBlockBytes;
   }
 
   private void writeEntryAnchorIndexBlock(BlockHandle dataBlockHandle, Slice rawDataBlock) throws IOException {
