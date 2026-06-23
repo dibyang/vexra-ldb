@@ -17,6 +17,9 @@ This project is still in the `0.x` phase. By default, security fixes are accepte
 Please do not disclose exploitable security issues in public issues. Report them privately through:
 
 - Email: `dib.yang@gmail.com`
+- GitHub private vulnerability reporting: <https://github.com/dibyang/vexra-ldb/security/advisories/new>
+
+If private channels are temporarily unavailable, you may open a public placeholder issue without vulnerability details. Only state that a security issue needs private coordination. Do not include reproduction steps, payloads, logs, or affected data.
 
 Please include as much as possible:
 
@@ -24,6 +27,14 @@ Please include as much as possible:
 - Reproduction steps or minimal reproduction code.
 - Impact scope, such as data corruption, unauthorized read, arbitrary file write, denial of service, or dependency supply-chain risk.
 - Mitigation suggestions you believe are safe.
+
+Treat the following categories as security-sensitive:
+
+- Data exposure, unauthorized reads, or access-control bypass.
+- Arbitrary file read, write, delete, or path traversal.
+- Exploitable deserialization, plugin loading, or dependency supply-chain risk.
+- Denial of service reliably triggered by remote or untrusted input.
+- Attack paths that can corrupt persistent data, bypass recovery, or poison backups.
 
 ## Response Process
 

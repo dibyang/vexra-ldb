@@ -1,0 +1,104 @@
+name: Bug report
+description: 报告 vexra-ldb 的普通缺陷；安全问题请不要使用公开 issue。
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请先确认这不是安全敏感问题；如果问题可能导致数据泄露、越权访问、任意文件访问、可被远程触发的拒绝服务或供应链风险，请改用 `SECURITY.md` 中的私下报告方式。
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      description: 请填写 vexra-ldb 版本、Git commit、依赖坐标或本地分支。
+      placeholder: "0.2.x / commit sha / net.xdob:vexra-ldb:..."
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: 影响模块
+      description: 选择最接近的模块或路径。
+      options:
+        - Core KV API
+        - WAL / recovery
+        - SSTable / table format
+        - MemTable / compaction
+        - Column family
+        - Snapshot cursor / iterator
+        - Check / repair / backup / restore
+        - CLI tool
+        - Plugin / longrun
+        - Build / documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: usage_path
+    attributes:
+      label: 使用路径
+      description: 说明是直接使用库、通过命令行工具、插件、测试夹具，还是应用框架集成。
+      placeholder: "Direct library usage / LdbTool / plugin / framework integration"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 说明你认为应该发生什么。
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 说明实际发生了什么，包括错误信息、错误返回值或数据状态。
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: 最小复现
+      description: 优先提供可运行测试、最小代码片段或命令序列；如果涉及磁盘文件，请说明初始目录状态。
+      placeholder: |
+        1. 使用这些 options 打开数据库...
+        2. 执行 put/write/deleteRange/compactRange...
+        3. 重启或运行 check/repair...
+        4. 观察到...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志、堆栈和诊断属性
+      description: 粘贴首个失败堆栈、INFO_LOG 摘要、LdbTool JSON 输出或 `getProperty` 诊断属性。请移除敏感路径、密钥和业务数据。
+      render: text
+  - type: textarea
+    id: storage_context
+    attributes:
+      label: 存储与并发上下文
+      description: 如果问题涉及恢复、compaction、backup、事务式批写或并发，请填写线程数、迭代次数、失败频率、首次失败时间、是否启用 snapshot/column family/plugin。
+      placeholder: "threads=..., iterations=..., failure rate=..., column families=..., plugins=..."
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: JDK、操作系统、文件系统、磁盘类型、Gradle/IDE、容器或 CI 环境。
+      placeholder: "JDK 8u..., Windows/Linux/macOS, NTFS/ext4, local SSD, Gradle ..."
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已确认这不是安全敏感问题，不包含可利用细节。
+          required: true
+        - label: 我已搜索现有 issue 和文档，未找到相同问题。
+          required: true
+        - label: 我提供了版本或提交号，以及足够的复现信息。
+          required: true
+        - label: 如问题涉及存储、恢复或并发，我已提供日志、诊断属性或最小测试。
+          required: false

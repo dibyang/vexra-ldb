@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞私下报告
+    url: https://github.com/dibyang/vexra-ldb/security/advisories/new
+    about: 请不要在公开 issue 中披露可利用漏洞细节；也可以使用 SECURITY.md 中的邮箱。
+  - name: Bug 报告指南
+    url: https://github.com/dibyang/vexra-ldb/blob/master/docs/bug-reporting.md
+    about: 查看如何准备最小复现、日志、环境和存储上下文。

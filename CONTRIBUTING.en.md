@@ -30,6 +30,18 @@ Windows PowerShell:
 4. Add tests for behavior changes, covering at least the normal path and key failure paths.
 5. In the PR, describe scope, compatibility impact, rollback strategy, and validation commands.
 
+## Reporting Bugs
+
+Use the GitHub `Bug report` issue form for ordinary defects, and read the [Bug Reporting Guide](docs/bug-reporting.en.md) before filing. A high-quality report usually includes:
+
+- Version, commit, or dependency coordinates.
+- Affected module and usage path, such as direct Java API usage, `LdbTool`, plugin, or upper-layer application integration.
+- Expected behavior, actual behavior, and a minimal reproducer, preferably a runnable test.
+- First failure stack trace, `INFO_LOG` summary, `LdbTool` JSON output, or `getProperty` diagnostics.
+- For storage, recovery, or concurrency issues, thread count, iteration count, failure frequency, first failure time, and relevant options.
+
+If the issue may involve data exposure, unauthorized access, arbitrary file access, remotely triggerable denial of service, exploitable deserialization, privilege bypass, or supply-chain risk, do not open a public issue. Report it privately according to [SECURITY.en.md](SECURITY.en.md).
+
 ## Code Style
 
 - Keep JDK 8 compatibility.

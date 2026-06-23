@@ -35,6 +35,12 @@ Windows PowerShell:
 .\gradlew.bat test
 ```
 
+## Feedback And Contributions
+
+- For ordinary bugs, use the GitHub `Bug report` issue form and read `docs/bug-reporting.en.md` first.
+- Do not open public issues for security problems. Report them privately according to `SECURITY.en.md`.
+- Read `CONTRIBUTING.en.md` before contributing code. Changes involving disk format, recovery semantics, state machines, or tool side effects need matching design-document updates.
+
 ## Basic Usage
 
 ```java
@@ -150,6 +156,7 @@ Commands primarily output JSON so scripts and tests can parse them. `check`, `pr
 
 - `CONTRIBUTING.md`: contribution guide, with English copy and language switch.
 - `SECURITY.md`: security policy and vulnerability reporting, with English copy and language switch.
+- `docs/bug-reporting.md`: ordinary bug reporting guide covering minimal reproducers, logs, environment, and storage context, with English copy.
 - `CODE_OF_CONDUCT.md`: community code of conduct, with English copy and language switch.
 - `CHANGELOG.md`: release changelog, with English copy and language switch.
 - `docs/release.md`: release process, with English copy and language switch.

@@ -35,6 +35,12 @@ Windows PowerShell:
 .\gradlew.bat test
 ```
 
+## 反馈与贡献
+
+- 普通 bug 请使用 GitHub `Bug report` issue form，并先阅读 `docs/bug-reporting.md`。
+- 安全问题请不要提交公开 issue，按 `SECURITY.md` 私下报告。
+- 贡献代码前请阅读 `CONTRIBUTING.md`，涉及磁盘格式、恢复语义、状态机或工具副作用的改动需要同步设计文档。
+
 ## 基本用法
 
 ```java
@@ -150,6 +156,7 @@ ldb checkpoint <db> <targetDir>
 
 - `CONTRIBUTING.md`：贡献指南，提供英文副本和中英切换。
 - `SECURITY.md`：安全政策和漏洞报告方式，提供英文副本和中英切换。
+- `docs/bug-reporting.md`：普通 bug 报告指南，说明最小复现、日志、环境和存储上下文要求，提供英文副本。
 - `CODE_OF_CONDUCT.md`：社区行为准则，提供英文副本和中英切换。
 - `CHANGELOG.md`：版本变更记录，提供英文副本和中英切换。
 - `docs/release.md`：发布流程说明，提供英文副本和中英切换。
