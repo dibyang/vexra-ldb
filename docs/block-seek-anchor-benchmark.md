@@ -67,3 +67,14 @@
 该策略只影响 reader 打开 block 后构建的内存态 anchor，不改变磁盘 block 格式，也不改变持久化 inline seek-index 编码。
 
 `readrandom_mixed` 现在额外输出 `workloadStats`，按 hit/miss 拆分 lookups、found、latency 和线程分配。filter-skip 与 cache-hit/cache-miss 证据继续保留在已有 `sstReadStats` 和 `blockCacheStats` 字段中，后续 mixed 调优可以把调用方 hit/miss 成本与存储引擎计数关联起来看。
+
+## 发布前轻量门禁
+
+`blockSeekPerfGate` 已接入 `releaseGate`。该门禁会先运行 `blockSeekMicroBenchReport`，再检查 JSON 报告中的关键字段是否存在且为正：
+
+- `decodedEntriesPerOp`
+- `sharedKeyRebuildsPerOp`
+- `seekAnchorCount`
+- `seekAnchorRetainedKeyBytes`
+
+该门禁只防止 benchmark 入口、报告结构和核心观测信号退化，不对 `opsPerSecond` 设置硬阈值；吞吐仍需结合真实 `ldbDbBenchReport` 和同机对照判断。

@@ -138,6 +138,65 @@ tasks.register('blockSeekMicroBenchReport', JavaExec) {
       '--seed', seed.get()
 }
 
+tasks.register('blockSeekPerfGate') {
+  group = 'verification'
+  description = 'Checks the Block.seek micro-benchmark report schema without applying host-sensitive throughput thresholds.'
+  dependsOn tasks.named('blockSeekMicroBenchReport')
+
+  doLast {
+    File outputDir = file(providers.gradleProperty('ldb.blockSeekMicroBench.outputDir')
+        .orElse(layout.buildDirectory.dir('reports/block-seek-micro-bench').map { it.asFile.path })
+        .get())
+    File summaryFile = new File(outputDir, 'block-seek-micro-bench-summary.json')
+    if (!summaryFile.isFile()) {
+      throw new GradleException("Missing Block.seek micro-benchmark report: ${summaryFile}")
+    }
+    Map<String, Object> summary = new JsonSlurper().parse(summaryFile) as Map<String, Object>
+    List<String> failures = []
+    [
+        'operations',
+        'hits',
+        'opsPerSecond',
+        'bytesPerOp',
+        'decodedEntries',
+        'decodedEntriesPerOp',
+        'sharedKeyRebuilds',
+        'sharedKeyRebuildsPerOp',
+        'seekAnchorCount',
+        'seekAnchorRetainedKeyBytes'
+    ].each { fieldName ->
+      Object value = summary[fieldName]
+      if (!(value instanceof Number) || ((Number) value).doubleValue() <= 0.0d) {
+        failures.add("${fieldName} must be a positive number")
+      }
+    }
+    Map<String, Object> gate = [
+        name: 'blockSeekPerfGate',
+        result: failures.isEmpty() ? 'PASSED' : 'FAILED',
+        source: summaryFile.absolutePath,
+        checkedFields: [
+            'operations',
+            'hits',
+            'opsPerSecond',
+            'bytesPerOp',
+            'decodedEntries',
+            'decodedEntriesPerOp',
+            'sharedKeyRebuilds',
+            'sharedKeyRebuildsPerOp',
+            'seekAnchorCount',
+            'seekAnchorRetainedKeyBytes'
+        ],
+        note: 'Schema and signal gate only; throughput is not thresholded because it is host-sensitive.',
+        failures: failures
+    ]
+    File gateFile = new File(outputDir, 'block-seek-perf-gate.json')
+    gateFile.text = JsonOutput.prettyPrint(JsonOutput.toJson(gate)) + System.lineSeparator()
+    if (!failures.isEmpty()) {
+      throw new GradleException("Block.seek perf gate failed: ${failures.join('; ')}")
+    }
+  }
+}
+
 def releaseGateReportDir = layout.buildDirectory.dir('reports/ldb-release-gate')
 
 tasks.register('releaseGateUnitTest', Test) {
@@ -166,6 +225,7 @@ tasks.register('releaseGate') {
   description = 'Runs production release gates and writes RELEASE-GATE-REPORT.json/md.'
   dependsOn tasks.named('releaseGateUnitTest')
   dependsOn tasks.named('upgradeCompatibilityTest')
+  dependsOn tasks.named('blockSeekPerfGate')
   dependsOn ':ldb-longrun:productionGateLongRun'
 
   doLast {
@@ -185,6 +245,9 @@ tasks.register('releaseGate') {
     gates.add(collectFileGate('productionGateLongRun',
         'gradlew :ldb-longrun:productionGateLongRun',
         file("$rootDir/ldb-longrun/build/reports/ldb-longrun/production-gate-work/report/summary.json")))
+    gates.add(collectFileGate('blockSeekPerfGate',
+        'gradlew :blockSeekPerfGate',
+        file("$buildDir/reports/block-seek-micro-bench/block-seek-perf-gate.json")))
     gates.add(collectUserManagedReleaseConfigGate())
     gates.add(collectGitReleaseTraceabilityGate())
 

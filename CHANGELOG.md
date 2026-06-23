@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+- 新增 `blockSeekPerfGate` 并接入 `releaseGate`，发布前固定运行 `blockSeekMicroBenchReport` 并校验关键观测字段，防止 Block.seek micro-benchmark 入口或报告结构退化；该门禁不设置机器敏感的吞吐硬阈值。
+
+- Windows 下目录 force 的预期 `AccessDeniedException` 不再默认输出 WARN，仍会计入 `ldb.fileSystemStats` 诊断字段，减少 benchmark 和发布门禁日志噪声。
+
 - Block.seek 内存 seek anchor 改为保守自适应密度：普通大 block 继续使用 interval=2，小 block 或低 shared-key 收益区间降密/跳过 anchor，降低低收益 block 的常驻 key 内存成本；不改变磁盘 block 格式。
 - `readrandom_mixed` benchmark 新增 `workloadStats`，拆分 hit/miss 子路径的 lookups、found、latency 与线程分配，并复用预生成 hit/miss key 池以减少 benchmark harness 分配噪声。
 

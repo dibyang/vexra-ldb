@@ -6,6 +6,10 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- Added `blockSeekPerfGate` and wired it into `releaseGate`; pre-release checks now run `blockSeekMicroBenchReport` and validate key observation fields so the Block.seek micro-benchmark entry point and report schema cannot silently regress. The gate does not enforce host-sensitive throughput thresholds.
+
+- Expected Windows directory-force `AccessDeniedException` failures no longer log at WARN by default; they are still counted in `ldb.fileSystemStats`, reducing benchmark and release-gate log noise.
+
 - Block.seek in-memory seek anchors now use a conservative adaptive density: regular large blocks keep interval=2, while tiny or low shared-key-benefit restart ranges downshift or skip anchors to reduce retained key memory without changing the on-disk block format.
 - `readrandom_mixed` benchmark reports a new `workloadStats` field that splits hit/miss lookups, found counts, latency, and thread allocation, and reuses pre-generated hit/miss key pools to reduce benchmark-harness allocation noise.
 

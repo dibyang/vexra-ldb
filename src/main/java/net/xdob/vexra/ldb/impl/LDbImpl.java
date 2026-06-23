@@ -4931,8 +4931,30 @@ public class LDbImpl implements LDB {
       directoryForceFailureCount.incrementAndGet();
       lastDirectoryForceFailure = "dir=" + dir.getAbsolutePath()
           + ",error=" + e.getClass().getName() + ": " + e.getMessage();
-      LOG.warn("Failed to force LDB directory {}", dir, e);
+      if (isExpectedDirectoryForceFailure(e)) {
+        LOG.debug("LDB directory force is not supported on this platform: {}", dir, e);
+      } else {
+        LOG.warn("Failed to force LDB directory {}", dir, e);
+      }
     }
+  }
+
+  /**
+   * 判断目录 force 失败是否属于平台兼容性预期失败。
+   *
+   * <p>Windows JDK 无法像 Unix 那样用只读 FileChannel 打开目录，目录 fsync 会稳定抛出
+   * AccessDeniedException。该失败仍保留到 `ldb.fileSystemStats`，但默认日志不再刷 WARN，
+   * 避免 benchmark 和 release gate 被已知兼容噪声淹没。</p>
+   */
+  private static boolean isExpectedDirectoryForceFailure(Exception e) {
+    return isWindows() && e instanceof java.nio.file.AccessDeniedException;
+  }
+
+  /**
+   * 判断当前运行环境是否为 Windows。
+   */
+  private static boolean isWindows() {
+    return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
   }
 
   private InternalKey metadataLargestKey(InternalKey key, Slice value) {

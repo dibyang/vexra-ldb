@@ -76,3 +76,17 @@ inline seek-index encoding.
 count, latency, and thread allocation. Filter-skip and cache-hit/cache-miss evidence remains in the
 existing `sstReadStats` and `blockCacheStats` fields, so mixed-path tuning can correlate caller-level
 hit/miss cost with storage-engine counters.
+
+## Lightweight Pre-Release Gate
+
+`blockSeekPerfGate` is now wired into `releaseGate`. The gate first runs
+`blockSeekMicroBenchReport`, then checks that key JSON report fields exist and are positive:
+
+- `decodedEntriesPerOp`
+- `sharedKeyRebuildsPerOp`
+- `seekAnchorCount`
+- `seekAnchorRetainedKeyBytes`
+
+This gate only protects the benchmark entry point, report schema, and core observation signals. It
+does not enforce a hard `opsPerSecond` threshold because throughput is host-sensitive; real
+performance decisions still require `ldbDbBenchReport` and same-host comparisons.
