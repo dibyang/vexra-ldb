@@ -4,7 +4,7 @@
 
 本文档记录 `vexra ldb` 的重要变更。格式遵循 Keep a Changelog 的精神，版本号遵循语义化版本约定。
 
-## [Unreleased]
+## [0.11.0] - 2026-06-23
 
 - MultiGet 版本层逐层 miss 查询改为 `Version -> Level` indexed get，复用原始 key 列表与未命中下标数组，避免每一层重新构造 `missedKeys` 临时列表。
 - `readrandom_mixed` 报告新增 `diagnosticStats`，把 hit/miss 子路径计数与 `candidateEntryHits/Misses`、`bloomFalsePositives`、`tableLastBlockHits/Misses`、block cache hit/miss、slot collision 和 GC 指标关联起来，便于定位 mixed 波动来源。
@@ -57,17 +57,17 @@
 
 - dbBench 现在允许 `table_format_version=1` 搭配 `write_block_local_index=true`，用于基准测试默认自动候选模式；报告仍记录配置值与实际 SST `tableFormatStats`，便于区分“默认尝试索引”与“实际提升为 v3”。
 
-- 0.11.0-SNAPSHOT 默认进入 v3 block-local index 自动候选模式：`Options.writeBlockLocalIndex()` 默认值调整为 `true`，但配合动态格式提升与 25% 空间准入，只有实际写出 local-index directory 的 SST 才升级为 v3；小表或高空间放大样本仍保持 legacy/v2，不会无收益声明不兼容 feature。
+- 0.11.0 默认进入 v3 block-local index 自动候选模式：`Options.writeBlockLocalIndex()` 默认值调整为 `true`，但配合动态格式提升与 25% 空间准入，只有实际写出 local-index directory 的 SST 才升级为 v3；小表或高空间放大样本仍保持 legacy/v2，不会无收益声明不兼容 feature。
 
-- 0.11.0-SNAPSHOT v3 block-local index 增加默认化前的动态格式提升：调用方允许 `writeBlockLocalIndex=true` 时，若所有 data block 都被准入策略跳过，SST 仍保持 legacy/v2，不声明 `block.local_index.v1`；只有真实写出 local-index directory 时才自动提升为 v3，避免无收益小表被默认写成不兼容格式。
+- 0.11.0 v3 block-local index 增加默认化前的动态格式提升：调用方允许 `writeBlockLocalIndex=true` 时，若所有 data block 都被准入策略跳过，SST 仍保持 legacy/v2，不声明 `block.local_index.v1`；只有真实写出 local-index directory 时才自动提升为 v3，避免无收益小表被默认写成不兼容格式。
 
-- 0.11.0-SNAPSHOT v3 block-local index 默认启用路线继续收紧 writer 准入：单个 data block 的 local-index 预估空间放大上限从实验级 `2000000ppm` 降到生产评估级 `250000ppm`；超过阈值的 block 会跳过索引写入并记录 `blockLocalIndexSkippedSpaceBlocks`，避免默认化前产生高空间放大 SST。
+- 0.11.0 v3 block-local index 默认启用路线继续收紧 writer 准入：单个 data block 的 local-index 预估空间放大上限从实验级 `2000000ppm` 降到生产评估级 `250000ppm`；超过阈值的 block 会跳过索引写入并记录 `blockLocalIndexSkippedSpaceBlocks`，避免默认化前产生高空间放大 SST。
 
-- 0.11.0-SNAPSHOT v3 block-local index 默认启用评估新增固定对比入口：`ldb-longrun` 提供 `ldbBlockLocalIndexBaselineReport`、`ldbBlockLocalIndexCandidateReport` 和 `ldbBlockLocalIndexComparisonReport`，releaseGate 会检查该入口存在，避免发布前只依赖临时手工 dbBench 参数。
+- 0.11.0 v3 block-local index 默认启用评估新增固定对比入口：`ldb-longrun` 提供 `ldbBlockLocalIndexBaselineReport`、`ldbBlockLocalIndexCandidateReport` 和 `ldbBlockLocalIndexComparisonReport`，releaseGate 会检查该入口存在，避免发布前只依赖临时手工 dbBench 参数。
 
-- 0.11.0-SNAPSHOT v3 block-local index 增加默认启用前准入证据：writer 记录 candidate/skipped blocks、data block bytes 与 `blockLocalIndexSpaceAmplificationPpm`，并通过 `blockLocalIndexAdmissionPolicy` 暴露当前保护阈值；check/repair/dbBench/releaseGate 均纳入空间放大字段，为后续是否默认启用提供证据。
+- 0.11.0 v3 block-local index 增加默认启用前准入证据：writer 记录 candidate/skipped blocks、data block bytes 与 `blockLocalIndexSpaceAmplificationPpm`，并通过 `blockLocalIndexAdmissionPolicy` 暴露当前保护阈值；check/repair/dbBench/releaseGate 均纳入空间放大字段，为后续是否默认启用提供证据。
 
-- 0.11.0-SNAPSHOT v3 block-local index 热读路径补齐损坏回退：point get/MultiGet 运行时遇到 local-index directory/index block 损坏、checksum 失败或锚点解析异常时，安全回退普通 data-block seek；`blockLocalIndexFormatCoverage` 门禁新增 corrupt fallback 测试绑定，正式格式自检仍通过 check/repair 报告暴露损坏分类。
+- 0.11.0 v3 block-local index 热读路径补齐损坏回退：point get/MultiGet 运行时遇到 local-index directory/index block 损坏、checksum 失败或锚点解析异常时，安全回退普通 data-block seek；`blockLocalIndexFormatCoverage` 门禁新增 corrupt fallback 测试绑定，正式格式自检仍通过 check/repair 报告暴露损坏分类。
 
 ## [0.10.0] - 2026-06-21
 
@@ -416,20 +416,20 @@
 ### 下一开发版本
   发布上传完成后，工作区版本号已升级为 `0.9.0-SNAPSHOT`。
 
-## 0.11.0-SNAPSHOT V3E-05 200k block-local index 证据归档
+## 0.11.0 V3E-05 200k block-local index 证据归档
 
 - 归档 v3 block-local index opt-in 正式 200k 对比：`cold_readrandom` 为 baseline 的 `108.85%`，`multiget_random` 为 `103.70%`，`multiget_sameblock` 为 `220.21%`，但 `scan` 仅为 `84.09%`。
 - 结论保持 `writeBlockLocalIndex` 为显式 opt-in；由于 scan 存在约 `15.91%` 回归，当前版本不默认开启，后续需补齐多轮稳定性复测、scan 回归修复和空间放大上限。
-## 0.11.0-SNAPSHOT V3E-06 scan 路径解耦
+## 0.11.0 V3E-06 scan 路径解耦
 
 - v3 block-local index directory 改为按需加载：打开声明 `block.local_index.v1` 的 SST 时仍校验 `block_local_index` metaindex handle 存在，但不再为普通 iterator/scan eager 读取 directory block。
 - `ldb.sstReadStats` 新增 `blockLocalIndexTables`、`blockLocalIndexDirectoryLoadedTables`、`blockLocalIndexDirectoryEntries`、`blockLocalIndexSeekCount`、`blockLocalIndexHitCount` 和 `blockLocalIndexFallbackCount`，用于证明 scan benchmark 是否加载了 block-local index 路径。
-## 0.11.0-SNAPSHOT V3E-06 threshold8 复测
+## 0.11.0 V3E-06 threshold8 复测
 
 - MultiGet 的 block-local index 启用策略收紧为同一 data block group 至少 `8` 个 lookup，避免稀疏随机 batch 因偶发同块命中而加载 local index。
 - 200k 复测显示：`cold_readrandom` 为 baseline 的 `91.47%`，`multiget_random` 为 `90.16%`，`multiget_sameblock` 为 `107.20%`，`scan` 为 `215.03%`；scan 证据中 `blockLocalIndexDirectoryLoadedTables=0`、`blockLocalIndexSeekCount=0`。
 - 结论继续保持 `writeBlockLocalIndex` 为显式 opt-in；默认开启前仍需修复 cold read / sparse MultiGet 回退并补齐空间放大上限。
-## 0.11.0-SNAPSHOT V3E-07 interval4 取舍验证
+## 0.11.0 V3E-07 interval4 取舍验证
 
 - 补充 `blockLocalIndexInterval=4` 的 200k 对比：`multiget_random` 回到 baseline 的 `100.42%`，但 `multiget_sameblock` 降至 `95.01%`；`scan` 仍保持 `blockLocalIndexDirectoryLoadedTables=0`、`blockLocalIndexSeekCount=0`。
 - 结论：`interval=4` 更适合保护 sparse MultiGet，`interval=1` 更偏向 dense same-block 收益；当前仍不默认开启 `writeBlockLocalIndex`，后续需要更低空间/元数据成本或 workload admission 策略。
@@ -448,60 +448,60 @@
 - 使用 `build/reports/rocksdbjni-comparison-v3e09-random-supported-200k/comparison.csv` 归档 `read_optimized + blockCacheAdmissionMinReads=2` 的同机 RocksDB JNI 对照。
 - `cold_readrandom` 达到 RocksDB JNI 的 60.77%，`multiget_random` 达到 67.97%，继续高于 50% 专项目标。
 - 当前 RocksDB JNI runner 尚不支持 LDB 自定义 `multiget_sameblock` 场景，因此该场景只记录 LDB ops/s，不声明 RocksDB JNI ratio。
-## 0.11.0-SNAPSHOT 单点局部性 hit-path 优化
+## 0.11.0 单点局部性 hit-path 优化
 
 - 新增 `readrandom_sameblock` 局部性点查 benchmark，并在 `Table` 单点 direct get 路径增加最近 index 覆盖缓存和最近 data block 复用。50k 对照中，`readrandom_sameblock` 达到 RocksDB JNI 的 `0.5421`；`ldb.sstReadStats` 记录 `tableIndexCacheHits=47839`、`tableLastBlockHits=47839`，将实际 index seek / data block open 压缩到 `2161` 次。
-## 0.11.0-SNAPSHOT 请求级 single-key read context
+## 0.11.0 请求级 single-key read context
 
 - 新增内部 `PointReadContext`，在单次 `Version.get` 调用链内复用最近候选 SST 文件，避免连续邻近 point get 重复执行 level 文件定位；`ldb.sstReadStats` 新增 `pointReadContextFileHits` / `pointReadContextFileMisses`，并新增 `readrandom_burst` benchmark 观察应用层 burst 局部性读。
-## 0.11.0-SNAPSHOT ThreadLocal point-read context 边界
+## 0.11.0 ThreadLocal point-read context 边界
 
 - `PointReadContext` 最终采用 `VersionSet` 内部 `ThreadLocal` 短时缓存，限定同线程、同 current Version、同列族和约 10ms 空闲窗口，支撑 API 层连续 point get 复用候选 SST 文件，同时避免跨线程或跨版本误复用。
-## 0.11.0-SNAPSHOT read context 50k 对照归档
+## 0.11.0 read context 50k 对照归档
 
 - 归档 `readrandom_hit/readrandom_sameblock/readrandom_burst` 50k 对照：LDB 分别达到 RocksDB JNI 的 `0.3939`、`0.5616`、`0.5531`。`pointReadContextFileHits=49987` 证明 API 连续 single-key read context 实际触发；sameblock 场景中 `tableIndexCacheHits=47839`、`tableLastBlockHits=47839`，data block open 降至 `2161`。
 - 读性能专项：将 Block restart key/offset 正式作为轻量 seek index，并补充 `blockSeekIndexHits/Misses/Fallbacks` 统计；50k 验收中 `readrandom_hit` 主路径 `blockSeekIndexHits=50,000`，但单靠 Block restart anchor 仍不足以达到 RocksDB JNI 50%。
 - 读性能专项：新增 Table 点读 index block 数组索引与 direct-mapped data block cache，并恢复 Block 打开阶段稀疏 entry anchor；50k 验收中 `tableIndexSeeks=0`，`multiget_mixed` 达到 RocksDB JNI 的 92.15%，但 `readrandom_hit` 仍为 29.48%，P0 50% 目标未完成。
 - 读性能专项：`Block.seek`/`seekFromOffset` 跳过非候选 entry 的 value 解码；50k 对照中 `readrandom_hit` 提升到 RocksDB JNI 的 35.08%，`readrandom_sameblock` 达到 58.57%，`readrandom_burst` 达到 62.48%，`multiget_mixed` 达到 99.34%。
-## 0.11.0-SNAPSHOT readrandom hit-path 负实验回收
+## 0.11.0 readrandom hit-path 负实验回收
 
 - 读取性能专项回收三条未兑现的后续优化路线：重 hash/mix 与 4-way set-associative point data-block cache 均降低了部分 open 计数但回退 `readrandom_hit`；删除候选二次比较和 MultiGet 数组 index 复用也在 50k 短跑中回退。当前版本保留已验证正收益的 restart/sparse anchor、Table 单点数组 index、direct-mapped data-block cache 和 `Block.seek` skip-value 路径。
-## 0.11.0-SNAPSHOT Block.readKey direct-copy
+## 0.11.0 Block.readKey direct-copy
 
 - 读取性能专项继续压缩 Block seek 热路径：共享前缀 key 重建不再创建 `SliceOutput` 临时对象，改为直接复制 shared prefix 并写入 non-shared suffix。50k `readrandom_hit` 达到 161,956 ops/s；同机 RocksDB JNI 对照为 441,936 ops/s，当前比例 36.65%，P0 50% 主目标仍未完成。`readrandom_sameblock`、`readrandom_burst` 和 `multiget_mixed` 分别达到 RocksDB JNI 的 54.94%、78.60% 和 87.45%。
-## 0.11.0-SNAPSHOT Block.seek scratch-key 复用实验回收
+## 0.11.0 Block.seek scratch-key 复用实验回收
 
 - 读取性能专项回收单次 `Block.seek` 内 scratch-key 复用实验：该实验让 50k `readrandom_hit` 从 direct-copy 版本的 161,956 ops/s 回落到 153,643 ops/s。当前版本继续保留 `Block.readKey` direct-copy，不保留跨 entry key buffer 复用。
-## 0.11.0-SNAPSHOT InternalUserComparator Slice 级比较
+## 0.11.0 InternalUserComparator Slice 级比较
 
 - 读取性能专项优化 `InternalUserComparator.compare(Slice, Slice)`：比较 internal key 时不再构造 `InternalKey` 对象，改为直接比较 user-key Slice 并读取尾部 packed sequence/type。50k `readrandom_hit` 达到 174,459 ops/s，同机 RocksDB JNI 对照为 396,410 ops/s，当前比例 44.01%；`readrandom_sameblock`、`readrandom_burst` 和 `multiget_mixed` 分别达到 RocksDB JNI 的 61.81%、63.67% 和 136.68%。
-## 0.11.0-SNAPSHOT bytewise raw-array 比较实验回收
+## 0.11.0 bytewise raw-array 比较实验回收
 
 - 读取性能专项回收 `InternalUserComparator` 中默认 `BytewiseComparator` 的 raw-array user-key 快路径实验：该实验让 50k `readrandom_hit` 从 Slice 级 internal-key compare 的 174,459 ops/s 回落到 151,875 ops/s。当前版本只保留不构造 `InternalKey` 对象的正收益优化。
-## 0.11.0-SNAPSHOT InternalUserComparator 长度 guard 移除实验回收
+## 0.11.0 InternalUserComparator 长度 guard 移除实验回收
 
 - 读取性能专项回收 `InternalUserComparator.compare(Slice, Slice)` 的长度 `checkArgument` 移除实验：50k `readrandom_hit` 从 Slice 级 internal-key compare 的 174,459 ops/s 回退到 132,221 ops/s。当前版本恢复显式长度校验，只保留不构造 `InternalKey` 对象的正收益优化。
-## 0.11.0-SNAPSHOT Slice 区间比较快路实验回收
+## 0.11.0 Slice 区间比较快路实验回收
 
 - 读取性能专项回收 `Slice.compareTo(offset,length,...)` 与 `InternalUserComparator` 默认 bytewise 子区间比较实验：该实验避免了 user-key `slice(...)` 包装，但 50k `readrandom_hit` 回退到 141,790 ops/s，低于已验证的 174,459 ops/s 基线。当前版本不保留该快路，继续使用已验证的 Slice 级 internal-key compare。
-## 0.11.0-SNAPSHOT sequence 解包内联实验回收
+## 0.11.0 sequence 解包内联实验回收
 
 - 读取性能专项回收 `InternalUserComparator` 中 `SequenceNumber.unpackSequenceNumber(...)` 到 `packed >>> 8` 的手工内联实验：50k `readrandom_hit` 回退到 164,108 ops/s，低于 guard 恢复后的 171,696 ops/s 和历史 174,459 ops/s 基线。当前版本继续使用 `SequenceNumber.unpackSequenceNumber`，不保留该微优化。
-## 0.11.0-SNAPSHOT Block sparse anchor interval=2 实验回收
+## 0.11.0 Block sparse anchor interval=2 实验回收
 
 - 读取性能专项回收 `Block` 打开期 sparse seek anchor 每 2 条 entry 一个的实验：该方案仍非 full-entry index，但 50k `readrandom_hit` 回退到 146,226 ops/s，低于 171,696/174,459 ops/s 基线，sameblock、burst 与 multiget_mixed 也同步走弱。当前版本恢复每 4 条 entry 一个 anchor 的平衡点。
-## 0.11.0-SNAPSHOT Block sparse anchor interval=8 实验回收
+## 0.11.0 Block sparse anchor interval=8 实验回收
 
 - 读取性能专项回收 `Block` 打开期 sparse seek anchor 每 8 条 entry 一个的实验：第一轮 50k `readrandom_hit` 达到 177,100 ops/s，但 sameblock、burst、multiget_mixed 与 scan 均低于恢复基线；同参数复测中 `readrandom_hit` 回落到 157,745 ops/s。当前版本继续保留每 4 条 entry 一个 anchor 的稳定折中。
-## 0.11.0-SNAPSHOT Block sparse anchor 精确命中直返实验回收
+## 0.11.0 Block sparse anchor 精确命中直返实验回收
 
 - 读取性能专项回收 sparse anchor 精确命中直接返回 value 的实验：该方案只给稀疏 anchor 增加 value offset/length，不是 full-entry index，但 50k `readrandom_hit` 回退到 143,404 ops/s，`multiget_mixed` 与 `scan` 也走弱。当前版本继续让 anchor 只负责缩小扫描范围，不承担候选 entry 直返职责。
-## 0.11.0-SNAPSHOT blockSeekIndex 统计语义边界确认
+## 0.11.0 blockSeekIndex 统计语义边界确认
 
 - 读取性能专项确认 `blockSeekIndexHits` 表示 Block 打开期 seek index 被使用的次数，而不是业务 key 命中次数；尝试按 `Block.seek` 是否返回候选 entry 区分 hit/miss 后，50k `readrandom_hit` 回落到 130,404 ops/s，已回收。业务未命中继续通过 `candidateEntryMisses`、`filterSkips` 和 `bloomFalsePositives` 判断，`blockSeekIndexFallbacks` 表示没有 seek index 时的回退。
-## 0.11.0-SNAPSHOT Block.readKey null guard 实验回收
+## 0.11.0 Block.readKey null guard 实验回收
 
 - 读取性能专项回收 `Block.readKey` shared-key 路径中将 Guava `checkState` 改成手写 null 分支的实验：50k `readrandom_hit` 回退到 128,680 ops/s，sameblock 与 scan 也弱于恢复基线。当前版本恢复 `checkState`，继续保留已验证的 direct-copy key 重建路径。
-## 0.11.0-SNAPSHOT restart key 精确命中起点实验回收
+## 0.11.0 restart key 精确命中起点实验回收
 
 - 读取性能专项回收 `Block.restartIndexBefore` 中将 `restartKey < target` 改为 `restartKey <= target` 的实验：50k `readrandom_hit` 为 164,277 ops/s，低于恢复基线和历史 174,459 ops/s 基线，sameblock、burst 与 multiget_mixed 也没有整体胜出。当前版本恢复原 restart 二分策略。
