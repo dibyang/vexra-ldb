@@ -42,6 +42,7 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
   private final AtomicLong candidateEntryHitCount = new AtomicLong();
   private final AtomicLong candidateEntryMissCount = new AtomicLong();
   private final AtomicLong bloomFalsePositiveCount = new AtomicLong();
+  private final AtomicLong pointMissCacheHitCount = new AtomicLong();
   private final AtomicLong pointReadContextFileHitCount = new AtomicLong();
   private final AtomicLong pointReadContextFileMissCount = new AtomicLong();
 
@@ -197,12 +198,8 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
       if (missedCount == 0) {
         break;
       }
-      List<LookupKey> missedKeys = new ArrayList<LookupKey>(missedCount);
-      for (int i = 0; i < missedCount; i++) {
-        missedKeys.add(keys.get(missedIndexes[i]));
-      }
-      levelGetCount.addAndGet(missedKeys.size());
-      levelResults = level.get(missedKeys, readStats);
+      levelGetCount.addAndGet(missedCount);
+      levelResults = level.get(keys, missedIndexes, missedCount, readStats);
       recordSstReadStats(readStats);
       for (int i = 0; i < levelResults.size(); i++) {
         LookupResult lookupResult = levelResults.get(i);
@@ -242,6 +239,7 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
     candidateEntryHitCount.addAndGet(readStats.getCandidateEntryHits());
     candidateEntryMissCount.addAndGet(readStats.getCandidateEntryMisses());
     bloomFalsePositiveCount.addAndGet(readStats.getBloomFalsePositives());
+    pointMissCacheHitCount.addAndGet(readStats.getPointMissCacheHits());
     pointReadContextFileHitCount.addAndGet(readStats.getPointReadContextFileHits());
     pointReadContextFileMissCount.addAndGet(readStats.getPointReadContextFileMisses());
   }
@@ -256,6 +254,7 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
         + ",candidateEntryHits=" + candidateEntryHitCount.get()
         + ",candidateEntryMisses=" + candidateEntryMissCount.get()
         + ",bloomFalsePositives=" + bloomFalsePositiveCount.get()
+        + ",pointMissCacheHits=" + pointMissCacheHitCount.get()
         + ",pointReadContextFileHits=" + pointReadContextFileHitCount.get()
         + ",pointReadContextFileMisses=" + pointReadContextFileMissCount.get();
   }

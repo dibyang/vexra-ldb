@@ -99,9 +99,16 @@ public class Level0
 
     Slice userKey = key.getUserKey();
     for (FileMetaData fileMetaData : fileMetaDataList) {
-      if (fileMetaData != contextHitFile && !tableCache.mayContain(fileMetaData, userKey)) {
+      TableCache.PointProbeDecision probeDecision =
+          tableCache.pointProbeDecision(fileMetaData, userKey, !fileMetaData.hasRangeDeletes());
+      if (probeDecision == TableCache.PointProbeDecision.FILTER_SKIP) {
         readStats.recordFilterSkip();
         continue; // 这个 table 一定没有这个 userKey
+      }
+      if (probeDecision == TableCache.PointProbeDecision.POINT_MISS_CACHE_HIT) {
+        readStats.recordPointMissCacheHit();
+        readStats.recordCandidateEntryMiss();
+        continue;
       }
       readStats.recordTableRead();
       if (readContext != null) {
@@ -110,7 +117,7 @@ public class Level0
 
       LookupResult pointResult = null;
       long pointSequence = -1;
-      Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key);
+      Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key, !fileMetaData.hasRangeDeletes());
       if (entry != null) {
         // parse the key in the block
         InternalKey internalKey = new InternalKey(entry.getKey());
@@ -173,10 +180,15 @@ public class Level0
         if (userComparator.compare(key.getUserKey(), fileMetaData.getSmallest().getUserKey()) >= 0
             && userComparator.compare(key.getUserKey(), fileMetaData.getLargest().getUserKey()) <= 0) {
           readStats.recordCandidateFile();
-          if (tableCache.mayContain(fileMetaData, key.getUserKey())) {
-            candidateIndexes.add(i);
-          } else {
+          TableCache.PointProbeDecision probeDecision =
+              tableCache.pointProbeDecision(fileMetaData, key.getUserKey(), !fileMetaData.hasRangeDeletes());
+          if (probeDecision == TableCache.PointProbeDecision.FILTER_SKIP) {
             readStats.recordFilterSkip();
+          } else if (probeDecision == TableCache.PointProbeDecision.POINT_MISS_CACHE_HIT) {
+            readStats.recordPointMissCacheHit();
+            readStats.recordCandidateEntryMiss();
+          } else {
+            candidateIndexes.add(i);
           }
         }
       }

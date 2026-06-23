@@ -262,6 +262,41 @@ public class Block
     return results;
   }
 
+  void seekAll(Slice[] sortedTargetKeys,
+               int[] resultIndexes,
+               int targetCount,
+               List<Entry<Slice, Slice>> results) {
+    if (targetCount == 0) {
+      return;
+    }
+
+    int restartCount = restartPositions.length() / SIZE_OF_INT;
+    if (restartCount == 0) {
+      return;
+    }
+
+    SliceInput input = data.input();
+    int restartPosition = restartIndexBefore(sortedTargetKeys[0], restartCount);
+    input.setPosition(restartOffset(restartPosition, restartCount));
+
+    int targetIndex = 0;
+    BlockEntry previousEntry = null;
+    while (input.isReadable() && targetIndex < targetCount) {
+      BlockEntry entry = readEntry(input, previousEntry);
+      if (comparator.compare(entry.getKey(), sortedTargetKeys[targetIndex]) < 0) {
+        previousEntry = entry;
+        continue;
+      }
+
+      while (targetIndex < targetCount
+          && comparator.compare(entry.getKey(), sortedTargetKeys[targetIndex]) >= 0) {
+        results.set(resultIndexes[targetIndex], entry);
+        targetIndex++;
+      }
+      previousEntry = entry;
+    }
+  }
+
   private int restartIndexBefore(Slice targetKey, int restartCount) {
     int left = 0;
     int right = restartCount - 1;

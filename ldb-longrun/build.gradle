@@ -157,6 +157,82 @@ tasks.register('ldbDbBenchReport', JavaExec) {
       '--seed', seed.get()
 }
 
+tasks.register('ldbDbBenchPerfGateReport', JavaExec) {
+  group = 'verification'
+  description = 'Runs a lightweight dbBench read-path perf-gate profile and writes JSON/CSV reports.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.bench.LdbDbBenchMain'
+  def outputDir = layout.buildDirectory.dir('reports/ldb-db-bench-perf-gate').map { it.asFile.path }
+  def dbDir = layout.buildDirectory.dir('reports/ldb-db-bench-perf-gate/db').map { it.asFile.path }
+  args '--engine', 'ldb',
+      '--output', outputDir.get(), '--db', dbDir.get(),
+      '--benchmarks', 'readrandom_mixed,multiget_random,multiget_sameblock',
+      '--num', '20000', '--reads', '20000', '--value_size', '100',
+      '--sync', 'false', '--group_commit', 'false',
+      '--write_buffer_size_mb', '512', '--read_profile', 'read_optimized',
+      '--cache_blocks', 'true', '--block_cache_warm_on_open', 'false',
+      '--block_cache_size', '4096', '--block_cache_admission_min_reads', '1',
+      '--table_format_version', '1', '--write_table_properties', 'true',
+      '--write_block_local_index', 'false', '--block_local_index_interval', '4',
+      '--write_entry_anchor_index', 'false', '--entry_anchor_index_interval', '4',
+      '--entry_anchor_index_admission_min_anchors', '2',
+      '--write_inline_block_seek_index', 'false', '--inline_block_seek_index_interval', '4',
+      '--inline_block_seek_index_admission_min_anchors', '2',
+      '--verify_checksums', 'false', '--batch_size', '64', '--seed', '20260623'
+}
+
+tasks.register('ldbDbBenchPerfGate') {
+  group = 'verification'
+  description = 'Checks lightweight dbBench read-path report schema without host-sensitive throughput thresholds.'
+  dependsOn tasks.named('ldbDbBenchPerfGateReport')
+
+  doLast {
+    File outputDir = layout.buildDirectory.dir('reports/ldb-db-bench-perf-gate').get().asFile
+    File json = new File(outputDir, 'ldb-db-bench-summary.json')
+    File gateFile = new File(outputDir, 'ldb-db-bench-perf-gate.json')
+    List<String> failures = []
+    String text = json.isFile() ? json.getText('UTF-8') : ''
+    [
+        '"name": "readrandom_mixed"',
+        '"name": "multiget_random"',
+        '"name": "multiget_sameblock"',
+        '"diagnosticStats"',
+        '"memoryStrategyStats"',
+        'pointMissCacheHitsPerMixedMissLookup=',
+        'tablePointMissCacheHits=',
+        'tableBatchSeekAllCount=',
+        'allocatedBytesPerOp='
+    ].each { marker ->
+      if (!text.contains(marker)) {
+        failures.add("missing marker: ${marker}")
+      }
+    }
+    Map<String, Object> gate = [
+        name: 'ldbDbBenchPerfGate',
+        result: failures.isEmpty() ? 'PASSED' : 'FAILED',
+        source: json.absolutePath,
+        checkedMarkers: [
+            'readrandom_mixed',
+            'multiget_random',
+            'multiget_sameblock',
+            'diagnosticStats',
+            'memoryStrategyStats',
+            'pointMissCacheHitsPerMixedMissLookup',
+            'tablePointMissCacheHits',
+            'tableBatchSeekAllCount',
+            'allocatedBytesPerOp'
+        ],
+        note: 'Schema and signal gate only; throughput is not thresholded because it is host-sensitive.',
+        failures: failures
+    ]
+    gateFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(gate)) + System.lineSeparator()
+    if (!failures.isEmpty()) {
+      throw new GradleException("dbBench perf gate failed: ${failures.join('; ')}")
+    }
+  }
+}
+
 tasks.register('rocksDbBenchReport', JavaExec) {
   group = 'verification'
   description = 'Runs db_bench-style RocksDB JNI benchmarks and writes JSON/CSV reports.'

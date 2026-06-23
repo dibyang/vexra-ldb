@@ -140,6 +140,7 @@ public final class LdbDbBenchMain {
       }
       result = result.withMemoryStats(MemoryStats.afterBenchmark(memoryBaseline).toReportString());
       result = result.withAllocationStats(AllocationStats.afterBenchmark(allocationBaseline).toReportString());
+      result = result.withDerivedStats();
       results.add(result);
       out.println(result.name + " ops=" + result.operations
           + " seconds=" + format(result.seconds)
@@ -842,7 +843,9 @@ public final class LdbDbBenchMain {
         writer.write("\"tableFormatStats\": \"" + escape(result.tableFormatStats) + "\", ");
         writer.write("\"memoryStats\": \"" + escape(result.memoryStats) + "\", ");
         writer.write("\"allocationStats\": \"" + escape(result.allocationStats) + "\", ");
-        writer.write("\"workloadStats\": \"" + escape(result.workloadStats) + "\"");
+        writer.write("\"workloadStats\": \"" + escape(result.workloadStats) + "\", ");
+        writer.write("\"diagnosticStats\": \"" + escape(result.diagnosticStats) + "\", ");
+        writer.write("\"memoryStrategyStats\": \"" + escape(result.memoryStrategyStats) + "\"");
         writer.write("}");
         if (i + 1 < results.size()) {
           writer.write(",");
@@ -857,7 +860,7 @@ public final class LdbDbBenchMain {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "ldb-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats,memoryStats,allocationStats,workloadStats\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats,memoryStats,allocationStats,workloadStats,diagnosticStats,memoryStrategyStats\n");
       for (Result result : results) {
         writer.write(config.engine + "," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
@@ -872,7 +875,8 @@ public final class LdbDbBenchMain {
             + config.batchSize + ","
             + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + ","
             + escapeCsv(result.tableFormatStats) + "," + escapeCsv(result.memoryStats) + ","
-            + escapeCsv(result.allocationStats) + "," + escapeCsv(result.workloadStats) + "\n");
+            + escapeCsv(result.allocationStats) + "," + escapeCsv(result.workloadStats) + ","
+            + escapeCsv(result.diagnosticStats) + "," + escapeCsv(result.memoryStrategyStats) + "\n");
       }
     }
   }
@@ -1125,10 +1129,12 @@ public final class LdbDbBenchMain {
     private final String memoryStats;
     private final String allocationStats;
     private final String workloadStats;
+    private final String diagnosticStats;
+    private final String memoryStrategyStats;
 
     private Result(String name, long operations, long hits, double seconds, double opsPerSecond,
                    String sstReadStats, String blockCacheStats, String tableFormatStats, String memoryStats,
-                   String allocationStats, String workloadStats) {
+                   String allocationStats, String workloadStats, String diagnosticStats, String memoryStrategyStats) {
       this.name = name;
       this.operations = operations;
       this.hits = hits;
@@ -1140,6 +1146,8 @@ public final class LdbDbBenchMain {
       this.memoryStats = memoryStats;
       this.allocationStats = allocationStats;
       this.workloadStats = workloadStats;
+      this.diagnosticStats = diagnosticStats;
+      this.memoryStrategyStats = memoryStrategyStats;
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos) {
@@ -1148,7 +1156,7 @@ public final class LdbDbBenchMain {
 
     private static Result of(String name, long operations, long hits, long startNanos, long endNanos) {
       double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
-      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "", "", "", "");
+      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "", "", "", "", "", "");
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos, LDB db) {
@@ -1163,6 +1171,8 @@ public final class LdbDbBenchMain {
           valueOrEmpty(db.getProperty("ldb.tableFormat")),
           "",
           "",
+          "",
+          "",
           "");
     }
 
@@ -1171,6 +1181,8 @@ public final class LdbDbBenchMain {
       return new Result(name, operations, hits, seconds, operations / seconds,
           "",
           rocksDbMemoryProperties(db),
+          "",
+          "",
           "",
           "",
           "",
@@ -1184,7 +1196,9 @@ public final class LdbDbBenchMain {
           tableFormatStats,
           valueOrEmpty(memoryStats),
           allocationStats,
-          workloadStats);
+          workloadStats,
+          diagnosticStats,
+          memoryStrategyStats);
     }
 
     private Result withAllocationStats(String allocationStats) {
@@ -1194,7 +1208,9 @@ public final class LdbDbBenchMain {
           tableFormatStats,
           memoryStats,
           valueOrEmpty(allocationStats),
-          workloadStats);
+          workloadStats,
+          diagnosticStats,
+          memoryStrategyStats);
     }
 
     private Result withWorkloadStats(String workloadStats) {
@@ -1204,11 +1220,122 @@ public final class LdbDbBenchMain {
           tableFormatStats,
           memoryStats,
           allocationStats,
-          valueOrEmpty(workloadStats));
+          valueOrEmpty(workloadStats),
+          diagnosticStats,
+          memoryStrategyStats);
+    }
+
+    private Result withDerivedStats() {
+      return new Result(name, operations, hits, seconds, opsPerSecond,
+          sstReadStats,
+          blockCacheStats,
+          tableFormatStats,
+          memoryStats,
+          allocationStats,
+          workloadStats,
+          diagnosticStats(),
+          memoryStrategyStats());
     }
 
     private static String valueOrEmpty(String value) {
       return value == null ? "" : value;
+    }
+
+    private String diagnosticStats() {
+      Map<String, String> workload = parseStats(workloadStats);
+      Map<String, String> sst = parseStats(sstReadStats);
+      Map<String, String> cache = parseStats(blockCacheStats);
+      Map<String, String> memory = parseStats(memoryStats);
+      long mixedHitLookups = longStat(workload, "mixedHitLookups");
+      long mixedMissLookups = longStat(workload, "mixedMissLookups");
+      long totalLookups = Math.max(1, mixedHitLookups + mixedMissLookups);
+      long candidateEntryHits = longStat(sst, "candidateEntryHits");
+      long candidateEntryMisses = longStat(sst, "candidateEntryMisses");
+      long bloomFalsePositives = longStat(sst, "bloomFalsePositives");
+      long pointMissCacheHits = longStat(sst, "pointMissCacheHits");
+      long tableLastBlockHits = longStat(sst, "tableLastBlockHits");
+      long tableLastBlockMisses = longStat(sst, "tableLastBlockMisses");
+      long blockCacheHits = longStat(cache, "hits");
+      long blockCacheMisses = longStat(cache, "misses");
+      long blockCacheTotal = blockCacheHits + blockCacheMisses;
+      return "mixedHitLookups=" + mixedHitLookups
+          + ",mixedMissLookups=" + mixedMissLookups
+          + ",candidateEntryHits=" + candidateEntryHits
+          + ",candidateEntryHitsPerMixedHitLookup=" + average(candidateEntryHits, mixedHitLookups)
+          + ",candidateEntryMisses=" + candidateEntryMisses
+          + ",candidateEntryMissesPerMixedMissLookup=" + average(candidateEntryMisses, mixedMissLookups)
+          + ",bloomFalsePositives=" + bloomFalsePositives
+          + ",bloomFalsePositivesPerMixedMissLookup=" + average(bloomFalsePositives, mixedMissLookups)
+          + ",pointMissCacheHits=" + pointMissCacheHits
+          + ",pointMissCacheHitsPerMixedMissLookup=" + average(pointMissCacheHits, mixedMissLookups)
+          + ",tableLastBlockHits=" + tableLastBlockHits
+          + ",tableLastBlockHitsPerLookup=" + average(tableLastBlockHits, totalLookups)
+          + ",tableLastBlockMisses=" + tableLastBlockMisses
+          + ",blockCacheHits=" + blockCacheHits
+          + ",blockCacheMisses=" + blockCacheMisses
+          + ",blockCacheHitRate=" + average(blockCacheHits, blockCacheTotal)
+          + ",tablePointGetSlotCollisions=" + longStat(sst, "tablePointGetSlotCollisions")
+          + ",heapPeakUsedBytes=" + longStat(memory, "heapPeakUsedBytes")
+          + ",gcCountDelta=" + longStat(memory, "gcCountDelta")
+          + ",gcTimeMillisDelta=" + longStat(memory, "gcTimeMillisDelta");
+    }
+
+    private String memoryStrategyStats() {
+      Map<String, String> sst = parseStats(sstReadStats);
+      Map<String, String> cache = parseStats(blockCacheStats);
+      Map<String, String> tableFormat = parseStats(tableFormatStats);
+      Map<String, String> memory = parseStats(memoryStats);
+      Map<String, String> allocation = parseStats(allocationStats);
+      return "opsPerSecond=" + format(opsPerSecond)
+          + ",heapPeakUsedBytes=" + longStat(memory, "heapPeakUsedBytes")
+          + ",allocatedBytesDelta=" + longStat(allocation, "allocatedBytesDelta")
+          + ",allocatedBytesPerOp=" + average(longStat(allocation, "allocatedBytesDelta"), operations)
+          + ",ldbBlockCacheEntries=" + longStat(cache, "size")
+          + ",ldbBlockCacheMaxEntries=" + longStat(cache, "maxEntries")
+          + ",ldbBlockCacheHits=" + longStat(cache, "hits")
+          + ",ldbBlockCacheMisses=" + longStat(cache, "misses")
+          + ",rocksdbBlockCacheUsage=" + longStat(cache, "rocksdbBlockCacheUsage")
+          + ",rocksdbEstimateTableReadersMem=" + longStat(cache, "rocksdbEstimateTableReadersMem")
+          + ",tableRequests=" + longStat(sst, "tableRequests")
+          + ",tableLoads=" + longStat(sst, "tableLoads")
+          + ",residentTableFormatTables=" + longStat(tableFormat, "tables")
+          + ",inlineBlockSeekIndexBytes=" + longStat(tableFormat, "inlineBlockSeekIndexBytes")
+          + ",blockLocalIndexBytes=" + longStat(tableFormat, "blockLocalIndexBytes")
+          + ",entryAnchorIndexBytes=" + longStat(tableFormat, "entryAnchorIndexBytes");
+    }
+
+    private static Map<String, String> parseStats(String stats) {
+      Map<String, String> values = new LinkedHashMap<String, String>();
+      if (stats == null || stats.isEmpty()) {
+        return values;
+      }
+      for (String item : stats.split(",")) {
+        int separator = item.indexOf('=');
+        if (separator <= 0) {
+          continue;
+        }
+        values.put(item.substring(0, separator), item.substring(separator + 1));
+      }
+      return values;
+    }
+
+    private static long longStat(Map<String, String> stats, String name) {
+      String value = stats.get(name);
+      if (value == null || value.isEmpty()) {
+        return 0;
+      }
+      try {
+        return Long.parseLong(value);
+      } catch (NumberFormatException ignored) {
+        return 0;
+      }
+    }
+
+    private static String average(long value, long count) {
+      if (count <= 0) {
+        return "0.000";
+      }
+      return format(value / (double) count);
     }
 
     private static String rocksDbMemoryProperties(RocksDB db) {

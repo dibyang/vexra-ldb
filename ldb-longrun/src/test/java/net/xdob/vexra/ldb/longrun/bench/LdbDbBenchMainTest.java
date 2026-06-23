@@ -62,10 +62,20 @@ class LdbDbBenchMainTest {
     assertTrue(json.contains("\"memoryStats\""), json);
     assertTrue(json.contains("\"allocationStats\""), json);
     assertTrue(json.contains("\"workloadStats\""), json);
+    assertTrue(json.contains("\"diagnosticStats\""), json);
+    assertTrue(json.contains("\"memoryStrategyStats\""), json);
     assertTrue(json.contains("mixedHitLookups="), json);
     assertTrue(json.contains("mixedMissLookups="), json);
     assertTrue(json.contains("mixedHitAllocatedBytesPerOp="), json);
     assertTrue(json.contains("mixedMissAllocatedBytesPerOp="), json);
+    assertTrue(json.contains("candidateEntryHitsPerMixedHitLookup="), json);
+    assertTrue(json.contains("bloomFalsePositivesPerMixedMissLookup="), json);
+    assertTrue(json.contains("pointMissCacheHitsPerMixedMissLookup="), json);
+    assertTrue(json.contains("tablePointMissCacheHits="), json);
+    assertTrue(json.contains("blockCacheHitRate="), json);
+    assertTrue(json.contains("allocatedBytesPerOp="), json);
+    assertTrue(json.contains("ldbBlockCacheEntries="), json);
+    assertTrue(json.contains("residentTableFormatTables="), json);
     assertTrue(json.contains("heapUsedBytes="), json);
     assertTrue(json.contains("heapPeakUsedBytes="), json);
     assertTrue(json.contains("gcCountDelta="), json);
@@ -81,7 +91,10 @@ class LdbDbBenchMainTest {
     assertTrue(csv.contains(",memoryStats"), csv);
     assertTrue(csv.contains(",allocationStats"), csv);
     assertTrue(csv.contains(",workloadStats"), csv);
+    assertTrue(csv.contains(",diagnosticStats"), csv);
+    assertTrue(csv.contains(",memoryStrategyStats"), csv);
     assertTrue(csv.contains("mixedHitAvgNanos="), csv);
+    assertTrue(csv.contains("tableLastBlockHitsPerLookup="), csv);
     assertTrue(csv.contains("heapCommittedBytes="), csv);
     assertTrue(csv.contains("allocationTrackingSupported="), csv);
   }

@@ -6,7 +6,16 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- MultiGet version-layer miss probing now uses `Version -> Level` indexed get, reusing the original key list and miss-index array instead of rebuilding a `missedKeys` temporary list for every level.
+- `readrandom_mixed` reports a new `diagnosticStats` field that correlates hit/miss sub-path counts with `candidateEntryHits/Misses`, `bloomFalsePositives`, `tableLastBlockHits/Misses`, block-cache hit/miss, slot collisions, and GC counters to localize mixed-workload variance.
+- The `readrandom_mixed` miss path now keeps a bounded SST-level point-miss cache: once an immutable SST is confirmed to have no point entry for a user key, later probes can bypass the data-block lookup while conservatively falling back for files with range deletes; reports add `pointMissCacheHits*` and `tablePointMissCache*` fields.
+- `PointReadContext` file-location hits no longer unconditionally bypass Bloom/filter checks, so mixed hit/miss workloads do not reuse the previous hit SST for miss data-block probes without filtering; in the 50k `readrandom_mixed` sample, `filterSkips` rose from 0 to about 24.8k and `bloomFalsePositivesPerMixedMissLookup` fell from 1.000 to about 0.007.
+- Dense same-block MultiGet now uses a single data-block `seekAll` scan even for v3 block-local-index tables, avoiding repeated local-index/floor and block seek work inside the same data block; `Block.seekAll` also has an array write-back path to avoid the intermediate candidate list.
+- MultiGet hot-path allocation was trimmed further: `TableCache` batch direct-get now uses encoded-key views, and `LDbImpl` pre-sizes missed lookup lists to the batch size, reducing temporary list wrappers around `LookupResult` handling.
+- dbBench reports now include `memoryStrategyStats`, summarizing throughput, heap peak, allocated bytes/op, LDB/RocksDB block-cache evidence, table-reader evidence, and resident index-structure estimates for future performance/memory default-policy decisions.
+
 - Added `blockSeekPerfGate` and wired it into `releaseGate`; pre-release checks now run `blockSeekMicroBenchReport` and validate key observation fields so the Block.seek micro-benchmark entry point and report schema cannot silently regress. The gate does not enforce host-sensitive throughput thresholds.
+- Added `ldbDbBenchPerfGate` and wired it into `releaseGate`; pre-release checks now run a lightweight `readrandom_mixed`, `multiget_random`, and `multiget_sameblock` dbBench profile and validate `diagnosticStats`, `memoryStrategyStats`, point-miss cache, same-block seekAll, and allocation signal markers without host-sensitive throughput thresholds.
 
 - Expected Windows directory-force `AccessDeniedException` failures no longer log at WARN by default; they are still counted in `ldb.fileSystemStats`, reducing benchmark and release-gate log noise.
 

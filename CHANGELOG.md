@@ -6,7 +6,16 @@
 
 ## [Unreleased]
 
+- MultiGet 版本层逐层 miss 查询改为 `Version -> Level` indexed get，复用原始 key 列表与未命中下标数组，避免每一层重新构造 `missedKeys` 临时列表。
+- `readrandom_mixed` 报告新增 `diagnosticStats`，把 hit/miss 子路径计数与 `candidateEntryHits/Misses`、`bloomFalsePositives`、`tableLastBlockHits/Misses`、block cache hit/miss、slot collision 和 GC 指标关联起来，便于定位 mixed 波动来源。
+- `readrandom_mixed` miss 路径新增 SST 级 point-miss 缓存：同一个不可变 SST 中已确认不存在的 point key 会绕过后续 data-block probe，同时对 range delete 文件保持保守回退；报告新增 `pointMissCacheHits*` 和 `tablePointMissCache*` 指标。
+- `PointReadContext` 文件定位命中后不再无条件跳过 Bloom/filter 判断，避免 mixed hit/miss 交替场景把上一条 hit 的 SST 直接用于 miss data-block probe；50k `readrandom_mixed` 中 `filterSkips` 从 0 提升到约 24.8k，`bloomFalsePositivesPerMixedMissLookup` 从 1.000 降至约 0.007。
+- dense same-block MultiGet 统一走单 data block 顺序 `seekAll`，包括 v3 block-local-index table，避免同一 data block 内每个 key 重复 local-index/floor 和 block seek；`Block.seekAll` 新增数组写回路径以减少中间候选列表。
+- MultiGet 热路径继续压缩临时对象：`TableCache` batch direct-get 改为 encoded-key 视图，`LDbImpl` missed lookup 列表按 batch 大小预分配，减少 `LookupResult` 周边的临时 list 包装成本。
+- dbBench 报告新增 `memoryStrategyStats`，统一输出吞吐、heap peak、allocated bytes/op、LDB/RocksDB block cache、table reader 与索引常驻结构估计，便于后续在性能和内存之间做默认策略取舍。
+
 - 新增 `blockSeekPerfGate` 并接入 `releaseGate`，发布前固定运行 `blockSeekMicroBenchReport` 并校验关键观测字段，防止 Block.seek micro-benchmark 入口或报告结构退化；该门禁不设置机器敏感的吞吐硬阈值。
+- 新增 `ldbDbBenchPerfGate` 并接入 `releaseGate`，发布前固定运行轻量 `readrandom_mixed`、`multiget_random`、`multiget_sameblock` dbBench，校验 `diagnosticStats`、`memoryStrategyStats`、point-miss cache、same-block seekAll 和 allocation 指标入口，不设置机器敏感的吞吐硬阈值。
 
 - Windows 下目录 force 的预期 `AccessDeniedException` 不再默认输出 WARN，仍会计入 `ldb.fileSystemStats` 诊断字段，减少 benchmark 和发布门禁日志噪声。
 

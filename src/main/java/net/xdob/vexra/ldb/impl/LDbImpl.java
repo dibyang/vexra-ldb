@@ -3301,7 +3301,7 @@ public class LDbImpl implements LDB {
       checkBackgroundException();
       ColumnFamilyState state = getColumnFamilyState(cf);
       List<byte[]> values = BatchReadLists.newNullArrayList(keys.size());
-      List<LookupKey> missedLookupKeys = new ArrayList<LookupKey>();
+      List<LookupKey> missedLookupKeys = new ArrayList<LookupKey>(keys.size());
       int[] missedIndexes = new int[keys.size()];
       int missedCount = 0;
 
@@ -3367,7 +3367,7 @@ public class LDbImpl implements LDB {
       checkBackgroundException();
       ColumnFamilyState state = getColumnFamilyState(cf);
       List<byte[]> values = BatchReadLists.newNullArrayList(keys.size());
-      List<LookupKey> missedLookupKeys = new ArrayList<LookupKey>();
+      List<LookupKey> missedLookupKeys = new ArrayList<LookupKey>(keys.size());
       int[] missedIndexes = new int[keys.size()];
       int missedCount = 0;
 

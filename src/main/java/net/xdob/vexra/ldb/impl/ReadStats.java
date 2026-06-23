@@ -9,6 +9,7 @@ public class ReadStats {
   private long candidateEntryHits;
   private long candidateEntryMisses;
   private long bloomFalsePositives;
+  private long pointMissCacheHits;
   private long pointReadContextFileHits;
   private long pointReadContextFileMisses;
 
@@ -21,6 +22,7 @@ public class ReadStats {
     candidateEntryHits = 0;
     candidateEntryMisses = 0;
     bloomFalsePositives = 0;
+    pointMissCacheHits = 0;
     pointReadContextFileHits = 0;
     pointReadContextFileMisses = 0;
   }
@@ -87,6 +89,14 @@ public class ReadStats {
 
   public void recordBloomFalsePositive() {
     bloomFalsePositives++;
+  }
+
+  public long getPointMissCacheHits() {
+    return pointMissCacheHits;
+  }
+
+  public void recordPointMissCacheHit() {
+    pointMissCacheHits++;
   }
 
   public long getPointReadContextFileHits() {

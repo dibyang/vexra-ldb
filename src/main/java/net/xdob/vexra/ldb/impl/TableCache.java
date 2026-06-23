@@ -18,6 +18,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -109,6 +110,10 @@ public class TableCache {
     return get(file.getNumber(), key);
   }
 
+  public Entry<Slice, Slice> get(FileMetaData file, LookupKey key, boolean recordPointMiss) {
+    return get(file.getNumber(), key, recordPointMiss);
+  }
+
   /**
    * 通过 table 层 direct get 读取单个内部 key。
    */
@@ -118,6 +123,21 @@ public class TableCache {
 
   public Entry<Slice, Slice> get(long number, LookupKey key) {
     return getEncoded(number, key.getEncodedInternalKey());
+  }
+
+  private Entry<Slice, Slice> get(long number, LookupKey key, boolean recordPointMiss) {
+    directGetRequestCount.incrementAndGet();
+    Table table = getTable(number);
+    Entry<Slice, Slice> result = table.get(key.getEncodedInternalKey());
+    if (result == null) {
+      directGetMissCount.incrementAndGet();
+    } else {
+      directGetHitCount.incrementAndGet();
+    }
+    if (recordPointMiss && !entryUserKeyMatches(result, key.getUserKey())) {
+      table.recordPointMiss(key.getUserKey());
+    }
+    return result;
   }
 
   private Entry<Slice, Slice> getEncoded(long number, Slice encodedInternalKey) {
@@ -146,12 +166,17 @@ public class TableCache {
     directGetBatchKeyCount.addAndGet(keys.size());
     directGetRequestCount.addAndGet(keys.size());
 
-    List<Slice> encodedKeys = new ArrayList<Slice>(keys.size());
-    for (LookupKey key : keys) {
-      encodedKeys.add(key.getEncodedInternalKey());
-    }
+    return getEncodedBatch(file, new AbstractList<Slice>() {
+      @Override
+      public Slice get(int index) {
+        return keys.get(index).getEncodedInternalKey();
+      }
 
-    return getEncodedBatch(file, encodedKeys);
+      @Override
+      public int size() {
+        return keys.size();
+      }
+    });
   }
 
   /**
@@ -169,12 +194,50 @@ public class TableCache {
     directGetBatchKeyCount.addAndGet(keyIndexes.size());
     directGetRequestCount.addAndGet(keyIndexes.size());
 
-    List<Slice> encodedKeys = new ArrayList<Slice>(keyIndexes.size());
-    for (Integer keyIndex : keyIndexes) {
-      encodedKeys.add(keys.get(keyIndex).getEncodedInternalKey());
+    return getEncodedBatch(file, new AbstractList<Slice>() {
+      @Override
+      public Slice get(int index) {
+        return keys.get(keyIndexes.get(index)).getEncodedInternalKey();
+      }
+
+      @Override
+      public int size() {
+        return keyIndexes.size();
+      }
+    });
+  }
+
+  /**
+   * 通过原始 key 列表、未命中下标数组和候选位置执行 table 层 batch direct get。
+   *
+   * <p>该入口服务 Version -> Level indexed get。`keyPositions` 保存的是 `keyIndexes`
+   * 中的位置，而不是原始 key 下标；这样 Level 可以保持返回结果与 missed-index 顺序对齐，同时
+   * 避免为每一层/每个文件构造 `missedKeys` 或 `fileKeys` 临时列表。</p>
+   */
+  public List<Entry<Slice, Slice>> get(FileMetaData file,
+                                       List<LookupKey> keys,
+                                       int[] keyIndexes,
+                                       List<Integer> keyPositions) {
+    if (keyPositions.isEmpty()) {
+      return Collections.emptyList();
     }
 
-    return getEncodedBatch(file, encodedKeys);
+    directGetBatchRequestCount.incrementAndGet();
+    directGetBatchKeyCount.addAndGet(keyPositions.size());
+    directGetRequestCount.addAndGet(keyPositions.size());
+
+    return getEncodedBatch(file, new AbstractList<Slice>() {
+      @Override
+      public Slice get(int index) {
+        int keyPosition = keyPositions.get(index);
+        return keys.get(keyIndexes[keyPosition]).getEncodedInternalKey();
+      }
+
+      @Override
+      public int size() {
+        return keyPositions.size();
+      }
+    });
   }
 
   private List<Entry<Slice, Slice>> getEncodedBatch(FileMetaData file, List<Slice> encodedKeys) {
@@ -187,6 +250,14 @@ public class TableCache {
       }
     }
     return results;
+  }
+
+  private static boolean entryUserKeyMatches(Entry<Slice, Slice> entry, Slice userKey) {
+    if (entry == null) {
+      return false;
+    }
+    InternalKey internalKey = new InternalKey(entry.getKey());
+    return userKey.equals(internalKey.getUserKey());
   }
 
   public long getApproximateOffsetOf(FileMetaData file, Slice key) {
@@ -203,6 +274,30 @@ public class TableCache {
       mayContainFalseCount.incrementAndGet();
     }
     return result;
+  }
+
+  public PointProbeDecision pointProbeDecision(FileMetaData fileMetaData, Slice userKey, boolean checkPointMissCache) {
+    mayContainRequestCount.incrementAndGet();
+    Table table = getTable(fileMetaData.getNumber());
+    boolean mayContain = table.mayContain(userKey);
+    if (mayContain) {
+      mayContainTrueCount.incrementAndGet();
+    } else {
+      mayContainFalseCount.incrementAndGet();
+      return PointProbeDecision.FILTER_SKIP;
+    }
+    if (checkPointMissCache && table.hasKnownPointMiss(userKey)) {
+      return PointProbeDecision.POINT_MISS_CACHE_HIT;
+    }
+    return PointProbeDecision.PROBE;
+  }
+
+  public boolean hasKnownPointMiss(FileMetaData fileMetaData, Slice userKey) {
+    return getTable(fileMetaData.getNumber()).hasKnownPointMiss(userKey);
+  }
+
+  public void recordPointMiss(FileMetaData fileMetaData, Slice userKey) {
+    getTable(fileMetaData.getNumber()).recordPointMiss(userKey);
   }
 
   /**
@@ -295,6 +390,8 @@ public class TableCache {
         + ",tablePointGetSlotHits=" + blockLocalIndexStats.tablePointGetSlotHits
         + ",tablePointGetSlotMisses=" + blockLocalIndexStats.tablePointGetSlotMisses
         + ",tablePointGetSlotCollisions=" + blockLocalIndexStats.tablePointGetSlotCollisions
+        + ",tablePointMissCacheHits=" + blockLocalIndexStats.tablePointMissCacheHits
+        + ",tablePointMissCacheStores=" + blockLocalIndexStats.tablePointMissCacheStores
         + ",tableBatchDataBlockGroups=" + blockLocalIndexStats.tableBatchDataBlockGroups
         + ",tableBatchDataBlockKeys=" + blockLocalIndexStats.tableBatchDataBlockKeys
         + ",tableBatchDenseBlockGroups=" + blockLocalIndexStats.tableBatchDenseBlockGroups
@@ -350,6 +447,8 @@ public class TableCache {
       stats.tablePointGetSlotHits += table.getTablePointGetSlotHitCountForStats();
       stats.tablePointGetSlotMisses += table.getTablePointGetSlotMissCountForStats();
       stats.tablePointGetSlotCollisions += table.getTablePointGetSlotCollisionCountForStats();
+      stats.tablePointMissCacheHits += table.getTablePointMissCacheHitCountForStats();
+      stats.tablePointMissCacheStores += table.getTablePointMissCacheStoreCountForStats();
       stats.tableBatchDataBlockGroups += table.getTableBatchDataBlockGroupCountForStats();
       stats.tableBatchDataBlockKeys += table.getTableBatchDataBlockKeyCountForStats();
       stats.tableBatchDenseBlockGroups += table.getTableBatchDenseBlockGroupCountForStats();
@@ -379,6 +478,12 @@ public class TableCache {
     return stats;
   }
 
+  public enum PointProbeDecision {
+    FILTER_SKIP,
+    POINT_MISS_CACHE_HIT,
+    PROBE
+  }
+
   private static final class BlockLocalIndexStats {
     private long tableIndexSeeks;
     private long tableDataBlockOpens;
@@ -391,6 +496,8 @@ public class TableCache {
     private long tablePointGetSlotHits;
     private long tablePointGetSlotMisses;
     private long tablePointGetSlotCollisions;
+    private long tablePointMissCacheHits;
+    private long tablePointMissCacheStores;
     private long tableBatchDataBlockGroups;
     private long tableBatchDataBlockKeys;
     private long tableBatchDenseBlockGroups;

@@ -226,6 +226,7 @@ tasks.register('releaseGate') {
   dependsOn tasks.named('releaseGateUnitTest')
   dependsOn tasks.named('upgradeCompatibilityTest')
   dependsOn tasks.named('blockSeekPerfGate')
+  dependsOn ':ldb-longrun:ldbDbBenchPerfGate'
   dependsOn ':ldb-longrun:productionGateLongRun'
 
   doLast {
@@ -248,6 +249,9 @@ tasks.register('releaseGate') {
     gates.add(collectFileGate('blockSeekPerfGate',
         'gradlew :blockSeekPerfGate',
         file("$buildDir/reports/block-seek-micro-bench/block-seek-perf-gate.json")))
+    gates.add(collectFileGate('ldbDbBenchPerfGate',
+        'gradlew :ldb-longrun:ldbDbBenchPerfGate',
+        file("$rootDir/ldb-longrun/build/reports/ldb-db-bench-perf-gate/ldb-db-bench-perf-gate.json")))
     gates.add(collectUserManagedReleaseConfigGate())
     gates.add(collectGitReleaseTraceabilityGate())
 

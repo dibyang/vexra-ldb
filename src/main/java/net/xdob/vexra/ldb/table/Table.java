@@ -24,6 +24,7 @@ import static java.util.Objects.requireNonNull;
 public abstract class Table implements SeekingIterable<Slice, Slice> {
   private static final int BLOCK_LOCAL_INDEX_MIN_LOOKUPS = 8;
   private static final int POINT_GET_BLOCK_CACHE_LIMIT = 4096;
+  private static final int POINT_MISS_CACHE_LIMIT = 4096;
 
   protected final String name;
   protected final FileChannel fileChannel;
@@ -58,6 +59,8 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   private long tablePointGetSlotHitCount;
   private long tablePointGetSlotMissCount;
   private long tablePointGetSlotCollisionCount;
+  private long tablePointMissCacheHitCount;
+  private long tablePointMissCacheStoreCount;
   private long tableBatchDataBlockGroupCount;
   private long tableBatchDataBlockKeyCount;
   private long tableBatchDenseBlockGroupCount;
@@ -77,6 +80,13 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
   private volatile LastPointGetBlock lastPointGetBlock;
   private final BlockHandle[] pointGetBlockCacheHandles = new BlockHandle[POINT_GET_BLOCK_CACHE_LIMIT];
   private final Block[] pointGetBlockCacheBlocks = new Block[POINT_GET_BLOCK_CACHE_LIMIT];
+  private final Map<Slice, Boolean> pointMissCache = Collections.synchronizedMap(
+      new LinkedHashMap<Slice, Boolean>(POINT_MISS_CACHE_LIMIT, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Entry<Slice, Boolean> eldest) {
+          return size() > POINT_MISS_CACHE_LIMIT;
+        }
+      });
 
   protected final BlockCache blockCache;
   private final Options options;
@@ -364,6 +374,19 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     return filterPolicy.keyMayMatch(userKey, filterBlock);
   }
 
+  public boolean hasKnownPointMiss(Slice userKey) {
+    if (pointMissCache.containsKey(userKey)) {
+      tablePointMissCacheHitCount++;
+      return true;
+    }
+    return false;
+  }
+
+  public void recordPointMiss(Slice userKey) {
+    pointMissCache.put(userKey.copySlice(), Boolean.TRUE);
+    tablePointMissCacheStoreCount++;
+  }
+
   /**
    * 按内部 key 执行 SST 点查。
    *
@@ -513,9 +536,11 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
         tableBatchDenseBlockGroupCount++;
         tableBatchDenseBlockKeyCount += lookups.size;
       }
-      if (denseBlock && !isBlockLocalIndexDeclared()) {
+      if (denseBlock) {
         tableDataBlockSeekCount += lookups.size;
-        blockLocalIndexFallbackCount += lookups.size;
+        if (!isBlockLocalIndexDeclared()) {
+          blockLocalIndexFallbackCount += lookups.size;
+        }
         tableBatchSeekAllCount++;
         seekDenseBlock(dataBlock, lookups, results);
         continue;
@@ -648,16 +673,7 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
    */
   private void seekDenseBlock(Block dataBlock, BatchLookupGroup lookups, List<Entry<Slice, Slice>> results) {
     lookups.sort(comparator);
-
-    List<Entry<Slice, Slice>> candidates = dataBlock.seekAll(lookups.asKeyList());
-    for (int i = 0; i < candidates.size(); i++) {
-      Entry<Slice, Slice> candidate = candidates.get(i);
-      if (candidate != null) {
-        if (comparator.compare(candidate.getKey(), lookups.internalKeys[i]) >= 0) {
-          results.set(lookups.indexes[i], candidate);
-        }
-      }
-    }
+    dataBlock.seekAll(lookups.internalKeys, lookups.indexes, lookups.size, results);
   }
 
   protected abstract Footer init() throws IOException;
@@ -848,6 +864,14 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
 
   public long getTablePointGetSlotCollisionCountForStats() {
     return tablePointGetSlotCollisionCount;
+  }
+
+  public long getTablePointMissCacheHitCountForStats() {
+    return tablePointMissCacheHitCount;
+  }
+
+  public long getTablePointMissCacheStoreCountForStats() {
+    return tablePointMissCacheStoreCount;
   }
 
   public long getTableBatchDataBlockGroupCountForStats() {
@@ -1106,19 +1130,6 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       }
     }
 
-    private List<Slice> asKeyList() {
-      return new java.util.AbstractList<Slice>() {
-        @Override
-        public Slice get(int index) {
-          return internalKeys[index];
-        }
-
-        @Override
-        public int size() {
-          return BatchLookupGroup.this.size;
-        }
-      };
-    }
   }
 
   private static final class EntryAnchorPointer {

@@ -180,8 +180,11 @@ class TablePropertiesTest {
       }
       assertEquals(8, table.get(denseLookup).size());
       String denseStats = table.getBlockLocalIndexStats();
-      assertTrue(denseStats.contains("seekCount=10"));
-      assertTrue(denseStats.contains("hitCount=10"));
+      assertTrue(denseStats.contains("seekCount=2"));
+      assertTrue(denseStats.contains("hitCount=2"));
+      assertEquals(1, table.getTableBatchSeekAllCountForStats());
+      assertEquals(1, table.getTableBatchDenseBlockGroupCountForStats());
+      assertEquals(8, table.getTableBatchDenseBlockKeyCountForStats());
     } finally {
       table.closer().call();
     }

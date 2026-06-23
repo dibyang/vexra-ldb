@@ -113,9 +113,16 @@ public class Level
     int lastFileReadLevel = -1;
     Slice userKey = key.getUserKey();
     for (FileMetaData fileMetaData : fileMetaDataList) {
-      if (fileMetaData != contextHitFile && !tableCache.mayContain(fileMetaData, userKey)) {
+      TableCache.PointProbeDecision probeDecision =
+          tableCache.pointProbeDecision(fileMetaData, userKey, !fileMetaData.hasRangeDeletes());
+      if (probeDecision == TableCache.PointProbeDecision.FILTER_SKIP) {
         readStats.recordFilterSkip();
         continue; // 这个 table 一定没有这个 userKey
+      }
+      if (probeDecision == TableCache.PointProbeDecision.POINT_MISS_CACHE_HIT) {
+        readStats.recordPointMissCacheHit();
+        readStats.recordCandidateEntryMiss();
+        continue;
       }
       if (lastFileRead != null && readStats.getSeekFile() == null) {
         // We have had more than one seek for this read.  Charge the first file.
@@ -130,7 +137,7 @@ public class Level
 
       LookupResult pointResult = null;
       long pointSequence = -1;
-      Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key);
+      Entry<Slice, Slice> entry = tableCache.get(fileMetaData, key, !fileMetaData.hasRangeDeletes());
       if (entry != null) {
         // parse the key in the block
         InternalKey internalKey = new InternalKey(entry.getKey());
@@ -208,6 +215,69 @@ public class Level
         LookupResult lookupResult = getFromTableEntry(fileMetaData, keys.get(keyIndex), entries.get(i), readStats);
         if (lookupResult != null) {
           results.set(keyIndex, lookupResult);
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * 按原始 key 列表和未命中下标执行批量读取。
+   *
+   * <p>Version 在逐层查询 MultiGet miss 时已经维护了未解析下标数组。这里直接复用该数组，
+   * 避免为每一层重新构造 `missedKeys` 临时列表；返回结果与 `keyIndexes[0..keyCount)` 的顺序
+   * 一一对应，由调用方负责映射回原始结果下标。</p>
+   */
+  public List<LookupResult> get(List<LookupKey> keys, int[] keyIndexes, int keyCount, ReadStats readStats) {
+    readStats.clear();
+    List<LookupResult> results = BatchReadLists.newNullArrayList(keyCount);
+    if (files.isEmpty() || keyCount == 0) {
+      return results;
+    }
+
+    List<List<Integer>> fileToKeyPositions = new ArrayList<List<Integer>>(files.size());
+    for (int i = 0; i < files.size(); i++) {
+      fileToKeyPositions.add(new ArrayList<Integer>());
+    }
+    UserComparator userComparator = internalKeyComparator.getUserComparator();
+    for (int position = 0; position < keyCount; position++) {
+      LookupKey key = keys.get(keyIndexes[position]);
+      int index = ceilingFileIndex(files, key.getInternalKey(), internalKeyComparator);
+      if (index >= files.size()) {
+        continue;
+      }
+      FileMetaData fileMetaData = files.get(index);
+      if (userComparator.compare(key.getUserKey(), fileMetaData.getSmallest().getUserKey()) < 0) {
+        continue;
+      }
+      readStats.recordCandidateFile();
+      TableCache.PointProbeDecision probeDecision =
+          tableCache.pointProbeDecision(fileMetaData, key.getUserKey(), !fileMetaData.hasRangeDeletes());
+      if (probeDecision == TableCache.PointProbeDecision.FILTER_SKIP) {
+        readStats.recordFilterSkip();
+      } else if (probeDecision == TableCache.PointProbeDecision.POINT_MISS_CACHE_HIT) {
+        readStats.recordPointMissCacheHit();
+        readStats.recordCandidateEntryMiss();
+      } else {
+        fileToKeyPositions.get(index).add(position);
+      }
+    }
+
+    for (int fileIndex = 0; fileIndex < fileToKeyPositions.size(); fileIndex++) {
+      List<Integer> keyPositions = fileToKeyPositions.get(fileIndex);
+      if (keyPositions.isEmpty()) {
+        continue;
+      }
+      FileMetaData fileMetaData = files.get(fileIndex);
+      readStats.recordTableRead();
+      List<Entry<Slice, Slice>> entries = tableCache.get(fileMetaData, keys, keyIndexes, keyPositions);
+      for (int i = 0; i < keyPositions.size(); i++) {
+        int position = keyPositions.get(i);
+        int originalIndex = keyIndexes[position];
+        LookupResult lookupResult = getFromTableEntry(fileMetaData, keys.get(originalIndex), entries.get(i), readStats);
+        if (lookupResult != null) {
+          results.set(position, lookupResult);
         }
       }
     }
