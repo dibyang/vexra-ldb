@@ -153,7 +153,7 @@ public class Level0
 
   public List<LookupResult> get(List<LookupKey> keys, ReadStats readStats) {
     readStats.clear();
-    List<LookupResult> results = new ArrayList<LookupResult>(Collections.nCopies(keys.size(), (LookupResult) null));
+    List<LookupResult> results = BatchReadLists.newNullArrayList(keys.size());
     if (files.isEmpty() || keys.isEmpty()) {
       return results;
     }

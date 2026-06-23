@@ -3300,9 +3300,10 @@ public class LDbImpl implements LDB {
     try {
       checkBackgroundException();
       ColumnFamilyState state = getColumnFamilyState(cf);
-      List<byte[]> values = new ArrayList<byte[]>(Collections.nCopies(keys.size(), (byte[]) null));
+      List<byte[]> values = BatchReadLists.newNullArrayList(keys.size());
       List<LookupKey> missedLookupKeys = new ArrayList<LookupKey>();
-      List<Integer> missedIndexes = new ArrayList<Integer>();
+      int[] missedIndexes = new int[keys.size()];
+      int missedCount = 0;
 
       mutex.lock();
       try {
@@ -3322,17 +3323,19 @@ public class LDbImpl implements LDB {
             }
           }
           missedLookupKeys.add(lookupKey);
-          missedIndexes.add(i);
+          missedIndexes[missedCount++] = i;
         }
       } finally {
         mutex.unlock();
       }
 
-      List<LookupResult> lookupResults = versions.get(cf.getId(), missedLookupKeys);
-      for (int i = 0; i < lookupResults.size(); i++) {
-        LookupResult lookupResult = lookupResults.get(i);
-        if (lookupResult != null) {
-          values.set(missedIndexes.get(i), valueBytes(lookupResult));
+      if (missedCount > 0) {
+        List<LookupResult> lookupResults = versions.get(cf.getId(), missedLookupKeys);
+        for (int i = 0; i < lookupResults.size(); i++) {
+          LookupResult lookupResult = lookupResults.get(i);
+          if (lookupResult != null) {
+            values.set(missedIndexes[i], valueBytes(lookupResult));
+          }
         }
       }
 
@@ -3363,9 +3366,10 @@ public class LDbImpl implements LDB {
     try {
       checkBackgroundException();
       ColumnFamilyState state = getColumnFamilyState(cf);
-      List<byte[]> values = new ArrayList<byte[]>(Collections.nCopies(keys.size(), (byte[]) null));
+      List<byte[]> values = BatchReadLists.newNullArrayList(keys.size());
       List<LookupKey> missedLookupKeys = new ArrayList<LookupKey>();
-      List<Integer> missedIndexes = new ArrayList<Integer>();
+      int[] missedIndexes = new int[keys.size()];
+      int missedCount = 0;
 
       mutex.lock();
       try {
@@ -3386,17 +3390,19 @@ public class LDbImpl implements LDB {
             }
           }
           missedLookupKeys.add(lookupKey);
-          missedIndexes.add(i);
+          missedIndexes[missedCount++] = i;
         }
       } finally {
         mutex.unlock();
       }
 
-      List<LookupResult> lookupResults = versions.get(cf.getId(), missedLookupKeys);
-      for (int i = 0; i < lookupResults.size(); i++) {
-        LookupResult lookupResult = lookupResults.get(i);
-        if (lookupResult != null) {
-          values.set(missedIndexes.get(i), valueBytes(lookupResult));
+      if (missedCount > 0) {
+        List<LookupResult> lookupResults = versions.get(cf.getId(), missedLookupKeys);
+        for (int i = 0; i < lookupResults.size(); i++) {
+          LookupResult lookupResult = lookupResults.get(i);
+          if (lookupResult != null) {
+            values.set(missedIndexes[i], valueBytes(lookupResult));
+          }
         }
       }
 

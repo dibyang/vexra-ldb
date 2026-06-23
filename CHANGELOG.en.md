@@ -6,6 +6,19 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- MultiGet result-list initialization now uses the package-local `BatchReadLists.newNullArrayList` helper to fill nulls directly, avoiding the extra intermediate list object from `Collections.nCopies`.
+
+- dbBench miss-key generation also removes `String.format` and writes fixed-width `key%016d-miss` byte arrays directly, reducing benchmark-harness allocation noise in readrandom_miss/readrandom_mixed and MultiGet mixed workloads.
+
+- API-level MultiGet now skips the version-layer lookup when all keys hit memtables, reducing empty-path overhead in batch reads.
+
+- The API-level MultiGet read path now records memtable-miss indexes in a one-shot `int[]` instead of `List<Integer>`, avoiding per-miss boxing objects and further reducing batch random-read allocation noise.
+
+- Table batch direct get now reuses the pre-decoded `PointGetIndex` built at table initialization, so batch MultiGet no longer reparses a `BlockHandle` from each index entry per key.
+
+- dbBench MultiGet workloads now pre-generate hit/miss key pools before the allocation baseline and reuse byte[] references in hot loops, keeping caller-side key construction noise out of engine allocation profiles.
+
+
 - Table batch direct get now replaces per-data-block `TableLookup` object lists with `int[]`/`Slice[]` lookup groups and feeds dense seek through a lightweight key view, further reducing MultiGet hot-path allocation.
 
 - dbBench key generation now writes fixed-width byte arrays directly instead of using `String.format`, reducing benchmark-harness temporary allocation in readrandom and MultiGet hot loops.

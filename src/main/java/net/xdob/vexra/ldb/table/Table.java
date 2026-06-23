@@ -487,11 +487,13 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
     for (int i = 0; i < internalKeys.size(); i++) {
       Slice internalKey = internalKeys.get(i);
       tableIndexSeekCount++;
-      Entry<Slice, Slice> indexEntry = indexBlock.seek(internalKey);
-      if (indexEntry == null) {
+      int indexPosition = pointGetIndexPosition(internalKey);
+      if (indexPosition < 0) {
+        tableIndexCacheMissCount++;
         continue;
       }
-      BlockHandle blockHandle = BlockHandle.readBlockHandle(indexEntry.getValue().input());
+      tableIndexCacheHitCount++;
+      BlockHandle blockHandle = pointGetIndexBlockHandles[indexPosition];
       BatchLookupGroup lookups = blockLookups.get(blockHandle);
       if (lookups == null) {
         lookups = new BatchLookupGroup(internalKeys.size());

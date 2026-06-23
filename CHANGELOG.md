@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+- MultiGet 结果列表初始化改为包内 `BatchReadLists.newNullArrayList` 直接填充 null，避免 `Collections.nCopies` 产生额外中间列表对象。
+
+- dbBench miss key 生成同样移除 `String.format`，直接写入固定宽度 `key%016d-miss` byte[]，降低 readrandom_miss/readrandom_mixed 以及 MultiGet mixed 场景的 benchmark harness 分配噪声。
+
+- API 层 MultiGet 在 memtable 全命中时跳过空的版本层查询，减少批量读路径上的空路径开销。
+
+- API 层 MultiGet 读路径将 memtable 未命中下标从 `List<Integer>` 改为一次性 `int[]` 记录，避免每个 miss 产生装箱对象，继续降低批量随机读分配噪声。
+
+- Table batch direct get 复用初始化时预解码的 `PointGetIndex`，批量 MultiGet 不再为每个 key 从 index entry 重新解析 `BlockHandle`。
+
+- dbBench MultiGet 场景在 allocation baseline 前预生成命中/未命中 key 池，热循环复用 byte[] 引用，避免把调用方 key 构造噪声计入引擎分配画像。
+
+
 - Table batch direct get 将每个 data block 分组内的 `TableLookup` 对象列表替换为 `int[]`/`Slice[]` 承载结构，并以轻量 key 视图喂给 dense seek，继续降低 MultiGet 热路径分配。
 
 - dbBench key 生成从 `String.format` 改为直接写入固定宽度 byte[]，减少 readrandom/MultiGet 热循环中的 benchmark harness 临时对象分配。

@@ -179,7 +179,7 @@ public class Version implements SeekingIterable<InternalKey, Slice> {
   public List<LookupResult> get(int cfId, List<LookupKey> keys) {
     requireNonNull(keys, "keys is null");
     CfVersionLevels cfLevels = findCfLevels(cfId);
-    List<LookupResult> results = new ArrayList<LookupResult>(Collections.nCopies(keys.size(), (LookupResult) null));
+    List<LookupResult> results = BatchReadLists.newNullArrayList(keys.size());
     if (cfLevels == null || keys.isEmpty()) {
       return results;
     }

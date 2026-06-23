@@ -101,6 +101,7 @@ public final class LdbDbBenchMain {
       File dbDir = new File(config.dbDir, benchmark);
       deleteRecursively(dbDir);
       ensureParentDirectory(dbDir);
+      BenchmarkKeys benchmarkKeys = BenchmarkKeys.forBenchmark(config, benchmark);
       MemoryStats.Baseline memoryBaseline = MemoryStats.beforeBenchmark();
       AllocationStats.Baseline allocationBaseline = AllocationStats.beforeBenchmark();
       Result result;
@@ -123,11 +124,11 @@ public final class LdbDbBenchMain {
       } else if ("readrandom_mixed".equals(benchmark)) {
         result = readRandomMixed(config, dbDir);
       } else if ("multiget_random".equals(benchmark)) {
-        result = multiGetRandom(config, dbDir);
+        result = multiGetRandom(config, dbDir, benchmarkKeys);
       } else if ("multiget_mixed".equals(benchmark)) {
-        result = multiGetMixed(config, dbDir);
+        result = multiGetMixed(config, dbDir, benchmarkKeys);
       } else if ("multiget_sameblock".equals(benchmark)) {
-        result = multiGetSameBlock(config, dbDir);
+        result = multiGetSameBlock(config, dbDir, benchmarkKeys);
       } else if ("scan".equals(benchmark)) {
         result = scan(config, dbDir);
       } else if ("overwrite".equals(benchmark)) {
@@ -472,7 +473,7 @@ public final class LdbDbBenchMain {
     }
   }
 
-  private static Result multiGetRandom(Config config, File dbDir) throws Exception {
+  private static Result multiGetRandom(Config config, File dbDir, BenchmarkKeys benchmarkKeys) throws Exception {
     Random random = new Random(config.seed);
     long hits = 0;
     long operations = 0;
@@ -484,7 +485,7 @@ public final class LdbDbBenchMain {
         int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
         List<byte[]> keys = new ArrayList<>(batchSize);
         for (int i = 0; i < batchSize; i++) {
-          keys.add(key(random.nextInt(config.num)));
+          keys.add(benchmarkKeys.key(random.nextInt(config.num)));
         }
         List<byte[]> values = db.get(keys);
         for (byte[] value : values) {
@@ -498,7 +499,7 @@ public final class LdbDbBenchMain {
     }
   }
 
-  private static Result multiGetMixed(Config config, File dbDir) throws Exception {
+  private static Result multiGetMixed(Config config, File dbDir, BenchmarkKeys benchmarkKeys) throws Exception {
     Random random = new Random(config.seed);
     long hits = 0;
     long operations = 0;
@@ -512,8 +513,8 @@ public final class LdbDbBenchMain {
         List<byte[]> keys = new ArrayList<>(batchSize);
         for (int i = 0; i < batchSize; i++) {
           keys.add(((operations + i) & 1) == 0
-              ? key(random.nextInt(config.num))
-              : missKey(random.nextInt(Math.max(1, config.num - 1))));
+              ? benchmarkKeys.key(random.nextInt(config.num))
+              : benchmarkKeys.missKey(random.nextInt(Math.max(1, config.num - 1))));
         }
         List<byte[]> values = db.get(keys);
         for (byte[] value : values) {
@@ -527,7 +528,7 @@ public final class LdbDbBenchMain {
     }
   }
 
-  private static Result multiGetSameBlock(Config config, File dbDir) throws Exception {
+  private static Result multiGetSameBlock(Config config, File dbDir, BenchmarkKeys benchmarkKeys) throws Exception {
     Random random = new Random(config.seed);
     long hits = 0;
     long operations = 0;
@@ -541,7 +542,7 @@ public final class LdbDbBenchMain {
         int base = random.nextInt(maxBase);
         List<byte[]> keys = new ArrayList<>(batchSize);
         for (int i = 0; i < batchSize; i++) {
-          keys.add(key(base + i));
+          keys.add(benchmarkKeys.key(base + i));
         }
         List<byte[]> values = db.get(keys);
         for (byte[] value : values) {
@@ -706,7 +707,60 @@ public final class LdbDbBenchMain {
   }
 
   private static byte[] missKey(int value) {
-    return String.format(Locale.ROOT, "key%016d-miss", value).getBytes(StandardCharsets.UTF_8);
+    byte[] key = new byte[24];
+    key[0] = 'k';
+    key[1] = 'e';
+    key[2] = 'y';
+    int remaining = value;
+    for (int i = 18; i >= 3; i--) {
+      key[i] = (byte) ('0' + (remaining % 10));
+      remaining /= 10;
+    }
+    key[19] = '-';
+    key[20] = 'm';
+    key[21] = 'i';
+    key[22] = 's';
+    key[23] = 's';
+    return key;
+  }
+
+  private static final class BenchmarkKeys {
+    private static final BenchmarkKeys EMPTY = new BenchmarkKeys(null, null);
+
+    private final byte[][] keys;
+    private final byte[][] missKeys;
+
+    private BenchmarkKeys(byte[][] keys, byte[][] missKeys) {
+      this.keys = keys;
+      this.missKeys = missKeys;
+    }
+
+    private static BenchmarkKeys forBenchmark(Config config, String benchmark) {
+      if (!benchmark.startsWith("multiget_")) {
+        return EMPTY;
+      }
+      byte[][] keys = new byte[config.num][];
+      for (int i = 0; i < config.num; i++) {
+        keys[i] = LdbDbBenchMain.key(i);
+      }
+      byte[][] missKeys = null;
+      if ("multiget_mixed".equals(benchmark)) {
+        int missCount = Math.max(1, config.num - 1);
+        missKeys = new byte[missCount][];
+        for (int i = 0; i < missCount; i++) {
+          missKeys[i] = LdbDbBenchMain.missKey(i);
+        }
+      }
+      return new BenchmarkKeys(keys, missKeys);
+    }
+
+    private byte[] key(int index) {
+      return keys == null ? LdbDbBenchMain.key(index) : keys[index];
+    }
+
+    private byte[] missKey(int index) {
+      return missKeys == null ? LdbDbBenchMain.missKey(index) : missKeys[index];
+    }
   }
 
   private static byte[] value(int index, int valueSize) {
