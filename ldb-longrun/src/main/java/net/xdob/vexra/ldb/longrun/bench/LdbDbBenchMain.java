@@ -6,6 +6,9 @@ import net.xdob.vexra.ldb.SnapshotCursor;
 import net.xdob.vexra.ldb.WriteOptions;
 import net.xdob.vexra.ldb.impl.BloomFilterPolicy;
 import net.xdob.vexra.ldb.impl.LDBFactory;
+import org.rocksdb.RocksDB;
+import org.rocksdb.RocksDBException;
+import org.rocksdb.RocksIterator;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -13,6 +16,11 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.PrintStream;
 import java.io.Writer;
+import java.lang.management.GarbageCollectorMXBean;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryPoolMXBean;
+import java.lang.management.MemoryType;
+import java.lang.management.MemoryUsage;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +47,14 @@ public final class LdbDbBenchMain {
   private static final String DEFAULT_BENCHMARKS = "fillseq,warm_readrandom,overwrite,readwhilewriting";
 
   private LdbDbBenchMain() {
+  }
+
+  static {
+    try {
+      RocksDB.loadLibrary();
+    } catch (Throwable ignored) {
+      // 只有 --engine rocksdb 才需要 RocksDB native library；LDB 基准不应因此无法启动。
+    }
   }
 
   /**
@@ -84,38 +100,44 @@ public final class LdbDbBenchMain {
     for (String benchmark : config.benchmarks) {
       File dbDir = new File(config.dbDir, benchmark);
       deleteRecursively(dbDir);
-      if ("fillseq".equals(benchmark)) {
-        results.add(fillSeq(config, dbDir));
+      ensureParentDirectory(dbDir);
+      MemoryStats.Baseline memoryBaseline = MemoryStats.beforeBenchmark();
+      Result result;
+      if ("rocksdb".equals(config.engine)) {
+        result = runRocksDbBenchmark(config, dbDir, benchmark);
+      } else if ("fillseq".equals(benchmark)) {
+        result = fillSeq(config, dbDir);
       } else if ("readrandom".equals(benchmark) || "warm_readrandom".equals(benchmark)) {
-        results.add(warmReadRandom(config, dbDir, benchmark));
+        result = warmReadRandom(config, dbDir, benchmark);
       } else if ("cold_readrandom".equals(benchmark)) {
-        results.add(coldReadRandom(config, dbDir));
+        result = coldReadRandom(config, dbDir);
       } else if ("readrandom_hit".equals(benchmark)) {
-        results.add(readRandomHit(config, dbDir));
+        result = readRandomHit(config, dbDir);
       } else if ("readrandom_sameblock".equals(benchmark)) {
-        results.add(readRandomSameBlock(config, dbDir));
+        result = readRandomSameBlock(config, dbDir);
       } else if ("readrandom_burst".equals(benchmark)) {
-        results.add(readRandomBurst(config, dbDir));
+        result = readRandomBurst(config, dbDir);
       } else if ("readrandom_miss".equals(benchmark)) {
-        results.add(readRandomMiss(config, dbDir));
+        result = readRandomMiss(config, dbDir);
       } else if ("readrandom_mixed".equals(benchmark)) {
-        results.add(readRandomMixed(config, dbDir));
+        result = readRandomMixed(config, dbDir);
       } else if ("multiget_random".equals(benchmark)) {
-        results.add(multiGetRandom(config, dbDir));
+        result = multiGetRandom(config, dbDir);
       } else if ("multiget_mixed".equals(benchmark)) {
-        results.add(multiGetMixed(config, dbDir));
+        result = multiGetMixed(config, dbDir);
       } else if ("multiget_sameblock".equals(benchmark)) {
-        results.add(multiGetSameBlock(config, dbDir));
+        result = multiGetSameBlock(config, dbDir);
       } else if ("scan".equals(benchmark)) {
-        results.add(scan(config, dbDir));
+        result = scan(config, dbDir);
       } else if ("overwrite".equals(benchmark)) {
-        results.add(overwrite(config, dbDir));
+        result = overwrite(config, dbDir);
       } else if ("readwhilewriting".equals(benchmark)) {
-        results.add(readWhileWriting(config, dbDir));
+        result = readWhileWriting(config, dbDir);
       } else {
         throw new IllegalArgumentException("Unsupported benchmark: " + benchmark);
       }
-      Result result = results.get(results.size() - 1);
+      result = result.withMemoryStats(MemoryStats.afterBenchmark(memoryBaseline).toReportString());
+      results.add(result);
       out.println(result.name + " ops=" + result.operations
           + " seconds=" + format(result.seconds)
           + " opsPerSecond=" + format(result.opsPerSecond));
@@ -131,6 +153,185 @@ public final class LdbDbBenchMain {
       }
       return Result.of("fillseq", config.num, start, System.nanoTime(), db);
     }
+  }
+
+  private static Result runRocksDbBenchmark(Config config, File dbDir, String benchmark) throws Exception {
+    if ("fillseq".equals(benchmark)) {
+      return rocksDbFillSeq(config, dbDir);
+    } else if ("readrandom".equals(benchmark) || "warm_readrandom".equals(benchmark)) {
+      return rocksDbWarmReadRandom(config, dbDir, benchmark);
+    } else if ("cold_readrandom".equals(benchmark)) {
+      return rocksDbColdReadRandom(config, dbDir);
+    } else if ("multiget_random".equals(benchmark)) {
+      return rocksDbMultiGetRandom(config, dbDir);
+    } else if ("multiget_sameblock".equals(benchmark)) {
+      return rocksDbMultiGetSameBlock(config, dbDir);
+    } else if ("scan".equals(benchmark)) {
+      return rocksDbScan(config, dbDir);
+    } else if ("overwrite".equals(benchmark)) {
+      return rocksDbOverwrite(config, dbDir);
+    }
+    throw new IllegalArgumentException("Unsupported RocksDB benchmark: " + benchmark);
+  }
+
+  private static Result rocksDbFillSeq(Config config, File dbDir) throws Exception {
+    long start = System.nanoTime();
+    try (org.rocksdb.Options options = rocksDbOptions(config);
+         org.rocksdb.WriteOptions writeOptions = rocksDbWriteOptions(config);
+         RocksDB db = RocksDB.open(options, dbDir.getAbsolutePath())) {
+      for (int i = 0; i < config.num; i++) {
+        db.put(writeOptions, key(i), value(i, config.valueSize));
+      }
+      return Result.ofRocksDb("fillseq", config.num, 0, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result rocksDbWarmReadRandom(Config config, File dbDir, String resultName) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    try (org.rocksdb.Options options = rocksDbOptions(config);
+         RocksDB db = RocksDB.open(options, dbDir.getAbsolutePath())) {
+      rocksDbPrepare(config, db);
+      long start = System.nanoTime();
+      for (int i = 0; i < config.reads; i++) {
+        if (db.get(key(random.nextInt(config.num))) != null) {
+          hits++;
+        }
+      }
+      return Result.ofRocksDb(resultName, config.reads, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result rocksDbColdReadRandom(Config config, File dbDir) throws Exception {
+    try (org.rocksdb.Options options = rocksDbOptions(config);
+         RocksDB db = RocksDB.open(options, dbDir.getAbsolutePath())) {
+      rocksDbPrepare(config, db);
+    }
+    Random random = new Random(config.seed);
+    long hits = 0;
+    try (org.rocksdb.Options options = rocksDbOptions(config);
+         RocksDB db = RocksDB.open(options, dbDir.getAbsolutePath())) {
+      long start = System.nanoTime();
+      for (int i = 0; i < config.reads; i++) {
+        if (db.get(key(random.nextInt(config.num))) != null) {
+          hits++;
+        }
+      }
+      return Result.ofRocksDb("cold_readrandom", config.reads, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result rocksDbMultiGetRandom(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    long operations = 0;
+    try (org.rocksdb.Options options = rocksDbOptions(config);
+         RocksDB db = RocksDB.open(options, dbDir.getAbsolutePath())) {
+      rocksDbPrepare(config, db);
+      db.compactRange();
+      long start = System.nanoTime();
+      while (operations < config.reads) {
+        int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
+        List<byte[]> keys = new ArrayList<>(batchSize);
+        for (int i = 0; i < batchSize; i++) {
+          keys.add(key(random.nextInt(config.num)));
+        }
+        List<byte[]> values = db.multiGetAsList(keys);
+        for (byte[] value : values) {
+          if (value != null) {
+            hits++;
+          }
+        }
+        operations += batchSize;
+      }
+      return Result.ofRocksDb("multiget_random", operations, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result rocksDbMultiGetSameBlock(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    long hits = 0;
+    long operations = 0;
+    try (org.rocksdb.Options options = rocksDbOptions(config);
+         RocksDB db = RocksDB.open(options, dbDir.getAbsolutePath())) {
+      rocksDbPrepare(config, db);
+      db.compactRange();
+      long start = System.nanoTime();
+      while (operations < config.reads) {
+        int batchSize = Math.min(config.batchSize, config.reads - (int) operations);
+        int maxBase = Math.max(1, config.num - batchSize);
+        int base = random.nextInt(maxBase);
+        List<byte[]> keys = new ArrayList<>(batchSize);
+        for (int i = 0; i < batchSize; i++) {
+          keys.add(key(base + i));
+        }
+        List<byte[]> values = db.multiGetAsList(keys);
+        for (byte[] value : values) {
+          if (value != null) {
+            hits++;
+          }
+        }
+        operations += batchSize;
+      }
+      return Result.ofRocksDb("multiget_sameblock", operations, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result rocksDbScan(Config config, File dbDir) throws Exception {
+    long operations = 0;
+    long hits = 0;
+    try (org.rocksdb.Options options = rocksDbOptions(config);
+         RocksDB db = RocksDB.open(options, dbDir.getAbsolutePath())) {
+      rocksDbPrepare(config, db);
+      db.compactRange();
+      long start = System.nanoTime();
+      try (RocksIterator iterator = db.newIterator()) {
+        iterator.seekToFirst();
+        while (iterator.isValid() && operations < config.reads) {
+          if (iterator.value() != null) {
+            hits++;
+          }
+          operations++;
+          iterator.next();
+        }
+      }
+      return Result.ofRocksDb("scan", operations, hits, start, System.nanoTime(), db);
+    }
+  }
+
+  private static Result rocksDbOverwrite(Config config, File dbDir) throws Exception {
+    Random random = new Random(config.seed);
+    try (org.rocksdb.Options options = rocksDbOptions(config);
+         org.rocksdb.WriteOptions writeOptions = rocksDbWriteOptions(config);
+         RocksDB db = RocksDB.open(options, dbDir.getAbsolutePath())) {
+      rocksDbPrepare(config, db);
+      long start = System.nanoTime();
+      for (int i = 0; i < config.num; i++) {
+        db.put(writeOptions, key(random.nextInt(config.num)), value(i, config.valueSize));
+      }
+      return Result.ofRocksDb("overwrite", config.num, 0, start, System.nanoTime(), db);
+    }
+  }
+
+  private static void rocksDbPrepare(Config config, RocksDB db) throws RocksDBException {
+    try (org.rocksdb.WriteOptions writeOptions = rocksDbWriteOptions(config)) {
+      for (int i = 0; i < config.num; i++) {
+        db.put(writeOptions, key(i), value(i, config.valueSize));
+      }
+    }
+  }
+
+  private static org.rocksdb.Options rocksDbOptions(Config config) {
+    org.rocksdb.BlockBasedTableConfig tableConfig = new org.rocksdb.BlockBasedTableConfig()
+        .setBlockCache(new org.rocksdb.LRUCache(config.blockCacheSize));
+    return new org.rocksdb.Options()
+        .setCreateIfMissing(true)
+        .setTableFormatConfig(tableConfig)
+        .setWriteBufferSize((long) config.writeBufferSizeMb << 20);
+  }
+
+  private static org.rocksdb.WriteOptions rocksDbWriteOptions(Config config) {
+    return new org.rocksdb.WriteOptions().setSync(config.sync);
   }
 
   private static Result warmReadRandom(Config config, File dbDir, String resultName) throws Exception {
@@ -524,7 +725,7 @@ public final class LdbDbBenchMain {
     File file = new File(config.outputDir, "ldb-db-bench-summary.json");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
       writer.write("{\n");
-      field(writer, "engine", "ldb", true);
+      field(writer, "engine", config.engine, true);
       field(writer, "dbDir", config.dbDir.getAbsolutePath(), true);
       field(writer, "num", config.num, true);
       field(writer, "reads", config.reads, true);
@@ -560,7 +761,8 @@ public final class LdbDbBenchMain {
         writer.write("\"opsPerSecond\": " + format(result.opsPerSecond) + ", ");
         writer.write("\"sstReadStats\": \"" + escape(result.sstReadStats) + "\", ");
         writer.write("\"blockCacheStats\": \"" + escape(result.blockCacheStats) + "\", ");
-        writer.write("\"tableFormatStats\": \"" + escape(result.tableFormatStats) + "\"");
+        writer.write("\"tableFormatStats\": \"" + escape(result.tableFormatStats) + "\", ");
+        writer.write("\"memoryStats\": \"" + escape(result.memoryStats) + "\"");
         writer.write("}");
         if (i + 1 < results.size()) {
           writer.write(",");
@@ -575,9 +777,9 @@ public final class LdbDbBenchMain {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "ldb-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats,memoryStats\n");
       for (Result result : results) {
-        writer.write("ldb," + result.name + "," + result.operations + "," + result.hits + ","
+        writer.write(config.engine + "," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
             + config.num + "," + config.reads + "," + config.valueSize + ","
             + config.sync + "," + config.groupCommit + "," + config.writeBufferSizeMb + ","
@@ -589,7 +791,7 @@ public final class LdbDbBenchMain {
             + config.inlineBlockSeekIndexAdmissionMinAnchors + ","
             + config.batchSize + ","
             + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + ","
-            + escapeCsv(result.tableFormatStats) + "\n");
+            + escapeCsv(result.tableFormatStats) + "," + escapeCsv(result.memoryStats) + "\n");
       }
     }
   }
@@ -637,8 +839,16 @@ public final class LdbDbBenchMain {
     }
   }
 
+  private static void ensureParentDirectory(File file) throws IOException {
+    File parent = file.getParentFile();
+    if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+      throw new IOException("Failed to create parent directory: " + parent);
+    }
+  }
+
   private static final class Config {
     private final File dbDir;
+    private final String engine;
     private final File outputDir;
     private final List<String> benchmarks;
     private final int num;
@@ -668,6 +878,10 @@ public final class LdbDbBenchMain {
 
     private Config(Map<String, String> values) {
       this.outputDir = new File(values.getOrDefault("output", "build/reports/ldb-db-bench"));
+      this.engine = values.getOrDefault("engine", "ldb").toLowerCase(Locale.ROOT);
+      if (!"ldb".equals(engine) && !"rocksdb".equals(engine)) {
+        throw new IllegalArgumentException("engine must be ldb or rocksdb");
+      }
       this.dbDir = new File(values.getOrDefault("db", new File(outputDir, "db").getPath()));
       this.benchmarks = split(values.getOrDefault("benchmarks", DEFAULT_BENCHMARKS));
       this.num = integer(values, "num", DEFAULT_NUM);
@@ -700,9 +914,6 @@ public final class LdbDbBenchMain {
           || entryAnchorIndexAdmissionMinAnchors <= 0 || inlineBlockSeekIndexInterval <= 0
           || inlineBlockSeekIndexAdmissionMinAnchors <= 0 || batchSize <= 0) {
         throw new IllegalArgumentException("num, reads, value_size, write_buffer_size_mb, block_cache_size, block_cache_admission_min_reads, block_local_index_interval, entry_anchor_index_interval, entry_anchor_index_admission_min_anchors, inline_block_seek_index_interval, inline_block_seek_index_admission_min_anchors and batch_size must be > 0");
-      }
-      if (writeBlockLocalIndex && tableFormatVersion < 3) {
-        throw new IllegalArgumentException("write_block_local_index requires table_format_version >= 3");
       }
       if (writeEntryAnchorIndex && tableFormatVersion < 4) {
         throw new IllegalArgumentException("write_entry_anchor_index requires table_format_version >= 4");
@@ -769,9 +980,10 @@ public final class LdbDbBenchMain {
     private final String sstReadStats;
     private final String blockCacheStats;
     private final String tableFormatStats;
+    private final String memoryStats;
 
     private Result(String name, long operations, long hits, double seconds, double opsPerSecond,
-                   String sstReadStats, String blockCacheStats, String tableFormatStats) {
+                   String sstReadStats, String blockCacheStats, String tableFormatStats, String memoryStats) {
       this.name = name;
       this.operations = operations;
       this.hits = hits;
@@ -780,6 +992,7 @@ public final class LdbDbBenchMain {
       this.sstReadStats = sstReadStats;
       this.blockCacheStats = blockCacheStats;
       this.tableFormatStats = tableFormatStats;
+      this.memoryStats = memoryStats;
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos) {
@@ -788,7 +1001,7 @@ public final class LdbDbBenchMain {
 
     private static Result of(String name, long operations, long hits, long startNanos, long endNanos) {
       double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
-      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "");
+      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "", "");
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos, LDB db) {
@@ -800,11 +1013,159 @@ public final class LdbDbBenchMain {
       return new Result(name, operations, hits, seconds, operations / seconds,
           valueOrEmpty(db.getProperty("ldb.sstReadStats")),
           valueOrEmpty(db.getProperty("ldb.blockCacheStats")),
-          valueOrEmpty(db.getProperty("ldb.tableFormat")));
+          valueOrEmpty(db.getProperty("ldb.tableFormat")),
+          "");
+    }
+
+    private static Result ofRocksDb(String name, long operations, long hits, long startNanos, long endNanos, RocksDB db) {
+      double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
+      return new Result(name, operations, hits, seconds, operations / seconds,
+          "",
+          rocksDbMemoryProperties(db),
+          "",
+          "");
+    }
+
+    private Result withMemoryStats(String memoryStats) {
+      return new Result(name, operations, hits, seconds, opsPerSecond,
+          sstReadStats,
+          blockCacheStats,
+          tableFormatStats,
+          valueOrEmpty(memoryStats));
     }
 
     private static String valueOrEmpty(String value) {
       return value == null ? "" : value;
+    }
+
+    private static String rocksDbMemoryProperties(RocksDB db) {
+      return "rocksdbEstimateTableReadersMem=" + rocksDbProperty(db, "rocksdb.estimate-table-readers-mem")
+          + ",rocksdbCurSizeAllMemTables=" + rocksDbProperty(db, "rocksdb.cur-size-all-mem-tables")
+          + ",rocksdbBlockCacheUsage=" + rocksDbProperty(db, "rocksdb.block-cache-usage")
+          + ",rocksdbBlockCacheCapacity=" + rocksDbProperty(db, "rocksdb.block-cache-capacity");
+    }
+
+    private static String rocksDbProperty(RocksDB db, String name) {
+      try {
+        return valueOrEmpty(db.getProperty(name));
+      } catch (Exception ignored) {
+        return "";
+      }
+    }
+  }
+
+  private static final class MemoryStats {
+    private final long heapUsedBytes;
+    private final long heapCommittedBytes;
+    private final long heapMaxBytes;
+    private final long nonHeapUsedBytes;
+    private final long nonHeapCommittedBytes;
+    private final long heapPeakUsedBytes;
+    private final long gcCountDelta;
+    private final long gcTimeMillisDelta;
+
+    private MemoryStats(long heapUsedBytes, long heapCommittedBytes, long heapMaxBytes,
+                        long nonHeapUsedBytes, long nonHeapCommittedBytes, long heapPeakUsedBytes,
+                        long gcCountDelta, long gcTimeMillisDelta) {
+      this.heapUsedBytes = heapUsedBytes;
+      this.heapCommittedBytes = heapCommittedBytes;
+      this.heapMaxBytes = heapMaxBytes;
+      this.nonHeapUsedBytes = nonHeapUsedBytes;
+      this.nonHeapCommittedBytes = nonHeapCommittedBytes;
+      this.heapPeakUsedBytes = heapPeakUsedBytes;
+      this.gcCountDelta = gcCountDelta;
+      this.gcTimeMillisDelta = gcTimeMillisDelta;
+    }
+
+    /**
+     * 开始一次 benchmark 前重置 heap pool peak，并记录 GC 计数基线。
+     *
+     * <p>这里不主动调用 System.gc()，避免为了观测而改变 benchmark 行为；peak 统计依赖 JVM
+     * memory pool 的轻量级计数，RSS 等进程级指标留给后续平台相关采集器。</p>
+     */
+    private static Baseline beforeBenchmark() {
+      for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
+        if (pool.getType() == MemoryType.HEAP) {
+          try {
+            pool.resetPeakUsage();
+          } catch (RuntimeException ignored) {
+            // 有些 JVM/pool 不支持重置 peak，忽略后仍可使用当前 peak 作为近似上界。
+          }
+        }
+      }
+      return new Baseline(totalGcCount(), totalGcTimeMillis());
+    }
+
+    private static MemoryStats afterBenchmark(Baseline baseline) {
+      MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+      MemoryUsage nonHeap = ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage();
+      return new MemoryStats(
+          heap.getUsed(),
+          heap.getCommitted(),
+          heap.getMax(),
+          nonHeap.getUsed(),
+          nonHeap.getCommitted(),
+          heapPeakUsedBytes(),
+          safeDelta(totalGcCount(), baseline.gcCount),
+          safeDelta(totalGcTimeMillis(), baseline.gcTimeMillis));
+    }
+
+    private String toReportString() {
+      return "heapUsedBytes=" + heapUsedBytes
+          + ",heapCommittedBytes=" + heapCommittedBytes
+          + ",heapMaxBytes=" + heapMaxBytes
+          + ",nonHeapUsedBytes=" + nonHeapUsedBytes
+          + ",nonHeapCommittedBytes=" + nonHeapCommittedBytes
+          + ",heapPeakUsedBytes=" + heapPeakUsedBytes
+          + ",gcCountDelta=" + gcCountDelta
+          + ",gcTimeMillisDelta=" + gcTimeMillisDelta;
+    }
+
+    private static long heapPeakUsedBytes() {
+      long total = 0;
+      for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
+        if (pool.getType() == MemoryType.HEAP) {
+          MemoryUsage usage = pool.getPeakUsage();
+          if (usage != null && usage.getUsed() > 0) {
+            total += usage.getUsed();
+          }
+        }
+      }
+      return total;
+    }
+
+    private static long totalGcCount() {
+      long total = 0;
+      for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+        if (gc.getCollectionCount() >= 0) {
+          total += gc.getCollectionCount();
+        }
+      }
+      return total;
+    }
+
+    private static long totalGcTimeMillis() {
+      long total = 0;
+      for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+        if (gc.getCollectionTime() >= 0) {
+          total += gc.getCollectionTime();
+        }
+      }
+      return total;
+    }
+
+    private static long safeDelta(long current, long baseline) {
+      return current >= baseline ? current - baseline : 0;
+    }
+
+    private static final class Baseline {
+      private final long gcCount;
+      private final long gcTimeMillis;
+
+      private Baseline(long gcCount, long gcTimeMillis) {
+        this.gcCount = gcCount;
+        this.gcTimeMillis = gcTimeMillis;
+      }
     }
   }
 }

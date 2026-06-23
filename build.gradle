@@ -955,17 +955,22 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       && fileContains(longrunBuild, 'ldbBlockLocalIndexBaselineReport')
       && fileContains(longrunBuild, 'ldbBlockLocalIndexCandidateReport')
       && fileContains(longrunBuild, 'ldbBlockLocalIndexComparisonReport')
+      && fileContains(longrunBuild, 'rocksDbBenchReport')
       && fileContains(longrunBuild, 'ldb.blockLocalIndexBench.blockLocalIndexInterval')
       && fileContains(longrunBuild, 'fillseq,cold_readrandom,multiget_random,multiget_sameblock,scan')
       && fileContains(dbBenchMain, 'multiget_sameblock')
       && fileContains(dbBenchMain, 'scan')
       && fileContains(dbBenchMain, 'tableFormatVersion')
       && fileContains(dbBenchMain, 'writeBlockLocalIndex')
+      && fileContains(dbBenchMain, 'ofRocksDb')
+      && fileContains(dbBenchMain, 'memoryStats')
+      && fileContains(dbBenchMain, 'heapPeakUsedBytes')
       && fileContains(tableCacheApi, 'blockLocalIndexSeekCount')
       && fileContains(dbBenchTest, 'multiget_sameblock')
       && fileContains(dbBenchTest, 'scan')
       && fileContains(dbBenchTest, 'blockLocalIndexSpaceAmplificationPpm')
       && fileContains(dbBenchTest, 'blockLocalIndexDirectoryLoadedTables')
+      && fileContains(dbBenchTest, 'heapUsedBytes=')
   return [
       [
           name: 'storageFormatDocs',

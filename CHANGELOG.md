@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+- dbBench 新增 `--engine rocksdb` 与 `rocksDbBenchReport`，可在同一 JSON/CSV 报告格式下对比 LDB 与 RocksDB JNI 的吞吐、JVM `memoryStats` 以及 RocksDB 暴露的 block cache/table reader 内存估计。
+
+- dbBench 报告新增 `memoryStats` 字段，按 benchmark 记录 `heapUsedBytes`、`heapCommittedBytes`、`heapMaxBytes`、`nonHeapUsedBytes`、`nonHeapCommittedBytes`、`heapPeakUsedBytes`、`gcCountDelta` 和 `gcTimeMillisDelta`，后续优化可以同时比较吞吐和内存/GC 成本。
+
+- dbBench 现在允许 `table_format_version=1` 搭配 `write_block_local_index=true`，用于基准测试默认自动候选模式；报告仍记录配置值与实际 SST `tableFormatStats`，便于区分“默认尝试索引”与“实际提升为 v3”。
+
 - 0.11.0-SNAPSHOT 默认进入 v3 block-local index 自动候选模式：`Options.writeBlockLocalIndex()` 默认值调整为 `true`，但配合动态格式提升与 25% 空间准入，只有实际写出 local-index directory 的 SST 才升级为 v3；小表或高空间放大样本仍保持 legacy/v2，不会无收益声明不兼容 feature。
 
 - 0.11.0-SNAPSHOT v3 block-local index 增加默认化前的动态格式提升：调用方允许 `writeBlockLocalIndex=true` 时，若所有 data block 都被准入策略跳过，SST 仍保持 legacy/v2，不声明 `block.local_index.v1`；只有真实写出 local-index directory 时才自动提升为 v3，避免无收益小表被默认写成不兼容格式。

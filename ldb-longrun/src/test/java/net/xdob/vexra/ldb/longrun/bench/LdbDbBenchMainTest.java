@@ -27,7 +27,7 @@ class LdbDbBenchMainTest {
         "--reads", "128",
         "--value_size", "32",
         "--read_profile", "read_optimized",
-        "--table_format_version", "3",
+        "--table_format_version", "1",
         "--write_table_properties", "true",
         "--write_block_local_index", "true",
         "--block_local_index_interval", "1",
@@ -37,7 +37,7 @@ class LdbDbBenchMainTest {
     assertEquals(0, exit, new String(errBytes.toByteArray(), StandardCharsets.UTF_8));
     String json = new String(Files.readAllBytes(new File(output, "ldb-db-bench-summary.json").toPath()),
         StandardCharsets.UTF_8);
-    assertTrue(json.contains("\"tableFormatVersion\": 3"), json);
+    assertTrue(json.contains("\"tableFormatVersion\": 1"), json);
     assertTrue(json.contains("\"writeTableProperties\": true"), json);
     assertTrue(json.contains("\"writeBlockLocalIndex\": true"), json);
     assertTrue(json.contains("\"blockLocalIndexInterval\": 1"), json);
@@ -59,9 +59,19 @@ class LdbDbBenchMainTest {
     assertTrue(json.contains("pointReadContextFileHits="), json);
     assertTrue(json.contains("blockSeekIndexHits="), json);
     assertTrue(json.contains("\"tableFormatStats\""), json);
+    assertTrue(json.contains("\"memoryStats\""), json);
+    assertTrue(json.contains("heapUsedBytes="), json);
+    assertTrue(json.contains("heapPeakUsedBytes="), json);
+    assertTrue(json.contains("gcCountDelta="), json);
     assertTrue(json.contains("blockLocalIndexBytes="), json);
     assertTrue(json.contains("blockLocalIndexSpaceAmplificationPpm="), json);
     assertTrue(json.contains("blockLocalIndexAdmissionPolicy="), json);
+    assertTrue(json.contains("formatVersion=3"), json);
     assertTrue(json.contains("inlineBlockSeekIndexBytes="), json);
+
+    String csv = new String(Files.readAllBytes(new File(output, "ldb-db-bench-summary.csv").toPath()),
+        StandardCharsets.UTF_8);
+    assertTrue(csv.contains(",memoryStats"), csv);
+    assertTrue(csv.contains("heapCommittedBytes="), csv);
   }
 }

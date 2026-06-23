@@ -6,6 +6,12 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- dbBench now supports `--engine rocksdb` and `rocksDbBenchReport`, allowing LDB and RocksDB JNI to be compared with the same JSON/CSV report format, including throughput, JVM `memoryStats`, and RocksDB block-cache/table-reader memory estimates.
+
+- dbBench reports now include a per-benchmark `memoryStats` field with `heapUsedBytes`, `heapCommittedBytes`, `heapMaxBytes`, `nonHeapUsedBytes`, `nonHeapCommittedBytes`, `heapPeakUsedBytes`, `gcCountDelta`, and `gcTimeMillisDelta`, so future optimization runs can compare throughput and memory/GC cost together.
+
+- dbBench now accepts `table_format_version=1` together with `write_block_local_index=true` so benchmarks can exercise the default automatic-candidacy mode; reports still record both the requested configuration and actual SST `tableFormatStats`, making it clear whether a run merely attempted indexing or actually promoted SSTs to v3.
+
 - 0.11.0-SNAPSHOT now defaults into automatic v3 block-local-index candidacy: `Options.writeBlockLocalIndex()` defaults to `true`, but dynamic format promotion and the 25% space-admission guard mean only SSTs that actually write a local-index directory are promoted to v3; small tables or high-amplification samples remain legacy/v2 and do not declare an incompatible feature without benefit.
 
 - 0.11.0-SNAPSHOT adds dynamic format promotion for v3 block-local indexes before default enablement: when callers allow `writeBlockLocalIndex=true`, SSTs remain legacy/v2 and do not declare `block.local_index.v1` if all data blocks are skipped by admission; only SSTs that actually write a local-index directory are promoted to v3, preventing no-benefit small tables from becoming incompatible by default.

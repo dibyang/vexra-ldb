@@ -20,6 +20,7 @@ repositories {
 
 dependencies {
   implementation project(':')
+  implementation 'org.rocksdb:rocksdbjni:9.10.0'
   implementation("org.slf4j:slf4j-api:${slf4j_version}")
   runtimeOnly("org.slf4j:slf4j-simple:${slf4j_version}")
   testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
@@ -133,7 +134,9 @@ tasks.register('ldbDbBenchReport', JavaExec) {
   def verifyChecksums = providers.gradleProperty('ldb.dbBench.verifyChecksums').orElse('true')
   def batchSize = providers.gradleProperty('ldb.dbBench.batchSize').orElse('64')
   def seed = providers.gradleProperty('ldb.dbBench.seed').orElse('20260619')
-  args '--output', outputDir.get(), '--db', dbDir.get(), '--benchmarks', benchmarks.get(),
+  def engine = providers.gradleProperty('ldb.dbBench.engine').orElse('ldb')
+  args '--engine', engine.get(),
+      '--output', outputDir.get(), '--db', dbDir.get(), '--benchmarks', benchmarks.get(),
       '--num', num.get(), '--reads', reads.get(), '--value_size', valueSize.get(),
       '--sync', sync.get(), '--group_commit', groupCommit.get(),
       '--write_buffer_size_mb', writeBufferSizeMb.get(), '--read_profile', readProfile.get(),
@@ -151,6 +154,36 @@ tasks.register('ldbDbBenchReport', JavaExec) {
       '--inline_block_seek_index_interval', inlineBlockSeekIndexInterval.get(),
       '--inline_block_seek_index_admission_min_anchors', inlineBlockSeekIndexAdmissionMinAnchors.get(),
       '--verify_checksums', verifyChecksums.get(), '--batch_size', batchSize.get(),
+      '--seed', seed.get()
+}
+
+tasks.register('rocksDbBenchReport', JavaExec) {
+  group = 'verification'
+  description = 'Runs db_bench-style RocksDB JNI benchmarks and writes JSON/CSV reports.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.bench.LdbDbBenchMain'
+  def outputDir = providers.gradleProperty('rocksdb.dbBench.outputDir')
+      .orElse(layout.buildDirectory.dir('reports/rocksdb-db-bench').map { it.asFile.path })
+  def dbDir = providers.gradleProperty('rocksdb.dbBench.dbDir')
+      .orElse(layout.buildDirectory.dir('reports/rocksdb-db-bench/db').map { it.asFile.path })
+  def benchmarks = providers.gradleProperty('rocksdb.dbBench.benchmarks')
+      .orElse('fillseq,cold_readrandom,multiget_random,multiget_sameblock,scan,overwrite')
+  def num = providers.gradleProperty('rocksdb.dbBench.num').orElse('200000')
+  def reads = providers.gradleProperty('rocksdb.dbBench.reads').orElse('200000')
+  def valueSize = providers.gradleProperty('rocksdb.dbBench.valueSize').orElse('100')
+  def sync = providers.gradleProperty('rocksdb.dbBench.sync').orElse('false')
+  def writeBufferSizeMb = providers.gradleProperty('rocksdb.dbBench.writeBufferSizeMb').orElse('512')
+  def blockCacheSize = providers.gradleProperty('rocksdb.dbBench.blockCacheSize').orElse('67108864')
+  def batchSize = providers.gradleProperty('rocksdb.dbBench.batchSize').orElse('64')
+  def seed = providers.gradleProperty('rocksdb.dbBench.seed').orElse('20260619')
+  args '--engine', 'rocksdb',
+      '--output', outputDir.get(), '--db', dbDir.get(), '--benchmarks', benchmarks.get(),
+      '--num', num.get(), '--reads', reads.get(), '--value_size', valueSize.get(),
+      '--sync', sync.get(),
+      '--write_buffer_size_mb', writeBufferSizeMb.get(),
+      '--block_cache_size', blockCacheSize.get(),
+      '--batch_size', batchSize.get(),
       '--seed', seed.get()
 }
 
