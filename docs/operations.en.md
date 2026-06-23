@@ -178,3 +178,5 @@ If the release targets random-read miss optimization, archive `ldb.sstReadStats`
 ### Pre-Default Observation For Block-Local Indexes
 
 When deciding whether v3 block-local indexes can be enabled more broadly, operations should not look only at hit count. Check `blockLocalIndexSpaceAmplificationPpm`, `blockLocalIndexSkippedBlocks`, and scan benchmarks together. If ppm is high or scan regresses, keep `writeBlockLocalIndex=false` as the default and only opt in workloads with clear evidence.
+
+The fixed pre-release comparison entry point is `.\gradlew.bat :ldb-longrun:ldbBlockLocalIndexComparisonReport`. It generates separate baseline and v3 candidate reports and covers `cold_readrandom`, `multiget_random`, `multiget_sameblock`, and `scan` by default. Formal reviews should archive both output directories' `summary.json`, `results.csv`, and `tableFormatStats`, then combine those results with `blockLocalIndexSpaceAmplificationPpm` before deciding whether the feature remains opt-in.

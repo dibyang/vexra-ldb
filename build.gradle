@@ -782,6 +782,7 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
   File tablePropertiesTest = file("$rootDir/src/test/java/net/xdob/vexra/ldb/table/TablePropertiesTest.java")
   File verifyCheckTest = file("$rootDir/src/test/java/net/xdob/vexra/ldb/LdbVerifyCheckTest.java")
   File repairTest = file("$rootDir/src/test/java/net/xdob/vexra/ldb/LdbRepairTest.java")
+  File longrunBuild = file("$rootDir/ldb-longrun/build.gradle")
   File dbBenchMain = file("$rootDir/ldb-longrun/src/main/java/net/xdob/vexra/ldb/longrun/bench/LdbDbBenchMain.java")
   File dbBenchTest = file("$rootDir/ldb-longrun/src/test/java/net/xdob/vexra/ldb/longrun/bench/LdbDbBenchMainTest.java")
   boolean docsPresent = zhReference.isFile() && enReference.isFile() && zhDesign.isFile() && enDesign.isFile()
@@ -934,6 +935,7 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       && fileContains(repairTest, 'shouldReportV3BlockLocalIndexWhenRepairingFromReadableSst')
   boolean blockLocalIndexBenchmarkEvidence = zhV3EvolutionDesign.isFile()
       && enV3EvolutionDesign.isFile()
+      && longrunBuild.isFile()
       && dbBenchMain.isFile()
       && dbBenchTest.isFile()
       && tableCacheApi.isFile()
@@ -943,6 +945,11 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       && fileContains(enV3EvolutionDesign, 'dense same-block MultiGet')
       && fileContains(zhV3EvolutionDesign, 'scan 回归')
       && fileContains(enV3EvolutionDesign, 'scan regression')
+      && fileContains(longrunBuild, 'ldbBlockLocalIndexBaselineReport')
+      && fileContains(longrunBuild, 'ldbBlockLocalIndexCandidateReport')
+      && fileContains(longrunBuild, 'ldbBlockLocalIndexComparisonReport')
+      && fileContains(longrunBuild, 'ldb.blockLocalIndexBench.blockLocalIndexInterval')
+      && fileContains(longrunBuild, 'fillseq,cold_readrandom,multiget_random,multiget_sameblock,scan')
       && fileContains(dbBenchMain, 'multiget_sameblock')
       && fileContains(dbBenchMain, 'scan')
       && fileContains(dbBenchMain, 'tableFormatVersion')
@@ -1016,8 +1023,8 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       [
           name: 'blockLocalIndexBenchmarkEvidence',
           result: blockLocalIndexBenchmarkEvidence && unitGate?.result == 'PASSED' ? 'PASSED' : 'FAILED',
-          evidence: unitGate?.artifact ?: 'releaseGateUnitTest',
-          note: 'Block-local index default-enable review requires db_bench entries for cold_readrandom, sparse MultiGet, dense same-block MultiGet, scan regression, and v3 opt-in parameters'
+          evidence: 'ldb-longrun: ldbBlockLocalIndexComparisonReport; ' + (unitGate?.artifact ?: 'releaseGateUnitTest'),
+          note: 'Block-local index default-enable review requires fixed baseline/candidate dbBench reports for cold_readrandom, sparse MultiGet, dense same-block MultiGet, scan regression, and v3 opt-in parameters'
       ],
       [
           name: 'pluginOptionsViewCoverage',

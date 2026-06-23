@@ -178,3 +178,5 @@ ldb repair <db>
 ### block-local index 默认启用前观察
 
 运维判断 v3 block-local index 是否适合扩大启用时，不只看 hit count，还要同时看 `blockLocalIndexSpaceAmplificationPpm`、`blockLocalIndexSkippedBlocks` 和 scan benchmark。若 ppm 偏高或 scan 回退明显，应继续保持 `writeBlockLocalIndex=false` 默认策略，只对明确收益 workload 显式 opt-in。
+
+发布前固定对比入口为 `.\gradlew.bat :ldb-longrun:ldbBlockLocalIndexComparisonReport`。该任务会分别生成 baseline 与 v3 candidate 报告，默认覆盖 `cold_readrandom`、`multiget_random`、`multiget_sameblock` 和 `scan`，正式评估时应归档两个输出目录的 `summary.json`、`results.csv` 和 `tableFormatStats`，并结合 `blockLocalIndexSpaceAmplificationPpm` 判断是否仍保持 opt-in。

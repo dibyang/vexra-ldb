@@ -588,3 +588,5 @@ BI 15 将 key-only restart-key 构建限制在单点 `Table.get(Slice)` 的 dire
 block-local index 仍保持显式 opt-in，不作为默认写入策略。为了判断未来是否可以默认启用，writer 现在会在 v3 properties 中记录 `blockLocalIndexCandidateBlocks`、`blockLocalIndexSkippedBlocks`、`blockLocalIndexDataBlockBytes` 和 `blockLocalIndexSpaceAmplificationPpm`。当前准入策略通过 `blockLocalIndexAdmissionPolicy` 暴露，包含 `min-anchors=2` 与 `max-space-ppm=2000000`，用于先过滤极端空间放大的 data block。
 
 该阈值不是默认启用 SLA，而是默认启用评估前的保护栏。releaseGate、check/repair 和 dbBench 报告必须持续归档 ppm 与 skip 证据；后续只有在 cold_readrandom、sparse MultiGet、dense same-block MultiGet 和 scan 回归证据稳定后，才能把阈值收紧并讨论局部默认启用。
+
+为了避免发布前临时手工拼 dbBench 参数，`ldb-longrun` 现在提供固定对比任务：`ldbBlockLocalIndexBaselineReport` 写入 table format v1 baseline，`ldbBlockLocalIndexCandidateReport` 写入 table format v3 + `writeBlockLocalIndex=true` candidate，`ldbBlockLocalIndexComparisonReport` 串联二者。releaseGate 的 `blockLocalIndexBenchmarkEvidence` 会检查这些入口存在；正式评估应直接归档 baseline/v3 两组 `summary.json`、`results.csv`、`sstReadStats` 和 `tableFormatStats`。

@@ -154,6 +154,87 @@ tasks.register('ldbDbBenchReport', JavaExec) {
       '--seed', seed.get()
 }
 
+tasks.register('ldbBlockLocalIndexBaselineReport', JavaExec) {
+  group = 'verification'
+  description = 'Runs the fixed dbBench baseline profile for v3 block-local-index default-enable comparison.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.bench.LdbDbBenchMain'
+  def outputDir = providers.gradleProperty('ldb.blockLocalIndexBench.baselineOutputDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-db-bench/block-local-index-comparison/baseline').map { it.asFile.path })
+  def dbDir = providers.gradleProperty('ldb.blockLocalIndexBench.baselineDbDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-db-bench/block-local-index-comparison/baseline-db').map { it.asFile.path })
+  def benchmarks = providers.gradleProperty('ldb.blockLocalIndexBench.benchmarks')
+      .orElse('fillseq,cold_readrandom,multiget_random,multiget_sameblock,scan')
+  def num = providers.gradleProperty('ldb.blockLocalIndexBench.num').orElse('200000')
+  def reads = providers.gradleProperty('ldb.blockLocalIndexBench.reads').orElse('200000')
+  def valueSize = providers.gradleProperty('ldb.blockLocalIndexBench.valueSize').orElse('100')
+  def sync = providers.gradleProperty('ldb.blockLocalIndexBench.sync').orElse('false')
+  def groupCommit = providers.gradleProperty('ldb.blockLocalIndexBench.groupCommit').orElse('true')
+  def writeBufferSizeMb = providers.gradleProperty('ldb.blockLocalIndexBench.writeBufferSizeMb').orElse('64')
+  def readProfile = providers.gradleProperty('ldb.blockLocalIndexBench.readProfile').orElse('read_optimized')
+  def cacheBlocks = providers.gradleProperty('ldb.blockLocalIndexBench.cacheBlocks').orElse('true')
+  def blockCacheWarmOnOpen = providers.gradleProperty('ldb.blockLocalIndexBench.blockCacheWarmOnOpen').orElse('false')
+  def blockCacheSize = providers.gradleProperty('ldb.blockLocalIndexBench.blockCacheSize').orElse('67108864')
+  def verifyChecksums = providers.gradleProperty('ldb.blockLocalIndexBench.verifyChecksums').orElse('true')
+  def batchSize = providers.gradleProperty('ldb.blockLocalIndexBench.batchSize').orElse('64')
+  def seed = providers.gradleProperty('ldb.blockLocalIndexBench.seed').orElse('20260623')
+  args '--output_dir', outputDir.get(), '--db', dbDir.get(), '--benchmarks', benchmarks.get(),
+      '--num', num.get(), '--reads', reads.get(), '--value_size', valueSize.get(),
+      '--sync', sync.get(), '--group_commit', groupCommit.get(),
+      '--write_buffer_size_mb', writeBufferSizeMb.get(), '--read_profile', readProfile.get(),
+      '--cache_blocks', cacheBlocks.get(), '--block_cache_warm_on_open', blockCacheWarmOnOpen.get(),
+      '--block_cache_size', blockCacheSize.get(), '--table_format_version', '1',
+      '--write_table_properties', 'true', '--write_block_local_index', 'false',
+      '--verify_checksums', verifyChecksums.get(), '--batch_size', batchSize.get(),
+      '--seed', seed.get()
+}
+
+tasks.register('ldbBlockLocalIndexCandidateReport', JavaExec) {
+  group = 'verification'
+  description = 'Runs the fixed dbBench v3 block-local-index opt-in candidate profile for default-enable comparison.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.longrun.bench.LdbDbBenchMain'
+  def outputDir = providers.gradleProperty('ldb.blockLocalIndexBench.candidateOutputDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-db-bench/block-local-index-comparison/v3').map { it.asFile.path })
+  def dbDir = providers.gradleProperty('ldb.blockLocalIndexBench.candidateDbDir')
+      .orElse(layout.buildDirectory.dir('reports/ldb-db-bench/block-local-index-comparison/v3-db').map { it.asFile.path })
+  def benchmarks = providers.gradleProperty('ldb.blockLocalIndexBench.benchmarks')
+      .orElse('fillseq,cold_readrandom,multiget_random,multiget_sameblock,scan')
+  def num = providers.gradleProperty('ldb.blockLocalIndexBench.num').orElse('200000')
+  def reads = providers.gradleProperty('ldb.blockLocalIndexBench.reads').orElse('200000')
+  def valueSize = providers.gradleProperty('ldb.blockLocalIndexBench.valueSize').orElse('100')
+  def sync = providers.gradleProperty('ldb.blockLocalIndexBench.sync').orElse('false')
+  def groupCommit = providers.gradleProperty('ldb.blockLocalIndexBench.groupCommit').orElse('true')
+  def writeBufferSizeMb = providers.gradleProperty('ldb.blockLocalIndexBench.writeBufferSizeMb').orElse('64')
+  def readProfile = providers.gradleProperty('ldb.blockLocalIndexBench.readProfile').orElse('read_optimized')
+  def cacheBlocks = providers.gradleProperty('ldb.blockLocalIndexBench.cacheBlocks').orElse('true')
+  def blockCacheWarmOnOpen = providers.gradleProperty('ldb.blockLocalIndexBench.blockCacheWarmOnOpen').orElse('false')
+  def blockCacheSize = providers.gradleProperty('ldb.blockLocalIndexBench.blockCacheSize').orElse('67108864')
+  def blockLocalIndexInterval = providers.gradleProperty('ldb.blockLocalIndexBench.blockLocalIndexInterval').orElse('4')
+  def verifyChecksums = providers.gradleProperty('ldb.blockLocalIndexBench.verifyChecksums').orElse('true')
+  def batchSize = providers.gradleProperty('ldb.blockLocalIndexBench.batchSize').orElse('64')
+  def seed = providers.gradleProperty('ldb.blockLocalIndexBench.seed').orElse('20260623')
+  args '--output_dir', outputDir.get(), '--db', dbDir.get(), '--benchmarks', benchmarks.get(),
+      '--num', num.get(), '--reads', reads.get(), '--value_size', valueSize.get(),
+      '--sync', sync.get(), '--group_commit', groupCommit.get(),
+      '--write_buffer_size_mb', writeBufferSizeMb.get(), '--read_profile', readProfile.get(),
+      '--cache_blocks', cacheBlocks.get(), '--block_cache_warm_on_open', blockCacheWarmOnOpen.get(),
+      '--block_cache_size', blockCacheSize.get(), '--table_format_version', '3',
+      '--write_table_properties', 'true', '--write_block_local_index', 'true',
+      '--block_local_index_interval', blockLocalIndexInterval.get(),
+      '--verify_checksums', verifyChecksums.get(), '--batch_size', batchSize.get(),
+      '--seed', seed.get()
+}
+
+tasks.register('ldbBlockLocalIndexComparisonReport') {
+  group = 'verification'
+  description = 'Runs fixed baseline and v3 block-local-index candidate dbBench reports for default-enable review.'
+  dependsOn tasks.named('ldbBlockLocalIndexBaselineReport')
+  dependsOn tasks.named('ldbBlockLocalIndexCandidateReport')
+}
+
 tasks.register('longRunTest', JavaExec) {
   group = 'verification'
   description = 'Runs the explicit local long-run smoke profile; not part of default test.'
