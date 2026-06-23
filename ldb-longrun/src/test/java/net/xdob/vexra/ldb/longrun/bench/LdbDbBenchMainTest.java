@@ -61,6 +61,11 @@ class LdbDbBenchMainTest {
     assertTrue(json.contains("\"tableFormatStats\""), json);
     assertTrue(json.contains("\"memoryStats\""), json);
     assertTrue(json.contains("\"allocationStats\""), json);
+    assertTrue(json.contains("\"workloadStats\""), json);
+    assertTrue(json.contains("mixedHitLookups="), json);
+    assertTrue(json.contains("mixedMissLookups="), json);
+    assertTrue(json.contains("mixedHitAllocatedBytesPerOp="), json);
+    assertTrue(json.contains("mixedMissAllocatedBytesPerOp="), json);
     assertTrue(json.contains("heapUsedBytes="), json);
     assertTrue(json.contains("heapPeakUsedBytes="), json);
     assertTrue(json.contains("gcCountDelta="), json);
@@ -75,6 +80,8 @@ class LdbDbBenchMainTest {
         StandardCharsets.UTF_8);
     assertTrue(csv.contains(",memoryStats"), csv);
     assertTrue(csv.contains(",allocationStats"), csv);
+    assertTrue(csv.contains(",workloadStats"), csv);
+    assertTrue(csv.contains("mixedHitAvgNanos="), csv);
     assertTrue(csv.contains("heapCommittedBytes="), csv);
     assertTrue(csv.contains("allocationTrackingSupported="), csv);
   }

@@ -55,6 +55,9 @@ import static net.xdob.vexra.ldb.util.SizeOf.SIZE_OF_INT;
 public class Block
     implements SeekingIterable<Slice, Slice> {
   private static final int SEEK_ANCHOR_INTERVAL = 2;
+  private static final int LOW_BENEFIT_SEEK_ANCHOR_INTERVAL = 4;
+  private static final int MIN_INTERVAL_TWO_ANCHOR_ENTRIES = 8;
+  private static final int MIN_SEEK_ANCHOR_ENTRIES = 4;
   static final int INLINE_SEEK_INDEX_BLOCK_MAGIC = 0x4C424958; // LBIX
 
   private final Slice block;
@@ -299,6 +302,19 @@ public class Block
     return count;
   }
 
+  long seekAnchorRetainedKeyBytes() {
+    long bytes = 0;
+    for (SeekAnchor[] restartAnchors : seekAnchors) {
+      for (SeekAnchor anchor : restartAnchors) {
+        bytes += anchor.key.length();
+        if (anchor.previousKey != null) {
+          bytes += anchor.previousKey.length();
+        }
+      }
+    }
+    return bytes;
+  }
+
   List<EntryAnchor> entryAnchors(int interval) {
     checkArgument(interval > 0, "interval must be > 0");
     int restartCount = restartCount();
@@ -371,25 +387,76 @@ public class Block
           ? restartPositions.getInt((restartIndex + 1) * SIZE_OF_INT)
           : data.length();
       input.setPosition(restartOffset);
-      List<SeekAnchor> restartAnchors = new ArrayList<SeekAnchor>();
+      List<SeekAnchorCandidate> restartAnchors = new ArrayList<SeekAnchorCandidate>();
       Slice previousKey = null;
       int entryIndex = 0;
+      int sharedEntryCount = 0;
+      long retainedKeyBytes = 0;
       while (input.position() < limit) {
         int entryOffset = input.position();
         int sharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
         int nonSharedKeyLength = VariableLengthQuantity.readVariableLengthInt(input);
         int valueLength = VariableLengthQuantity.readVariableLengthInt(input);
         Slice key = readKey(input, previousKey, sharedKeyLength, nonSharedKeyLength);
+        if (sharedKeyLength > 0) {
+          sharedEntryCount++;
+        }
         if (entryIndex > 0 && entryIndex % SEEK_ANCHOR_INTERVAL == 0) {
-          restartAnchors.add(new SeekAnchor(key, entryOffset, previousKey));
+          restartAnchors.add(new SeekAnchorCandidate(new SeekAnchor(key, entryOffset, previousKey), entryIndex));
+          retainedKeyBytes += key.length();
+          if (previousKey != null) {
+            retainedKeyBytes += previousKey.length();
+          }
         }
         input.skipBytes(valueLength);
         previousKey = key;
         entryIndex++;
       }
-      anchors[restartIndex] = restartAnchors.toArray(new SeekAnchor[restartAnchors.size()]);
+      anchors[restartIndex] = selectSeekAnchors(restartAnchors, entryIndex, sharedEntryCount, retainedKeyBytes);
     }
     return anchors;
+  }
+
+  private static SeekAnchor[] selectSeekAnchors(List<SeekAnchorCandidate> candidates,
+                                                int entryCount,
+                                                int sharedEntryCount,
+                                                long retainedKeyBytes) {
+    if (candidates.isEmpty()) {
+      return new SeekAnchor[0];
+    }
+    int interval = seekAnchorIntervalFor(entryCount, sharedEntryCount, retainedKeyBytes);
+    if (interval == Integer.MAX_VALUE) {
+      return new SeekAnchor[0];
+    }
+    if (interval <= SEEK_ANCHOR_INTERVAL) {
+      SeekAnchor[] anchors = new SeekAnchor[candidates.size()];
+      for (int i = 0; i < candidates.size(); i++) {
+        anchors[i] = candidates.get(i).anchor;
+      }
+      return anchors;
+    }
+    List<SeekAnchor> anchors = new ArrayList<SeekAnchor>();
+    for (SeekAnchorCandidate candidate : candidates) {
+      if (candidate.entryIndex % interval == 0) {
+        anchors.add(candidate.anchor);
+      }
+    }
+    return anchors.toArray(new SeekAnchor[anchors.size()]);
+  }
+
+  private static int seekAnchorIntervalFor(int entryCount, int sharedEntryCount, long retainedKeyBytes) {
+    if (entryCount <= MIN_SEEK_ANCHOR_ENTRIES) {
+      return Integer.MAX_VALUE;
+    }
+    int compressedEntries = Math.max(1, entryCount - 1);
+    if (entryCount < MIN_INTERVAL_TWO_ANCHOR_ENTRIES || sharedEntryCount * 2 < compressedEntries) {
+      return LOW_BENEFIT_SEEK_ANCHOR_INTERVAL;
+    }
+    if (entryCount < SEEK_ANCHOR_INTERVAL * LOW_BENEFIT_SEEK_ANCHOR_INTERVAL
+        && retainedKeyBytes > (long) entryCount * 128L) {
+      return LOW_BENEFIT_SEEK_ANCHOR_INTERVAL;
+    }
+    return SEEK_ANCHOR_INTERVAL;
   }
 
   private static SeekAnchor[][] readInlineSeekAnchors(Slice inlineIndex, int restartCount) {
@@ -520,6 +587,16 @@ public class Block
       this.key = key;
       this.offset = offset;
       this.previousKey = previousKey;
+    }
+  }
+
+  private static final class SeekAnchorCandidate {
+    private final SeekAnchor anchor;
+    private final int entryIndex;
+
+    private SeekAnchorCandidate(SeekAnchor anchor, int entryIndex) {
+      this.anchor = anchor;
+      this.entryIndex = entryIndex;
     }
   }
 

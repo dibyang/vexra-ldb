@@ -48,7 +48,8 @@ public final class BlockSeekMicroBenchMain {
         + " decodedEntriesPerOp=" + format(result.decodedEntriesPerOp)
         + " sharedKeyRebuilds=" + result.sharedKeyRebuilds
         + " sharedKeyRebuildsPerOp=" + format(result.sharedKeyRebuildsPerOp)
-        + " seekAnchorCount=" + result.seekAnchorCount);
+        + " seekAnchorCount=" + result.seekAnchorCount
+        + " seekAnchorRetainedKeyBytes=" + result.seekAnchorRetainedKeyBytes);
   }
 
   private static Result run(Config config) {
@@ -110,7 +111,8 @@ public final class BlockSeekMicroBenchMain {
         checksum,
         block.size(),
         block.restartCount(),
-        block.seekAnchorCount());
+        block.seekAnchorCount(),
+        block.seekAnchorRetainedKeyBytes());
   }
 
   private static Slice key(int value) {
@@ -172,21 +174,22 @@ public final class BlockSeekMicroBenchMain {
       writer.write("  \"checksum\": " + result.checksum + ",\n");
       writer.write("  \"blockSize\": " + result.blockSize + ",\n");
       writer.write("  \"restartCount\": " + result.restartCount + ",\n");
-      writer.write("  \"seekAnchorCount\": " + result.seekAnchorCount + "\n");
+      writer.write("  \"seekAnchorCount\": " + result.seekAnchorCount + ",\n");
+      writer.write("  \"seekAnchorRetainedKeyBytes\": " + result.seekAnchorRetainedKeyBytes + "\n");
       writer.write("}\n");
     }
   }
 
   private static void writeCsv(File file, Config config, Result result) throws IOException {
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("entries,reads,restartInterval,valueSize,seed,operations,hits,seconds,opsPerSecond,allocatedBytesDelta,bytesPerOp,decodedEntries,decodedEntriesPerOp,sharedKeyRebuilds,sharedKeyRebuildsPerOp,sharedKeyRebuiltBytes,checksum,blockSize,restartCount,seekAnchorCount\n");
+      writer.write("entries,reads,restartInterval,valueSize,seed,operations,hits,seconds,opsPerSecond,allocatedBytesDelta,bytesPerOp,decodedEntries,decodedEntriesPerOp,sharedKeyRebuilds,sharedKeyRebuildsPerOp,sharedKeyRebuiltBytes,checksum,blockSize,restartCount,seekAnchorCount,seekAnchorRetainedKeyBytes\n");
       writer.write(config.entries + "," + config.reads + "," + config.restartInterval + ","
           + config.valueSize + "," + config.seed + "," + result.operations + "," + result.hits + ","
           + format(result.seconds) + "," + format(result.opsPerSecond) + "," + result.allocatedBytesDelta + ","
           + format(result.bytesPerOp) + "," + result.decodedEntries + "," + format(result.decodedEntriesPerOp) + ","
           + result.sharedKeyRebuilds + "," + format(result.sharedKeyRebuildsPerOp) + ","
           + result.sharedKeyRebuiltBytes + "," + result.checksum + "," + result.blockSize + "," + result.restartCount
-          + "," + result.seekAnchorCount + "\n");
+          + "," + result.seekAnchorCount + "," + result.seekAnchorRetainedKeyBytes + "\n");
     }
   }
 
@@ -289,6 +292,7 @@ public final class BlockSeekMicroBenchMain {
     private final long blockSize;
     private final int restartCount;
     private final int seekAnchorCount;
+    private final long seekAnchorRetainedKeyBytes;
 
     private Result(int operations,
                    int hits,
@@ -304,7 +308,8 @@ public final class BlockSeekMicroBenchMain {
                    long checksum,
                    long blockSize,
                    int restartCount,
-                   int seekAnchorCount) {
+                   int seekAnchorCount,
+                   long seekAnchorRetainedKeyBytes) {
       this.operations = operations;
       this.hits = hits;
       this.seconds = seconds;
@@ -320,6 +325,7 @@ public final class BlockSeekMicroBenchMain {
       this.blockSize = blockSize;
       this.restartCount = restartCount;
       this.seekAnchorCount = seekAnchorCount;
+      this.seekAnchorRetainedKeyBytes = seekAnchorRetainedKeyBytes;
     }
   }
 }

@@ -6,11 +6,16 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- Block.seek in-memory seek anchors now use a conservative adaptive density: regular large blocks keep interval=2, while tiny or low shared-key-benefit restart ranges downshift or skip anchors to reduce retained key memory without changing the on-disk block format.
+- `readrandom_mixed` benchmark reports a new `workloadStats` field that splits hit/miss lookups, found counts, latency, and thread allocation, and reuses pre-generated hit/miss key pools to reduce benchmark-harness allocation noise.
+
 - Block.seek now tightens the in-memory seek-anchor interval from 4 to 2, reducing random point-lookups' linear decoding and shared-key rebuilds inside restart ranges without changing the on-disk block format.
 
 - Added `blockSeekMicroBenchReport` to measure `Block.seek` throughput, thread allocation, decoded entries, and shared-key rebuild counts as a fixed baseline for upcoming comparison-path optimization.
 - `blockSeekMicroBenchReport` now also reports `decodedEntriesPerOp` and `sharedKeyRebuildsPerOp`, making per-operation Block.seek decode and rebuild cost easier to compare.
 - `blockSeekMicroBenchReport` now also reports `seekAnchorCount` so denser in-memory seek-anchor settings can be evaluated against their memory tradeoff.
+- `blockSeekMicroBenchReport` now also reports `seekAnchorRetainedKeyBytes` to quantify key bytes retained by in-memory seek anchors.
+- Added bilingual `Block.seek` in-memory seek-anchor benchmark notes, documenting why `interval=1` was not kept and why `interval=2` remains the current tradeoff.
 
 - MultiGet result-list initialization now uses the package-local `BatchReadLists.newNullArrayList` helper to fill nulls directly, avoiding the extra intermediate list object from `Collections.nCopies`.
 

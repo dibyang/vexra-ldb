@@ -122,7 +122,7 @@ public final class LdbDbBenchMain {
       } else if ("readrandom_miss".equals(benchmark)) {
         result = readRandomMiss(config, dbDir);
       } else if ("readrandom_mixed".equals(benchmark)) {
-        result = readRandomMixed(config, dbDir);
+        result = readRandomMixed(config, dbDir, benchmarkKeys);
       } else if ("multiget_random".equals(benchmark)) {
         result = multiGetRandom(config, dbDir, benchmarkKeys);
       } else if ("multiget_mixed".equals(benchmark)) {
@@ -453,23 +453,36 @@ public final class LdbDbBenchMain {
     }
   }
 
-  private static Result readRandomMixed(Config config, File dbDir) throws Exception {
+  private static Result readRandomMixed(Config config, File dbDir, BenchmarkKeys benchmarkKeys) throws Exception {
     try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
       prepareDb(config, db);
     }
     Random random = new Random(config.seed);
     long hits = 0;
     try (LDB db = LDBFactory.factory.open(dbDir, options(config))) {
+      MixedPathStats mixedPathStats = new MixedPathStats();
+      AllocationProbe allocationProbe = AllocationProbe.currentThread();
       long start = System.nanoTime();
       for (int i = 0; i < config.reads; i++) {
-        byte[] lookupKey = (i & 1) == 0
-            ? key(random.nextInt(config.num))
-            : missKey(random.nextInt(Math.max(1, config.num - 1)));
-        if (db.get(lookupKey) != null) {
+        boolean hitPath = (i & 1) == 0;
+        byte[] lookupKey = hitPath
+            ? benchmarkKeys.key(random.nextInt(config.num))
+            : benchmarkKeys.missKey(random.nextInt(Math.max(1, config.num - 1)));
+        long allocatedBefore = allocationProbe.allocatedBytes();
+        long operationStart = System.nanoTime();
+        byte[] value = db.get(lookupKey);
+        long operationNanos = System.nanoTime() - operationStart;
+        long allocatedAfter = allocationProbe.allocatedBytes();
+        long allocatedDelta = allocatedBefore >= 0 && allocatedAfter >= allocatedBefore
+            ? allocatedAfter - allocatedBefore
+            : -1;
+        if (value != null) {
           hits++;
         }
+        mixedPathStats.record(hitPath, value != null, operationNanos, allocatedDelta);
       }
-      return Result.of("readrandom_mixed", config.reads, hits, start, System.nanoTime(), db);
+      return Result.of("readrandom_mixed", config.reads, hits, start, System.nanoTime(), db)
+          .withWorkloadStats(mixedPathStats.toReportString());
     }
   }
 
@@ -736,7 +749,7 @@ public final class LdbDbBenchMain {
     }
 
     private static BenchmarkKeys forBenchmark(Config config, String benchmark) {
-      if (!benchmark.startsWith("multiget_")) {
+      if (!benchmark.startsWith("multiget_") && !"readrandom_mixed".equals(benchmark)) {
         return EMPTY;
       }
       byte[][] keys = new byte[config.num][];
@@ -744,7 +757,7 @@ public final class LdbDbBenchMain {
         keys[i] = LdbDbBenchMain.key(i);
       }
       byte[][] missKeys = null;
-      if ("multiget_mixed".equals(benchmark)) {
+      if ("multiget_mixed".equals(benchmark) || "readrandom_mixed".equals(benchmark)) {
         int missCount = Math.max(1, config.num - 1);
         missKeys = new byte[missCount][];
         for (int i = 0; i < missCount; i++) {
@@ -828,7 +841,8 @@ public final class LdbDbBenchMain {
         writer.write("\"blockCacheStats\": \"" + escape(result.blockCacheStats) + "\", ");
         writer.write("\"tableFormatStats\": \"" + escape(result.tableFormatStats) + "\", ");
         writer.write("\"memoryStats\": \"" + escape(result.memoryStats) + "\", ");
-        writer.write("\"allocationStats\": \"" + escape(result.allocationStats) + "\"");
+        writer.write("\"allocationStats\": \"" + escape(result.allocationStats) + "\", ");
+        writer.write("\"workloadStats\": \"" + escape(result.workloadStats) + "\"");
         writer.write("}");
         if (i + 1 < results.size()) {
           writer.write(",");
@@ -843,7 +857,7 @@ public final class LdbDbBenchMain {
   private static void writeCsv(Config config, List<Result> results) throws IOException {
     File file = new File(config.outputDir, "ldb-db-bench-summary.csv");
     try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats,memoryStats,allocationStats\n");
+      writer.write("engine,benchmark,operations,hits,seconds,opsPerSecond,num,reads,valueSize,sync,groupCommit,writeBufferSizeMb,readProfile,blockCacheWarmOnOpen,blockCacheAdmissionMinReads,tableFormatVersion,writeBlockLocalIndex,blockLocalIndexInterval,writeEntryAnchorIndex,entryAnchorIndexInterval,entryAnchorIndexAdmissionMinAnchors,writeInlineBlockSeekIndex,inlineBlockSeekIndexInterval,inlineBlockSeekIndexAdmissionMinAnchors,batchSize,sstReadStats,blockCacheStats,tableFormatStats,memoryStats,allocationStats,workloadStats\n");
       for (Result result : results) {
         writer.write(config.engine + "," + result.name + "," + result.operations + "," + result.hits + ","
             + format(result.seconds) + "," + format(result.opsPerSecond) + ","
@@ -858,7 +872,7 @@ public final class LdbDbBenchMain {
             + config.batchSize + ","
             + escapeCsv(result.sstReadStats) + "," + escapeCsv(result.blockCacheStats) + ","
             + escapeCsv(result.tableFormatStats) + "," + escapeCsv(result.memoryStats) + ","
-            + escapeCsv(result.allocationStats) + "\n");
+            + escapeCsv(result.allocationStats) + "," + escapeCsv(result.workloadStats) + "\n");
       }
     }
   }
@@ -1038,6 +1052,67 @@ public final class LdbDbBenchMain {
     }
   }
 
+  private static final class MixedPathStats {
+    private long hitLookups;
+    private long hitFound;
+    private long hitNanos;
+    private long hitAllocatedBytesDelta;
+    private boolean hitAllocationSupported = true;
+    private long missLookups;
+    private long missFound;
+    private long missNanos;
+    private long missAllocatedBytesDelta;
+    private boolean missAllocationSupported = true;
+
+    private void record(boolean hitPath, boolean found, long nanos, long allocatedBytesDelta) {
+      if (hitPath) {
+        hitLookups++;
+        if (found) {
+          hitFound++;
+        }
+        hitNanos += nanos;
+        if (allocatedBytesDelta >= 0) {
+          hitAllocatedBytesDelta += allocatedBytesDelta;
+        } else {
+          hitAllocationSupported = false;
+        }
+      } else {
+        missLookups++;
+        if (found) {
+          missFound++;
+        }
+        missNanos += nanos;
+        if (allocatedBytesDelta >= 0) {
+          missAllocatedBytesDelta += allocatedBytesDelta;
+        } else {
+          missAllocationSupported = false;
+        }
+      }
+    }
+
+    private String toReportString() {
+      return "mixedHitLookups=" + hitLookups
+          + ",mixedHitFound=" + hitFound
+          + ",mixedHitNanos=" + hitNanos
+          + ",mixedHitAvgNanos=" + average(hitNanos, hitLookups)
+          + ",mixedHitAllocatedBytesDelta=" + (hitAllocationSupported ? hitAllocatedBytesDelta : -1)
+          + ",mixedHitAllocatedBytesPerOp=" + average(hitAllocationSupported ? hitAllocatedBytesDelta : -1, hitLookups)
+          + ",mixedMissLookups=" + missLookups
+          + ",mixedMissFound=" + missFound
+          + ",mixedMissNanos=" + missNanos
+          + ",mixedMissAvgNanos=" + average(missNanos, missLookups)
+          + ",mixedMissAllocatedBytesDelta=" + (missAllocationSupported ? missAllocatedBytesDelta : -1)
+          + ",mixedMissAllocatedBytesPerOp=" + average(missAllocationSupported ? missAllocatedBytesDelta : -1, missLookups);
+    }
+
+    private static String average(long value, long count) {
+      if (value < 0 || count <= 0) {
+        return "-1.000";
+      }
+      return format(value / (double) count);
+    }
+  }
+
   private static final class Result {
     private final String name;
     private final long operations;
@@ -1049,10 +1124,11 @@ public final class LdbDbBenchMain {
     private final String tableFormatStats;
     private final String memoryStats;
     private final String allocationStats;
+    private final String workloadStats;
 
     private Result(String name, long operations, long hits, double seconds, double opsPerSecond,
                    String sstReadStats, String blockCacheStats, String tableFormatStats, String memoryStats,
-                   String allocationStats) {
+                   String allocationStats, String workloadStats) {
       this.name = name;
       this.operations = operations;
       this.hits = hits;
@@ -1063,6 +1139,7 @@ public final class LdbDbBenchMain {
       this.tableFormatStats = tableFormatStats;
       this.memoryStats = memoryStats;
       this.allocationStats = allocationStats;
+      this.workloadStats = workloadStats;
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos) {
@@ -1071,7 +1148,7 @@ public final class LdbDbBenchMain {
 
     private static Result of(String name, long operations, long hits, long startNanos, long endNanos) {
       double seconds = Math.max(0.001, (endNanos - startNanos) / 1_000_000_000.0);
-      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "", "", "");
+      return new Result(name, operations, hits, seconds, operations / seconds, "", "", "", "", "", "");
     }
 
     private static Result of(String name, long operations, long startNanos, long endNanos, LDB db) {
@@ -1085,6 +1162,7 @@ public final class LdbDbBenchMain {
           valueOrEmpty(db.getProperty("ldb.blockCacheStats")),
           valueOrEmpty(db.getProperty("ldb.tableFormat")),
           "",
+          "",
           "");
     }
 
@@ -1093,6 +1171,7 @@ public final class LdbDbBenchMain {
       return new Result(name, operations, hits, seconds, operations / seconds,
           "",
           rocksDbMemoryProperties(db),
+          "",
           "",
           "",
           "");
@@ -1104,7 +1183,8 @@ public final class LdbDbBenchMain {
           blockCacheStats,
           tableFormatStats,
           valueOrEmpty(memoryStats),
-          allocationStats);
+          allocationStats,
+          workloadStats);
     }
 
     private Result withAllocationStats(String allocationStats) {
@@ -1113,7 +1193,18 @@ public final class LdbDbBenchMain {
           blockCacheStats,
           tableFormatStats,
           memoryStats,
-          valueOrEmpty(allocationStats));
+          valueOrEmpty(allocationStats),
+          workloadStats);
+    }
+
+    private Result withWorkloadStats(String workloadStats) {
+      return new Result(name, operations, hits, seconds, opsPerSecond,
+          sstReadStats,
+          blockCacheStats,
+          tableFormatStats,
+          memoryStats,
+          allocationStats,
+          valueOrEmpty(workloadStats));
     }
 
     private static String valueOrEmpty(String value) {
@@ -1133,6 +1224,34 @@ public final class LdbDbBenchMain {
       } catch (Exception ignored) {
         return "";
       }
+    }
+  }
+
+  private static final class AllocationProbe {
+    private final com.sun.management.ThreadMXBean threadMXBean;
+    private final long threadId;
+
+    private AllocationProbe(com.sun.management.ThreadMXBean threadMXBean, long threadId) {
+      this.threadMXBean = threadMXBean;
+      this.threadId = threadId;
+    }
+
+    private static AllocationProbe currentThread() {
+      java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+      if (bean instanceof com.sun.management.ThreadMXBean) {
+        com.sun.management.ThreadMXBean allocationBean = (com.sun.management.ThreadMXBean) bean;
+        if (AllocationStats.enable(allocationBean)) {
+          return new AllocationProbe(allocationBean, Thread.currentThread().getId());
+        }
+      }
+      return new AllocationProbe(null, -1);
+    }
+
+    private long allocatedBytes() {
+      if (threadMXBean == null) {
+        return -1;
+      }
+      return AllocationStats.allocatedBytes(threadMXBean, threadId);
     }
   }
 

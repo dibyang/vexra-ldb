@@ -6,11 +6,16 @@
 
 ## [Unreleased]
 
+- Block.seek 内存 seek anchor 改为保守自适应密度：普通大 block 继续使用 interval=2，小 block 或低 shared-key 收益区间降密/跳过 anchor，降低低收益 block 的常驻 key 内存成本；不改变磁盘 block 格式。
+- `readrandom_mixed` benchmark 新增 `workloadStats`，拆分 hit/miss 子路径的 lookups、found、latency 与线程分配，并复用预生成 hit/miss key 池以减少 benchmark harness 分配噪声。
+
 - Block.seek 内存态 seek anchor 间隔从 4 收紧到 2，减少随机点查在 restart 区间内的线性解码和 shared-key rebuild 次数；该优化不改变磁盘 block 格式。
 
 - 新增 `blockSeekMicroBenchReport`，用于专门度量 `Block.seek` 的吞吐、线程分配、decoded entries 与 shared-key rebuild 统计，为后续比较路径优化提供固定基线。
 - `blockSeekMicroBenchReport` 报告补充 `decodedEntriesPerOp` 与 `sharedKeyRebuildsPerOp`，便于直接观察 Block.seek 比较路径每次操作的解码与重建成本。
 - `blockSeekMicroBenchReport` 继续补充 `seekAnchorCount`，用于评估更密集内存 seek anchor 的性能/内存权衡。
+- `blockSeekMicroBenchReport` 继续补充 `seekAnchorRetainedKeyBytes`，用于量化内存态 seek anchor 保留 key 字节数。
+- 新增中英文 `Block.seek` 内存 seek anchor 基准记录，归档 `interval=1` 未进入主线以及 `interval=2` 当前折中的证据。
 
 - MultiGet 结果列表初始化改为包内 `BatchReadLists.newNullArrayList` 直接填充 null，避免 `Collections.nCopies` 产生额外中间列表对象。
 
