@@ -4,6 +4,8 @@ English | [中文](CHANGELOG.md)
 
 This document records important changes for `vexra ldb`. It follows the spirit of Keep a Changelog and uses semantic versioning.
 
+## [Unreleased]
+
 ## [0.11.0] - 2026-06-23
 
 - MultiGet version-layer miss probing now uses `Version -> Level` indexed get, reusing the original key list and miss-index array instead of rebuilding a `missedKeys` temporary list for every level.

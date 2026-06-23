@@ -4,6 +4,8 @@
 
 本文档记录 `vexra ldb` 的重要变更。格式遵循 Keep a Changelog 的精神，版本号遵循语义化版本约定。
 
+## [Unreleased]
+
 ## [0.11.0] - 2026-06-23
 
 - MultiGet 版本层逐层 miss 查询改为 `Version -> Level` indexed get，复用原始 key 列表与未命中下标数组，避免每一层重新构造 `missedKeys` 临时列表。
