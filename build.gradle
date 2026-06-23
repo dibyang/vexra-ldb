@@ -926,6 +926,8 @@ private List<Map<String, Object>> storageFormatGates(List<Map<String, Object>> r
       && fileContains(ldbFactoryApi, 'blockLocalIndexEvidence')
       && fileContains(ldbFactoryApi, 'blockLocalIndexFailures')
       && fileContains(tablePropertiesTest, 'BLOCK_LOCAL_INDEX_FEATURE')
+      && fileContains(tablePropertiesTest, 'shouldFallbackToDataBlockSeekWhenBlockLocalIndexBlockIsCorrupt')
+      && fileContains(tablePropertiesTest, 'shouldFailFastWhenBlockLocalIndexMetaindexEntryIsMissing')
       && fileContains(verifyCheckTest, 'shouldIncludeV3BlockLocalIndexEvidenceInCheckReport')
       && fileContains(repairTest, 'shouldReportV3BlockLocalIndexWhenRepairingFromReadableSst')
   boolean blockLocalIndexBenchmarkEvidence = zhV3EvolutionDesign.isFile()

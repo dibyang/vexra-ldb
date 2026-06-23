@@ -182,6 +182,54 @@ class TablePropertiesTest {
   }
 
   @Test
+  void shouldFallbackToDataBlockSeekWhenBlockLocalIndexBlockIsCorrupt() throws Exception {
+    File tableFile = new File(tempDir, "v3-corrupt-local-index.sst");
+
+    writeDenseTable(tableFile, new Options()
+        .blockRestartInterval(1)
+        .tableFormatVersion(3)
+        .writeBlockLocalIndex(true)
+        .blockLocalIndexInterval(1));
+
+    BlockHandle localIndexHandle;
+    Table table = openTable(tableFile, new Options());
+    try {
+      localIndexHandle = table.getBlockLocalIndexDirectory().values().iterator().next();
+    } finally {
+      table.closer().call();
+    }
+
+    corruptByte(tableFile, localIndexHandle.getOffset() + Math.max(0, localIndexHandle.getDataSize() / 2));
+
+    Table fallbackTable = openTable(tableFile, new Options());
+    try {
+      assertEquals(internalKey("k001", 1), fallbackTable.get(internalKey("k001", 1)).getKey());
+      String stats = fallbackTable.getBlockLocalIndexStats();
+      assertTrue(stats.contains("seekCount=1"), stats);
+      assertTrue(stats.contains("hitCount=0"), stats);
+      assertTrue(stats.contains("fallbackCount=1"), stats);
+    } finally {
+      fallbackTable.closer().call();
+    }
+  }
+
+  @Test
+  void shouldFailFastWhenBlockLocalIndexMetaindexEntryIsMissing() throws Exception {
+    File tableFile = new File(tempDir, "v3-missing-local-index-directory.sst");
+
+    writeDenseTable(tableFile, new Options()
+        .blockRestartInterval(1)
+        .tableFormatVersion(3)
+        .writeBlockLocalIndex(true)
+        .blockLocalIndexInterval(1));
+
+    replaceAsciiOccurrenceInMetaindexBlock(tableFile, "block_local_index", "xlock_local_index");
+
+    Exception error = assertThrows(Exception.class, () -> openTable(tableFile, new Options()));
+    assertTrue(error.getMessage().contains("BLOCK_LOCAL_INDEX_DIRECTORY_MISSING"), error.getMessage());
+  }
+
+  @Test
   void shouldWriteAndReadV4EntryAnchorIndexDirectoryWhenOptedIn() throws Exception {
     File tableFile = new File(tempDir, "v4-entry-anchor.sst");
 
@@ -404,6 +452,58 @@ class TablePropertiesTest {
       channel.close();
       file.close();
       throw t;
+    }
+  }
+
+  private static void corruptByte(File file, long position) throws Exception {
+    try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+      raf.seek(position);
+      int value = raf.read();
+      raf.seek(position);
+      raf.write(value ^ 0x7f);
+    }
+  }
+
+  private static void replaceAsciiOccurrenceInMetaindexBlock(File file, String expected, String replacement)
+      throws Exception {
+    assertEquals(expected.length(), replacement.length());
+    byte[] expectedBytes = expected.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    byte[] replacementBytes = replacement.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+      byte[] footerBytes = new byte[Footer.ENCODED_LENGTH];
+      raf.seek(raf.length() - Footer.ENCODED_LENGTH);
+      raf.readFully(footerBytes);
+      BlockHandle metaindexHandle = Footer.readFooter(Slices.wrappedBuffer(footerBytes)).getMetaindexBlockHandle();
+
+      byte[] data = new byte[metaindexHandle.getDataSize()];
+      raf.seek(metaindexHandle.getOffset());
+      raf.readFully(data);
+      byte[] trailerBytes = new byte[BlockTrailer.ENCODED_LENGTH];
+      raf.readFully(trailerBytes);
+
+      int match = -1;
+      for (int i = 0; i <= data.length - expectedBytes.length; i++) {
+        boolean same = true;
+        for (int j = 0; j < expectedBytes.length; j++) {
+          if (data[i + j] != expectedBytes[j]) {
+            same = false;
+            break;
+          }
+        }
+        if (same) {
+          match = i;
+        }
+      }
+      assertTrue(match >= 0, "Missing token " + expected);
+      System.arraycopy(replacementBytes, 0, data, match, replacementBytes.length);
+
+      BlockTrailer oldTrailer = BlockTrailer.readBlockTrailer(Slices.wrappedBuffer(trailerBytes));
+      BlockTrailer newTrailer = new BlockTrailer(
+          oldTrailer.getCompressionType(),
+          TableBuilder.crc32c(Slices.wrappedBuffer(data), oldTrailer.getCompressionType()));
+      raf.seek(metaindexHandle.getOffset());
+      raf.write(data);
+      raf.write(BlockTrailer.writeBlockTrailer(newTrailer).getBytes());
     }
   }
 }

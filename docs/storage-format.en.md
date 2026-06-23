@@ -368,3 +368,9 @@ Plugins can observe the open-time read-only policy snapshot through `OptionsView
 `ldb.tableFormatPolicy` is the runtime property for production enablement and rollback decisions. It complements `ldb.tableFormat` and `ldb.storageFormat` by explicitly emitting `newWrites`, `configuredTableFormatVersion`, `writeTableProperties`, `legacyReads`, `unknownFeaturePolicy`, `futureVersionPolicy`, `rollback`, `existingV2`, and `productionState`.
 
 When v2 writes are enabled for production, operators should observe `newWrites=v2-properties` and `productionState=explicit-v2`. Rolling back new writes means restoring `Options.tableFormatVersion(1)`, after which the property returns `newWrites=v1` and `productionState=default-legacy`. Disabling `failOnUnknownTableFeature` remains diagnostic-only and is not a production rollback strategy.
+
+## v3 Block-Local Index Runtime Fallback Contract
+
+The v3 `block.local_index.v1` feature is an opt-in SST acceleration feature. New readers keep reading v1/v2 by default; local-index directories and local-index blocks are written only when new writes explicitly use `tableFormatVersion(3)` and `writeBlockLocalIndex(true)`.
+
+At runtime, block-local indexes are sidecar positioning structures for point get and MultiGet. Missing or corrupt local-index data, checksum failures, or malformed anchors must not change the data-block truth; the read path falls back to ordinary data-block seek and exposes the event through `blockLocalIndexFallbackCount` in `ldb.sstReadStats`. Offline check/repair remains responsible for archiving corruption classes in `storageFormat`, `tableFormats`, and block-local-index failure fields.

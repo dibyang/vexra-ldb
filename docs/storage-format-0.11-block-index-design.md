@@ -578,3 +578,8 @@ BI 15 将 key-only restart-key 构建限制在单点 `Table.get(Slice)` 的 dire
 本轮验证了在 `LDbImpl` API 层对批量读中已经 miss memtable/immutable memtable、即将进入 SST 的 key 做去重：相同 CF + user key 只保留一个 `LookupKey` 进入 `VersionSet`，查询结果再回填到所有原始请求位置。该方案语义上适合真实业务中存在重复 key 的 MultiGet，但默认随机画像重复率有限，且即使改成单次哈希扫描，仍会给无重复 batch 增加额外 key hash/map 维护成本。
 
 验证结果：初始懒去重 50k 默认画像为 `readrandom_hit=169,550.724 ops/s`、`multiget_mixed=209,650.287 ops/s`；改为单次哈希扫描后 50k 默认画像为 `readrandom_hit=156,573.961 ops/s`、`multiget_mixed=185,171.332 ops/s`。结论是该候选不应进入默认热路径；后续若要保留，需要先增加重复 key 专项 benchmark 或显式配置开关，而不是影响默认 `multiget_mixed`。
+## BI 06 运行时损坏回退落地边界
+
+当前实现把 block-local index 定位为热读加速旁路，而不是数据正确性的唯一来源。对于 point get 和 MultiGet，Table 已定位到 data block 后才尝试读取 local-index directory 与 local-index block；如果 directory/index block 损坏、block trailer checksum 校验失败、anchor floor 查询失败或 anchor value 无法解析，热读路径会增加 `blockLocalIndexFallbackCount` 并回退到普通 data-block seek。
+
+该回退只保证线上读路径不因加速索引单点损坏而放大故障；它不吞掉格式问题。离线 `check`/`repair` 仍必须通过 `BLOCK_LOCAL_INDEX_DIRECTORY_MISSING`、`BLOCK_LOCAL_INDEX_COVERAGE_MISMATCH`、`BLOCK_LOCAL_INDEX_HANDLE_OUT_OF_RANGE`、`BLOCK_LOCAL_INDEX_BLOCK_CORRUPT` 等分类把损坏暴露到报告与 releaseGate。`blockLocalIndexFormatCoverage` 门禁现在要求 corrupt fallback 行为测试存在，防止热读 fallback 与离线自检证据脱节。

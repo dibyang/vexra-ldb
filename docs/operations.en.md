@@ -168,3 +168,10 @@ Before enabling v2 writes in production, archive `ldb.tableFormatPolicy`, `ldb.t
 ## readrandom / Bloom Filter Pre-Release Check
 
 If the release targets random-read miss optimization, archive `ldb.sstReadStats` after a benchmark or gate that enables `BloomFilterPolicy`. Expect at least `mayContainRequests>0`; for in-range missing-key tests, expect `mayContainFalse>0` and `filterSkips>0`. If `filterSkips` remains 0, check whether the test key falls outside all SST ranges, whether the filter policy was not configured, or whether the SSTs were written by older options.
+
+## v3 Block-Local Index Operations
+
+- `writeBlockLocalIndex` remains explicit opt-in and is not a default write policy.
+- For online observation, start with `ldb.sstReadStats`: `blockLocalIndexSeekCount`, `blockLocalIndexHitCount`, `blockLocalIndexFallbackCount`, and `blockLocalIndexDirectoryLoadedTables`.
+- If fallback counts keep increasing, run offline `check` first to collect `BLOCK_LOCAL_INDEX_*` classes, then decide whether to stop v3 compaction/flush, roll new writes back to v1/v2, or recover from checkpoint/backup.
+- Point get and MultiGet fall back to ordinary data-block seek when local-index data is corrupt. This fallback is a degradation guard, not proof that the file format is healthy.

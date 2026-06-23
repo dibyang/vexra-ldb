@@ -6,6 +6,8 @@ This document records important changes for `vexra ldb`. It follows the spirit o
 
 ## [Unreleased]
 
+- 0.11.0-SNAPSHOT v3 block-local-index hot reads now fall back safely when the local-index directory or index block is corrupt, checksum validation fails, or an anchor cannot be parsed; `blockLocalIndexFormatCoverage` now requires the corrupt-fallback test while offline check/repair reports remain responsible for surfacing corruption classes.
+
 ## [0.10.0] - 2026-06-21
 
 - Release preparation and reliability: added the 0.10.0 release-candidate preparation record after the random-read tuning cycle; documented filesystem failure observability for `ldb.fileSystemStats`, directory `force` failures, file-delete failures, and latest failure details; expanded long-run and release-gate evidence archival to `summary.json`, `summary.properties`, `properties-after.json`, and the Markdown summary; pre-release validation passed with `.\gradlew.bat test` and `.\gradlew.bat releaseGate`, with `productionGateLongRun` reporting `operations=3595`, `reads=1612`, `writes=1622`, `removes=361`, and `activeKeys=1622`.

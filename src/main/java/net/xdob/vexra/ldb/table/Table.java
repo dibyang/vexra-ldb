@@ -544,21 +544,29 @@ public abstract class Table implements SeekingIterable<Slice, Slice> {
       blockLocalIndexFallbackCount++;
       return seekWithBlockSeekIndex(dataBlock, internalKey);
     }
-    BlockHandle localIndexHandle = loadBlockLocalIndexDirectory().get(dataBlockHandle);
-    if (localIndexHandle == null) {
-      blockLocalIndexFallbackCount++;
-      return seekWithBlockSeekIndex(dataBlock, internalKey);
-    }
+    try {
+      BlockHandle localIndexHandle = loadBlockLocalIndexDirectory().get(dataBlockHandle);
+      if (localIndexHandle == null) {
+        blockLocalIndexFallbackCount++;
+        return seekWithBlockSeekIndex(dataBlock, internalKey);
+      }
 
-    blockLocalIndexSeekCount++;
-    Block localIndexBlock = openBlock(localIndexHandle);
-    Entry<Slice, Slice> anchor = localIndexBlock.floor(internalKey);
-    if (anchor == null) {
+      blockLocalIndexSeekCount++;
+      Block localIndexBlock = openBlock(localIndexHandle);
+      Entry<Slice, Slice> anchor = localIndexBlock.floor(internalKey);
+      if (anchor == null) {
+        blockLocalIndexFallbackCount++;
+        return seekWithBlockSeekIndex(dataBlock, internalKey);
+      }
+      blockLocalIndexHitCount++;
+      return dataBlock.seekFromOffset(internalKey, parseBlockLocalIndexAnchorOffset(anchor.getValue()));
+    } catch (RuntimeException e) {
+      // block-local index 是 v3 的加速旁路，真实数据仍以 data block 为准；运行时遇到
+      // directory/index block 损坏、checksum 失败或锚点解析异常时，热读路径必须安全回退，
+      // 由 check/repair 的离线自检负责把损坏分类暴露给发布门禁和运维报告。
       blockLocalIndexFallbackCount++;
       return seekWithBlockSeekIndex(dataBlock, internalKey);
     }
-    blockLocalIndexHitCount++;
-    return dataBlock.seekFromOffset(internalKey, parseBlockLocalIndexAnchorOffset(anchor.getValue()));
   }
 
   private Entry<Slice, Slice> seekWithEntryAnchorIndex(

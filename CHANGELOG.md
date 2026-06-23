@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+- 0.11.0-SNAPSHOT v3 block-local index 热读路径补齐损坏回退：point get/MultiGet 运行时遇到 local-index directory/index block 损坏、checksum 失败或锚点解析异常时，安全回退普通 data-block seek；`blockLocalIndexFormatCoverage` 门禁新增 corrupt fallback 测试绑定，正式格式自检仍通过 check/repair 报告暴露损坏分类。
+
 ## [0.10.0] - 2026-06-21
 
 - 发布准备与可靠性：完成 0.10.0 发布候选准备记录，补齐随机读性能优化收尾后的安全可靠性增量说明；文件系统失败可观测性覆盖 `ldb.fileSystemStats`、目录 `force` 失败、文件删除失败和最近失败原因；长稳报告与发布门禁证据归档扩展到 `summary.json`、`summary.properties`、`properties-after.json` 和 Markdown 摘要；发布前验证已通过 `.\gradlew.bat test` 与 `.\gradlew.bat releaseGate`，其中 `productionGateLongRun` 汇总为 `operations=3595`、`reads=1612`、`writes=1622`、`removes=361`、`activeKeys=1622`。

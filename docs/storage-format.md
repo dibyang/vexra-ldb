@@ -368,3 +368,9 @@ repair 不会原地修改 SST；恢复 MANIFEST 时写新的 VersionEdit snapsho
 `ldb.tableFormatPolicy` 是面向生产启用和回滚的运行时属性，和 `ldb.tableFormat` / `ldb.storageFormat` 配套使用。它显式输出 `newWrites`、`configuredTableFormatVersion`、`writeTableProperties`、`legacyReads`、`unknownFeaturePolicy`、`futureVersionPolicy`、`rollback`、`existingV2` 和 `productionState`。
 
 生产启用 v2 时应观察 `newWrites=v2-properties` 与 `productionState=explicit-v2`；回滚新写入时恢复 `Options.tableFormatVersion(1)`，属性会回到 `newWrites=v1` 与 `productionState=default-legacy`。关闭 `failOnUnknownTableFeature` 只允许作为 diagnostic-only 读取，不作为生产回滚策略。
+
+## v3 block-local index 运行时回退约束
+
+v3 `block.local_index.v1` 是 opt-in 的 SST 加速特性。新 reader 默认继续读取 v1/v2；只有新写入显式设置 `tableFormatVersion(3)` 与 `writeBlockLocalIndex(true)` 时才会生成 local-index directory 和 local-index blocks。
+
+运行时读取时，block-local index 只作为 point get/MultiGet 的旁路定位结构。local-index 缺失、损坏、checksum 失败或 anchor 解析异常不会改变 data block 中的真实数据，读路径必须回退普通 data-block seek，并通过 `ldb.sstReadStats` 中的 `blockLocalIndexFallbackCount` 暴露。离线 check/repair 仍负责把损坏分类归档到 `storageFormat`、`tableFormats` 和 block-local-index failure 字段。

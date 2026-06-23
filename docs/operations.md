@@ -168,3 +168,10 @@ ldb repair <db>
 ## readrandom / Bloom filter 发布前检查
 
 如果本次发布面向随机读 miss 优化，必须在启用 `BloomFilterPolicy` 的压测或门禁用例后归档 `ldb.sstReadStats`。期望至少看到 `mayContainRequests>0`；对范围内缺失 key 的测试应看到 `mayContainFalse>0` 与 `filterSkips>0`。若 `filterSkips` 长期为 0，需要确认数据是否没有落入 SST 范围、是否未配置 filter policy、或 SST 是否由旧配置写入。
+
+## v3 block-local index 运维处置
+
+- `writeBlockLocalIndex` 仍保持显式 opt-in，不作为默认写入策略。
+- 线上观察入口优先看 `ldb.sstReadStats`：`blockLocalIndexSeekCount`、`blockLocalIndexHitCount`、`blockLocalIndexFallbackCount` 和 `blockLocalIndexDirectoryLoadedTables`。
+- 如果 fallback 计数持续增长，先运行离线 `check` 获取 `BLOCK_LOCAL_INDEX_*` 分类，再决定是否停止 v3 compaction/flush、回滚新写入到 v1/v2，或从 checkpoint/backup 恢复。
+- point get/MultiGet 遇到 local-index 损坏会回退普通 data-block seek；该回退是降级保护，不代表文件格式健康。
