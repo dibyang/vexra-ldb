@@ -117,6 +117,27 @@ test {
   useJUnitPlatform()
 }
 
+tasks.register('blockSeekMicroBenchReport', JavaExec) {
+  group = 'verification'
+  description = 'Runs a focused Block.seek allocation micro-benchmark and writes JSON/CSV reports.'
+  dependsOn tasks.named('classes')
+  classpath = sourceSets.main.runtimeClasspath
+  mainClass = 'net.xdob.vexra.ldb.table.BlockSeekMicroBenchMain'
+  def outputDir = providers.gradleProperty('ldb.blockSeekMicroBench.outputDir')
+      .orElse(layout.buildDirectory.dir('reports/block-seek-micro-bench').map { it.asFile.path })
+  def entries = providers.gradleProperty('ldb.blockSeekMicroBench.entries').orElse('8192')
+  def reads = providers.gradleProperty('ldb.blockSeekMicroBench.reads').orElse('200000')
+  def restartInterval = providers.gradleProperty('ldb.blockSeekMicroBench.restartInterval').orElse('16')
+  def valueSize = providers.gradleProperty('ldb.blockSeekMicroBench.valueSize').orElse('100')
+  def seed = providers.gradleProperty('ldb.blockSeekMicroBench.seed').orElse('20260623')
+  args '--output', outputDir.get(),
+      '--entries', entries.get(),
+      '--reads', reads.get(),
+      '--restart_interval', restartInterval.get(),
+      '--value_size', valueSize.get(),
+      '--seed', seed.get()
+}
+
 def releaseGateReportDir = layout.buildDirectory.dir('reports/ldb-release-gate')
 
 tasks.register('releaseGateUnitTest', Test) {

@@ -54,7 +54,7 @@ import static net.xdob.vexra.ldb.util.SizeOf.SIZE_OF_INT;
  */
 public class Block
     implements SeekingIterable<Slice, Slice> {
-  private static final int SEEK_ANCHOR_INTERVAL = 4;
+  private static final int SEEK_ANCHOR_INTERVAL = 2;
   static final int INLINE_SEEK_INDEX_BLOCK_MAGIC = 0x4C424958; // LBIX
 
   private final Slice block;
